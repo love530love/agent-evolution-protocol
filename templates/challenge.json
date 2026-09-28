@@ -1,0 +1,9 @@
+{
+  "challenged_assumption": "The dominant route is correct",
+  "alternative_hypothesis": "A structurally different mechanism explains the evidence",
+  "structural_difference": "Describe the mechanism-level difference",
+  "predicted_signature": "Observable result that distinguishes the alternatives",
+  "cheapest_falsification": "Lowest-cost test able to reject this challenge",
+  "max_budget": 1,
+  "stop_condition": "Evidence that closes this route"
+}

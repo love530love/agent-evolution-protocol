@@ -35,7 +35,10 @@ The included standard-library CLI records local commit–reveal rounds. It does 
 python -m agent_evolution_protocol init --round-id demo --task example --leader lead --cells alpha beta catfish --budget 10
 python -m agent_evolution_protocol commit --round-id demo --card alpha.json
 python -m agent_evolution_protocol status --round-id demo
+python -m agent_evolution_protocol audit --round-id demo
 ```
+
+Version 0.2 adds a tamper-evident event hash chain, ledger audit, enforced result budgets, explicit challenge/threat/decision events, and human-gated HOLD/resume.
 
 See [the protocol](docs/PROTOCOL.md), [the evolution history](docs/EVOLUTION.md), and [the Chinese README](README.zh-CN.md).
 
@@ -46,4 +49,3 @@ Experimental shadow tooling. Keep irreversible operations and production automat
 ## License
 
 Apache-2.0.
-

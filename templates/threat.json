@@ -1,0 +1,11 @@
+{
+  "source": "Authoritative source URL or artifact",
+  "observed_at": "2026-01-01T00:00:00Z",
+  "freshness_ttl": "P1D",
+  "confidence": "verified",
+  "impact": "high",
+  "affected_assumptions": ["assumption-id"],
+  "cheapest_confirmation": "Independent low-cost confirmation",
+  "recommended_response": "Open a bounded threat-response candidate",
+  "response_deadline": "2026-01-02T00:00:00Z"
+}

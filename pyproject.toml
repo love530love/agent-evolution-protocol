@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-evolution-protocol"
-version = "0.1.0"
+version = "0.2.0"
 description = "Evidence-driven anti-collapse governance for multi-agent systems"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -21,4 +21,3 @@ agent-evolution = "agent_evolution_protocol.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-

@@ -1,0 +1,10 @@
+{
+  "decision": "Select candidate alpha-v1",
+  "alternatives_considered": ["beta-v1"],
+  "evidence_used": ["result SHA or path"],
+  "dissent_preserved": ["beta-v1 remains fallback"],
+  "budget_spent": 2,
+  "prediction_vs_result": "Prediction matched the observed signature",
+  "what_would_reverse_decision": "A failed paired benchmark",
+  "next_review_at": "2026-01-02T00:00:00Z"
+}
