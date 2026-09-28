@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-evolution-protocol"
+version = "0.1.0"
+description = "Evidence-driven anti-collapse governance for multi-agent systems"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Apache-2.0"}
+authors = [{name = "love530love"}]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+]
+
+[project.scripts]
+agent-evolution = "agent_evolution_protocol.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+

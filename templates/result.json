@@ -1,0 +1,12 @@
+{
+  "candidate_id": "alpha-v1",
+  "evaluator": "blind-evaluator",
+  "artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "environment": "exact environment identifier",
+  "command": "reproducible command",
+  "outcome": "survived",
+  "metrics": {},
+  "evidence_paths": [],
+  "budget_spent": 1,
+  "information_gain": true
+}

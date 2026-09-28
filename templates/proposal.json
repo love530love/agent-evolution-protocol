@@ -1,0 +1,12 @@
+{
+  "candidate_id": "alpha-v1",
+  "cell_id": "alpha",
+  "hypothesis": "One falsifiable claim",
+  "structural_difference": "How it differs from the dominant route",
+  "prediction": "Observable result expected if correct",
+  "cheapest_falsification": "Lowest-cost test that can reject it",
+  "max_budget": 2,
+  "stop_condition": "Stop when this condition is observed",
+  "artifact_sha256": null,
+  "contaminated": false
+}
