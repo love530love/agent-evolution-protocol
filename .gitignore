@@ -6,3 +6,7 @@ dist/
 build/
 *.egg-info/
 .agent-evolution/
+
+src/agent_evolution_protocol/coordination/realtime/token.txt
+src/agent_evolution_protocol/coordination/realtime/*.txt
+

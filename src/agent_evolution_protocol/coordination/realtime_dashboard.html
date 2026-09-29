@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Codex × WorkBuddy 协作室</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, "Microsoft YaHei", sans-serif; background:#0b1020; color:#e7ebf3; }
+    body { margin:0; display:grid; grid-template-rows:auto 1fr auto; height:100vh; }
+    header, footer { padding:14px 18px; background:#121a2e; border-color:#26314d; }
+    header { border-bottom:1px solid #26314d; display:flex; justify-content:space-between; gap:16px; align-items:center; }
+    footer { border-top:1px solid #26314d; }
+    h1 { font-size:18px; margin:0; }
+    .quiet { color:#9aa8c7; font-size:12px; }
+    #timeline { overflow:auto; padding:18px; display:flex; flex-direction:column; gap:10px; }
+    .event { border:1px solid #26314d; background:#11182a; border-radius:10px; padding:10px 12px; max-width:850px; }
+    .event.user { align-self:center; border-color:#7257d9; }
+    .event.codex { align-self:flex-start; border-color:#2c82d8; }
+    .event.workbuddy { align-self:flex-end; border-color:#3aa675; }
+    .meta { font-size:11px; color:#91a0bf; margin-bottom:6px; }
+    .text { white-space:pre-wrap; overflow-wrap:anywhere; }
+    form { display:grid; grid-template-columns:140px 1fr auto auto; gap:8px; }
+    select, textarea, button { border-radius:8px; border:1px solid #34415f; background:#0d1425; color:#eef2fb; padding:9px; }
+    textarea { resize:vertical; min-height:44px; }
+    button { cursor:pointer; background:#273c68; }
+    button.wake { background:#693d2b; }
+    @media(max-width:750px){ form{grid-template-columns:1fr 1fr} textarea{grid-column:1/-1} }
+  </style>
+</head>
+<body>
+  <header><div><h1>Codex × WorkBuddy × 用户</h1><div class="quiet">事件驱动；静默时不调用模型</div></div><div id="state" class="quiet">连接中…</div></header>
+  <main id="timeline"></main>
+  <footer>
+    <form id="composer">
+      <select id="target"><option value="codex">Codex</option><option value="workbuddy">WorkBuddy</option></select>
+      <textarea id="text" placeholder="普通发送只入队；执行唤醒才会启动代理。"></textarea>
+      <button type="submit">只发送</button>
+      <button type="button" id="wake" class="wake">执行唤醒</button>
+    </form>
+  </footer>
+<script>
+let token='', room='flaggems-sglang', seen=new Set();
+const timeline=document.querySelector('#timeline'), state=document.querySelector('#state');
+function render(e){ if(seen.has(e.id))return; seen.add(e.id); const el=document.createElement('article'); el.className='event '+e.actor; const meta=document.createElement('div'); meta.className='meta'; meta.textContent=`${e.actor} · ${e.kind}${e.target?' → '+e.target:''} · ${new Date(e.at).toLocaleString()}`; const text=document.createElement('div'); text.className='text'; text.textContent=e.text; el.append(meta,text); timeline.append(el); timeline.scrollTop=timeline.scrollHeight; }
+async function post(path,body){ const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-Collab-Token':token},body:JSON.stringify(body)}); if(!r.ok)throw new Error(await r.text()); return r.json(); }
+async function init(){ const b=await fetch('/api/bootstrap?room='+encodeURIComponent(room)).then(r=>r.json()); token=b.token; room=b.room; b.events.forEach(render); const es=new EventSource('/api/events?room='+encodeURIComponent(room)); es.onopen=()=>state.textContent='实时连接'; es.onerror=()=>state.textContent='重连中…'; es.onmessage=e=>render(JSON.parse(e.data)); }
+document.querySelector('#composer').onsubmit=async e=>{e.preventDefault(); const text=document.querySelector('#text'); if(!text.value.trim())return; await post('/api/event',{room,actor:'user',kind:'message',target:document.querySelector('#target').value,text:text.value.trim()}); text.value='';};
+document.querySelector('#wake').onclick=async()=>{const text=document.querySelector('#text'),target=document.querySelector('#target').value;if(!text.value.trim())return; if(!confirm(`明确启动 ${target} 执行一次？`))return; await post('/api/wake',{room,actor:'user',target,text:text.value.trim(),execute:true,cwd:'K:\\PythonProjects5\\FlagGems-sglang'}); text.value='';};
+init().catch(e=>state.textContent='连接失败: '+e.message);
+</script>
+</body>
+</html>

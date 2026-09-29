@@ -2,6 +2,8 @@
 
 An evidence-driven governance protocol for multi-agent systems that need diversity without coordination collapse.
 
+**New here?** Start with the plain-language [Chinese introduction](docs/INTRODUCTION.zh-CN.md), which explains the failure mode, design rationale, roles, one complete round, and a beginner walkthrough.
+
 The design combines three forces:
 
 - **Red Queen pressure** — respond to verified external change instead of manufacturing urgency.
@@ -40,7 +42,22 @@ python -m agent_evolution_protocol audit --round-id demo
 
 Version 0.2 adds a tamper-evident event hash chain, ledger audit, enforced result budgets, explicit challenge/threat/decision events, and human-gated HOLD/resume.
 
-See [the protocol](docs/PROTOCOL.md), [the evolution history](docs/EVOLUTION.md), and [the Chinese README](README.zh-CN.md).
+## Coordination kernel
+
+This repository also includes a local reference implementation for event-driven
+multi-agent coordination:
+
+- [collaboration evolution record](docs/coordination/MULTI_AGENT_COLLABORATION_EVOLUTION.md)
+- [status board protocol](docs/coordination/MULTI_AGENT_STATUS_BOARD.md)
+- [wake kernel](docs/coordination/MULTI_AGENT_WAKE_KERNEL.md)
+- [anti-collapse protocol](docs/coordination/MULTI_AGENT_ANTI_COLLAPSE_PROTOCOL.md)
+- [Red Queen / Catfish / Creative Destruction retrospective](docs/coordination/RED_QUEEN_CATFISH_CREATIVE_DESTRUCTION_RETROSPECTIVE_20260928.md)
+
+Reference code lives under `src/agent_evolution_protocol/coordination/`. It is
+designed for local, event-driven wakeups: ordinary messages do not start models;
+explicit wake requests are audited and routed through adapters.
+
+See [the beginner introduction](docs/INTRODUCTION.zh-CN.md), [the protocol](docs/PROTOCOL.md), [the evolution history](docs/EVOLUTION.md), and [the Chinese README](README.zh-CN.md).
 
 ## Status
 
