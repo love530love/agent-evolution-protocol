@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parent
 QUEUE = ROOT / "wake_queue"
 DONE = ROOT / "wake_done"
 FAILED = ROOT / "wake_failed"
+PENDING = ROOT / "wake_pending"
 LOG = ROOT / "wake_log.jsonl"
 ADAPTERS = ROOT / "wake_adapters"
 COOLDOWN_SECONDS = 30
@@ -39,6 +40,36 @@ def append_log(entry: dict) -> None:
     LOG.parent.mkdir(parents=True, exist_ok=True)
     with LOG.open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+def write_json(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def claim_deadline(event: dict) -> str:
+    seconds = event.get("claim_timeout_seconds", 600)
+    try:
+        seconds = int(seconds)
+    except (TypeError, ValueError):
+        seconds = 600
+    seconds = max(30, min(seconds, 86400))
+    return datetime.fromtimestamp(time.time() + seconds, timezone.utc).astimezone().isoformat(timespec="seconds")
+
+
+def mark_pending(event: dict, *, status: str) -> None:
+    if event.get("dry_run"):
+        return
+    record = {
+        **event,
+        "adapter_status": status,
+        "pending_since": stamp(),
+        "claim_deadline": claim_deadline(event),
+        "acceptance_required": "target agent must write claim or task-state for the same task",
+    }
+    write_json(PENDING / f"{event.get('id', 'unknown')}.json", record)
 
 
 def move_atomic(src: Path, dst_dir: Path) -> Path:
@@ -136,6 +167,8 @@ def consume(path: Path, *, dry_run: bool = False) -> int:
         monotonic=now,
     )
     append_log(entry)
+    if completed.returncode == 0:
+        mark_pending(event, status="adapter-executed")
     move_atomic(path, DONE if completed.returncode == 0 else FAILED)
     return 0 if completed.returncode == 0 else completed.returncode
 

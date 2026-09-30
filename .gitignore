@@ -10,3 +10,10 @@ build/
 src/agent_evolution_protocol/coordination/realtime/token.txt
 src/agent_evolution_protocol/coordination/realtime/*.txt
 
+src/agent_evolution_protocol/coordination/sessions/
+src/agent_evolution_protocol/coordination/wake_done/
+src/agent_evolution_protocol/coordination/wake_failed/
+src/agent_evolution_protocol/coordination/wake_queue/
+src/agent_evolution_protocol/coordination/wake_pending/
+src/agent_evolution_protocol/coordination/wake_ack/
+src/agent_evolution_protocol/coordination/wake_log.jsonl

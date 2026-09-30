@@ -25,6 +25,7 @@
 - [协作机制演化记录](docs/coordination/MULTI_AGENT_COLLABORATION_EVOLUTION.md)
 - [状态板协议](docs/coordination/MULTI_AGENT_STATUS_BOARD.md)
 - [唤醒内核](docs/coordination/MULTI_AGENT_WAKE_KERNEL.md)
+- [会话亲和机制](docs/coordination/MULTI_AGENT_SESSION_AFFINITY.md)
 - [反平庸/反坍缩协议](docs/coordination/MULTI_AGENT_ANTI_COLLAPSE_PROTOCOL.md)
 - [红皇后—鲶鱼—创造性破坏复盘](docs/coordination/RED_QUEEN_CATFISH_CREATIVE_DESTRUCTION_RETROSPECTIVE_20260928.md)
 

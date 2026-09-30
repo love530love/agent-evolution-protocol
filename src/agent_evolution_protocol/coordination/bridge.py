@@ -27,6 +27,8 @@ AGENTS = ("codex", "workbuddy", "qoder", "codebuddy", "github_copilot", "hermes_
 CREDENTIALS = (
     ("FLAGOS_AUTH", ROOT.parent / ".flagos_auth.txt"),
 )
+TERMINAL_PHASES = {"done", "abandoned"}
+DEFAULT_STALE_AFTER_HOURS = 12
 
 
 def credential_health():
@@ -95,6 +97,13 @@ def stamp():
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
 
+def parse_stamp(value):
+    try:
+        return datetime.fromisoformat(value)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def write(path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + "." + uuid4().hex + ".tmp")
@@ -142,6 +151,66 @@ def unread(who):
             yield read(path)
 
 
+def clear_wake_pending(target, task_name):
+    pending = ROOT / "wake_pending"
+    if not pending.exists():
+        return []
+    cleared = []
+    for path in pending.glob("*.json"):
+        try:
+            event = read(path)
+        except Exception:  # noqa: BLE001
+            continue
+        if event.get("to") == target and event.get("task") == task_name:
+            done = ROOT / "wake_ack" / path.name
+            write(done, {**event, "acknowledged_at": stamp(), "acknowledged_by": target})
+            path.unlink(missing_ok=True)
+            cleared.append(event.get("id", path.stem))
+    return cleared
+
+
+def enrich_board_row(row, now=None):
+    now = now or datetime.now(timezone.utc).astimezone()
+    phase_name = row.get("phase", "")
+    at = parse_stamp(row.get("at", ""))
+    stale_after = row.get("stale_after_hours", DEFAULT_STALE_AFTER_HOURS)
+    try:
+        stale_after = float(stale_after)
+    except (TypeError, ValueError):
+        stale_after = DEFAULT_STALE_AFTER_HOURS
+    age_hours = None
+    is_stale = False
+    if at is not None:
+        age_hours = round((now - at).total_seconds() / 3600, 2)
+        is_stale = phase_name not in TERMINAL_PHASES and age_hours > stale_after
+    return {
+        **row,
+        "age_hours": age_hours,
+        "stale_after_hours": stale_after,
+        "stale": is_stale,
+        "needs_refresh": is_stale,
+    }
+
+
+def session_path(who):
+    return ROOT / "sessions" / f"{who}.json"
+
+
+def session_state(who):
+    path = session_path(who)
+    if path.exists():
+        return read(path)
+    return {
+        "agent": who,
+        "mode": "sticky",
+        "thread_id": "",
+        "new_session_policy": "forbid-by-default",
+        "handoff_style": "digest-first",
+        "notes": "",
+        "updated_at": "",
+    }
+
+
 def wake_id():
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ") + "-" + uuid4().hex[:8]
 
@@ -181,6 +250,7 @@ def execute(a):
         try:
             data = dict(task=name, agent=who, at=stamp(), paths=a.paths or [])
             write(folder / "owner.json", data)
+            clear_wake_pending(who, name)
         except BaseException:
             folder.rmdir()
             raise
@@ -200,16 +270,48 @@ def execute(a):
             claims.append(read(owner) if owner.exists() else dict(task=folder.name, state="pending"))
         board = []
         for path in sorted((ROOT / "task_states").glob("*.json")):
-            board.append(read(path))
-        print(json.dumps(dict(claims=claims, board=board, credentials=credential_health(), unread={who: len(list(unread(who))) for who in AGENTS}), ensure_ascii=False, indent=2))
+            board.append(enrich_board_row(read(path)))
+        sessions = {who: session_state(who) for who in AGENTS}
+        print(json.dumps(dict(claims=claims, board=board, sessions=sessions, credentials=credential_health(), unread={who: len(list(unread(who))) for who in AGENTS}), ensure_ascii=False, indent=2))
     elif a.cmd == "board":
         board = []
         for path in sorted((ROOT / "task_states").glob("*.json")):
             row = read(path)
             if a.agent and row.get("owner") != agent(a.agent):
                 continue
-            board.append(row)
+            board.append(enrich_board_row(row))
         print(json.dumps(dict(tasks=board), ensure_ascii=False, indent=2))
+    elif a.cmd == "digest":
+        who = agent(a.agent)
+        items = list(unread(who))
+        grouped = {}
+        for msg in items:
+            topic = msg.get("topic", "(none)")
+            entry = grouped.setdefault(topic, {"topic": topic, "count": 0, "latest_at": "", "senders": set(), "samples": []})
+            entry["count"] += 1
+            entry["latest_at"] = max(entry["latest_at"], msg.get("at", ""))
+            entry["senders"].add(msg.get("sender", ""))
+            if len(entry["samples"]) < a.samples:
+                text = (msg.get("text", "") or "").replace("\r", " ").replace("\n", " ")
+                entry["samples"].append({"id": msg.get("id"), "kind": msg.get("kind"), "preview": text[:a.preview_chars]})
+        out = []
+        for entry in grouped.values():
+            entry["senders"] = sorted(s for s in entry["senders"] if s)
+            out.append(entry)
+        out.sort(key=lambda x: x["latest_at"], reverse=True)
+        print(json.dumps({"agent": who, "unread_count": len(items), "topics": out[:a.limit], "session": session_state(who)}, ensure_ascii=False, indent=2))
+    elif a.cmd == "ack-topic":
+        who = agent(a.agent)
+        count = 0
+        for msg in unread(who):
+            if msg.get("topic") != a.topic:
+                continue
+            mid = msg.get("id")
+            if not mid:
+                continue
+            write(ROOT / "acks" / who / (mid + ".json"), dict(id=mid, agent=who, at=stamp(), topic=a.topic, batch=True))
+            count += 1
+        print(json.dumps({"agent": who, "topic": a.topic, "acked": count}, ensure_ascii=False, indent=2))
     elif a.cmd == "cred-check":
         health = credential_health()
         print(json.dumps(health, ensure_ascii=False, indent=2))
@@ -232,10 +334,30 @@ def execute(a):
             next_action=a.next_action or "",
             wake_phrase=a.wake_phrase or f"@wake {who}",
             human_required=bool(a.human_required),
+            stale_after_hours=a.stale_after_hours,
         )
         write(ROOT / "task_states" / (name + ".json"), state)
+        clear_wake_pending(who, name)
         mirror(dict(room="flaggems-sglang", actor=who, kind="task-state", text=json.dumps(state, ensure_ascii=False), source="legacy-bridge", task=name))
         print(json.dumps(state, ensure_ascii=False, indent=2))
+    elif a.cmd == "session-set":
+        who = agent(a.agent)
+        state = {
+            "agent": who,
+            "mode": a.mode,
+            "thread_id": a.thread_id or "",
+            "new_session_policy": a.new_session_policy,
+            "handoff_style": a.handoff_style,
+            "notes": a.notes or "",
+            "updated_at": stamp(),
+        }
+        write(session_path(who), state)
+        print(json.dumps(state, ensure_ascii=False, indent=2))
+    elif a.cmd == "session-status":
+        if a.agent:
+            print(json.dumps(session_state(agent(a.agent)), ensure_ascii=False, indent=2))
+        else:
+            print(json.dumps({who: session_state(who) for who in AGENTS}, ensure_ascii=False, indent=2))
     elif a.cmd == "wake":
         sender, receiver = agent(a.sender), agent(a.to)
         if sender == receiver:
@@ -257,6 +379,9 @@ def execute(a):
             requires_user_auth=bool(a.requires_user_auth),
             no_polling=True,
             dry_run=bool(a.dry_run),
+            session=session_state(receiver),
+            allow_new_session=bool(a.allow_new_session),
+            claim_timeout_seconds=a.claim_timeout_seconds,
         )
         write(ROOT / "wake_queue" / (wid + ".json"), event)
         mirror(dict(room="flaggems-sglang", actor=sender, target=receiver, kind="wake_request", text=json.dumps(event, ensure_ascii=False), source="legacy-bridge", task=name, reply_to=wid))
@@ -271,10 +396,19 @@ def execute(a):
         if log_path.exists():
             tail = log_path.read_text(encoding="utf-8").splitlines()[-a.tail:]
             tail = [json.loads(line) for line in tail if line.strip()]
+        pending = []
+        now = datetime.now(timezone.utc).astimezone()
+        for path in sorted((ROOT / "wake_pending").glob("*.json")):
+            event = read(path)
+            deadline = parse_stamp(event.get("claim_deadline", ""))
+            event["expired"] = bool(deadline and now > deadline)
+            pending.append(event)
         print(json.dumps(dict(
             queue=count("wake_queue"),
             done=count("wake_done"),
             failed=count("wake_failed"),
+            pending=pending,
+            pending_expired=sum(1 for item in pending if item.get("expired")),
             log_tail=tail,
         ), ensure_ascii=False, indent=2))
     elif a.cmd == "watch":
@@ -303,9 +437,9 @@ def main():
     body = x.add_mutually_exclusive_group(required=True)
     body.add_argument("--text")
     body.add_argument("--text-file")
-    for name in ("inbox", "status", "watch", "board", "cred-check", "wake-status"):
+    for name in ("inbox", "status", "watch", "board", "cred-check", "wake-status", "digest", "session-status"):
         x = sub.add_parser(name)
-        if name not in ("status", "board", "cred-check", "wake-status"):
+        if name not in ("status", "board", "cred-check", "wake-status", "session-status"):
             x.add_argument("--agent", required=True)
         if name == "board":
             x.add_argument("--agent")
@@ -314,6 +448,22 @@ def main():
             x.add_argument("--interval", type=float, default=5)
         if name == "wake-status":
             x.add_argument("--tail", type=int, default=10)
+        if name == "digest":
+            x.add_argument("--limit", type=int, default=20)
+            x.add_argument("--samples", type=int, default=2)
+            x.add_argument("--preview-chars", type=int, default=240)
+        if name == "session-status":
+            x.add_argument("--agent")
+    x = sub.add_parser("ack-topic")
+    x.add_argument("--agent", required=True)
+    x.add_argument("--topic", required=True)
+    x = sub.add_parser("session-set")
+    x.add_argument("--agent", required=True)
+    x.add_argument("--mode", choices=("sticky", "manual", "spawn-allowed"), default="sticky")
+    x.add_argument("--thread-id")
+    x.add_argument("--new-session-policy", choices=("forbid-by-default", "allow-on-explicit-wake", "allow"), default="forbid-by-default")
+    x.add_argument("--handoff-style", choices=("digest-first", "full-context", "minimal"), default="digest-first")
+    x.add_argument("--notes")
     x = sub.add_parser("task-state")
     x.add_argument("--agent", required=True)
     x.add_argument("--task", required=True)
@@ -324,6 +474,7 @@ def main():
     x.add_argument("--next-action")
     x.add_argument("--wake-phrase")
     x.add_argument("--human-required", action="store_true")
+    x.add_argument("--stale-after-hours", type=float, default=DEFAULT_STALE_AFTER_HOURS)
     x = sub.add_parser("wake")
     x.add_argument("--from", dest="sender", required=True)
     x.add_argument("--to", required=True)
@@ -333,6 +484,8 @@ def main():
     x.add_argument("--entrypoint")
     x.add_argument("--requires-user-auth", action="store_true")
     x.add_argument("--dry-run", action="store_true")
+    x.add_argument("--allow-new-session", action="store_true")
+    x.add_argument("--claim-timeout-seconds", type=int, default=600)
     x = sub.add_parser("ack")
     x.add_argument("--agent", required=True)
     x.add_argument("--id", required=True)

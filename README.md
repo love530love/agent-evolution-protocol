@@ -50,6 +50,7 @@ multi-agent coordination:
 - [collaboration evolution record](docs/coordination/MULTI_AGENT_COLLABORATION_EVOLUTION.md)
 - [status board protocol](docs/coordination/MULTI_AGENT_STATUS_BOARD.md)
 - [wake kernel](docs/coordination/MULTI_AGENT_WAKE_KERNEL.md)
+- [session affinity](docs/coordination/MULTI_AGENT_SESSION_AFFINITY.md)
 - [anti-collapse protocol](docs/coordination/MULTI_AGENT_ANTI_COLLAPSE_PROTOCOL.md)
 - [Red Queen / Catfish / Creative Destruction retrospective](docs/coordination/RED_QUEEN_CATFISH_CREATIVE_DESTRUCTION_RETROSPECTIVE_20260928.md)
 
