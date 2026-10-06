@@ -20,6 +20,9 @@ aep --coord-root coordination coord-session-set --agent workbuddy --thread-id "<
 aep --coord-root coordination coord-send --from codex --to qoder --topic T125 --kind update --text "read latest digest first"
 aep --coord-root coordination coord-wake --from codex --to qoder --task T125 --reason "bounded one-shot check" --budget bounded
 aep --coord-root coordination coord-wake-status
+aep --coord-root coordination coord-claim --agent codex --task T125 --paths src/operator.py
+aep --coord-root coordination coord-task-state --agent codex --task T125 --phase working --goal "run cheapest falsification" --next-action "publish result digest"
+aep --coord-root coordination coord-release --agent codex --task T125
 aep --coord-root coordination coord-archive-stale --older-than-hours 24 --archive-name archived-stale
 aep --coord-root coordination coord-onboarding --agent hermes_desktop
 ```
@@ -32,6 +35,7 @@ aep --coord-root coordination coord-onboarding --agent hermes_desktop
 - 缺少 sticky `thread_id` 时，不要自行开窗；写 digest 或状态板并等待人工绑定。
 - wake 请求必须有任务、理由、预算和停止边界。
 - 归档旧 wake 只表示“停止按旧请求执行”，不表示任务完成。
+- 写动作前先 `coord-claim`；长任务要用 `coord-task-state` 留下 phase、goal、evidence、next-action。
 
 ## 和治理协议的关系
 

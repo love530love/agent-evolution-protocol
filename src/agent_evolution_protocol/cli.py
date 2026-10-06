@@ -522,6 +522,65 @@ def coord_wake_status(args: argparse.Namespace) -> None:
     print(json.dumps({"queue": count("wake_queue"), "done": count("wake_done"), "failed": count("wake_failed"), "pending": count("wake_pending"), "log_tail": tail}, ensure_ascii=False, indent=2))
 
 
+def coord_task_state(args: argparse.Namespace) -> None:
+    root = coord_root(args)
+    who = valid_agent(args.agent)
+    task_name = valid_task(args.task)
+    if args.phase not in TASK_PHASES:
+        raise ProtocolError("phase must be one of: " + ", ".join(TASK_PHASES))
+    state = {
+        "task": task_name,
+        "owner": who,
+        "phase": args.phase,
+        "at": utc_now(),
+        "goal": args.goal,
+        "evidence": args.evidence or [],
+        "blocked_reason": args.blocked_reason or "",
+        "next_action": args.next_action or "",
+        "wake_phrase": args.wake_phrase or f"@wake {who}",
+        "human_required": bool(args.human_required),
+        "stale_after_hours": args.stale_after_hours,
+    }
+    atomic_write_json(coord_file(root, "task_states", f"{task_name}.json"), state)
+    print(json.dumps(state, ensure_ascii=False, indent=2))
+
+
+def coord_claim(args: argparse.Namespace) -> None:
+    root = coord_root(args)
+    who = valid_agent(args.agent)
+    task_name = valid_task(args.task)
+    folder = coord_file(root, "claims", task_name)
+    owner = folder / "owner.json"
+    try:
+        folder.mkdir(parents=True, exist_ok=False)
+    except FileExistsError:
+        payload = read_json(owner) if owner.exists() else {"task": task_name, "state": "pending"}
+        print(json.dumps({"claimed": False, "task": task_name, "owner": payload}, ensure_ascii=False, indent=2))
+        return
+    data = {"task": task_name, "agent": who, "at": utc_now(), "paths": args.paths or []}
+    atomic_write_json(owner, data)
+    print(json.dumps({"claimed": True, **data}, ensure_ascii=False, indent=2))
+
+
+def coord_release(args: argparse.Namespace) -> None:
+    root = coord_root(args)
+    who = valid_agent(args.agent)
+    task_name = valid_task(args.task)
+    folder = coord_file(root, "claims", task_name)
+    owner = folder / "owner.json"
+    if not owner.exists():
+        raise ProtocolError("task is not claimed")
+    data = read_json(owner)
+    if data.get("agent") != who:
+        raise ProtocolError("only the claim owner may release")
+    owner.unlink()
+    try:
+        folder.rmdir()
+    except OSError:
+        pass
+    print(json.dumps({"released": True, "task": task_name, "agent": who}, ensure_ascii=False, indent=2))
+
+
 def coord_archive_stale(args: argparse.Namespace) -> None:
     root = coord_root(args)
     queue = coord_file(root, "wake_queue")
@@ -604,6 +663,9 @@ def build_parser() -> argparse.ArgumentParser:
     wake_status = commands.add_parser("coord-wake-status"); wake_status.add_argument("--tail", type=int, default=10); wake_status.set_defaults(func=coord_wake_status)
     archive = commands.add_parser("coord-archive-stale"); archive.add_argument("--older-than-hours", type=float, default=24); archive.add_argument("--archive-name", default="archived-stale"); archive.add_argument("--all", action="store_true"); archive.set_defaults(func=coord_archive_stale)
     onboarding = commands.add_parser("coord-onboarding"); onboarding.add_argument("--agent", required=True); onboarding.set_defaults(func=coord_onboarding)
+    task_state = commands.add_parser("coord-task-state"); task_state.add_argument("--agent", required=True); task_state.add_argument("--task", required=True); task_state.add_argument("--phase", required=True); task_state.add_argument("--goal", required=True); task_state.add_argument("--evidence", nargs="*"); task_state.add_argument("--blocked-reason"); task_state.add_argument("--next-action"); task_state.add_argument("--wake-phrase"); task_state.add_argument("--human-required", action="store_true"); task_state.add_argument("--stale-after-hours", type=float, default=12); task_state.set_defaults(func=coord_task_state)
+    claim = commands.add_parser("coord-claim"); claim.add_argument("--agent", required=True); claim.add_argument("--task", required=True); claim.add_argument("--paths", nargs="*"); claim.set_defaults(func=coord_claim)
+    release = commands.add_parser("coord-release"); release.add_argument("--agent", required=True); release.add_argument("--task", required=True); release.set_defaults(func=coord_release)
     return parser
 
 

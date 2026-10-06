@@ -71,6 +71,37 @@ class CoordinationCliTest(unittest.TestCase):
             self.assertEqual("forbid-by-default", session["new_session_policy"])
             self.assertEqual("digest-first", session["handoff_style"])
 
+    def test_task_state_and_claim_lifecycle(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cli.coord_bootstrap(SimpleNamespace(coord_root=root))
+            cli.coord_claim(SimpleNamespace(coord_root=root, agent="codex", task="T125", paths=["src/x.py"]))
+            owner = json.loads((root / "claims" / "T125" / "owner.json").read_text(encoding="utf-8"))
+            self.assertEqual("codex", owner["agent"])
+
+            with self.assertRaises(cli.ProtocolError):
+                cli.coord_release(SimpleNamespace(coord_root=root, agent="qoder", task="T125"))
+
+            cli.coord_task_state(SimpleNamespace(
+                coord_root=root,
+                agent="codex",
+                task="T125",
+                phase="working",
+                goal="bounded investigation",
+                evidence=["digest"],
+                blocked_reason=None,
+                next_action="run falsification",
+                wake_phrase=None,
+                human_required=False,
+                stale_after_hours=6,
+            ))
+            state = json.loads((root / "task_states" / "T125.json").read_text(encoding="utf-8"))
+            self.assertEqual("working", state["phase"])
+            self.assertEqual("@wake codex", state["wake_phrase"])
+
+            cli.coord_release(SimpleNamespace(coord_root=root, agent="codex", task="T125"))
+            self.assertFalse((root / "claims" / "T125" / "owner.json").exists())
+
 
 if __name__ == "__main__":
     unittest.main()
