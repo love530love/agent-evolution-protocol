@@ -25,6 +25,7 @@ aep --coord-root coordination coord-task-state --agent codex --task T125 --phase
 aep --coord-root coordination coord-release --agent codex --task T125
 aep --coord-root coordination coord-archive-stale --older-than-hours 24 --archive-name archived-stale
 aep --coord-root coordination coord-onboarding --agent hermes_desktop
+aep --coord-root coordination coord-guided-retry --attempted-action "submit upload" --error "timeout" --risk-level high
 ```
 
 ## 恢复内核 / 资源锁命令
@@ -58,9 +59,15 @@ aep --kernel-root .aep-kernel kernel-continuation-plan --agent workbuddy --works
 - wake 请求必须有任务、理由、预算和停止边界。
 - 归档旧 wake 只表示“停止按旧请求执行”，不表示任务完成。
 - 写动作前先 `coord-claim`；长任务要用 `coord-task-state` 留下 phase、goal、evidence、next-action。
+- 失败后先用 `coord-guided-retry` 分类；高风险或结果未知的写动作不得盲目重放。
 
 ## 和治理协议的关系
 
 `coord-*` 命令负责协作平面：消息、digest、wake、session、队列。
 
 `init / commit / reveal / challenge / threat / decide / audit` 负责竞争与治理平面：红皇后、鲶鱼、创造性破坏、证据链和决策审计。
+
+## 进一步阅读
+
+- [新 Agent 接入契约](AGENT_ONBOARDING_CONTRACT.zh-CN.md)
+- [Guided Retry 策略](GUIDED_RETRY_POLICY.zh-CN.md)

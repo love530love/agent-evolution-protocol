@@ -1,6 +1,8 @@
 import json
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -101,6 +103,27 @@ class CoordinationCliTest(unittest.TestCase):
 
             cli.coord_release(SimpleNamespace(coord_root=root, agent="codex", task="T125"))
             self.assertFalse((root / "claims" / "T125" / "owner.json").exists())
+
+    def test_onboarding_contract_and_guided_retry(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cli.coord_bootstrap(SimpleNamespace(coord_root=root))
+
+            out = StringIO()
+            with redirect_stdout(out):
+                cli.coord_onboarding(SimpleNamespace(coord_root=root, kernel_root=root / "kernel", agent="codex"))
+            payload = json.loads(out.getvalue())
+            self.assertIn("first_turn_contract", payload)
+            self.assertIn("coord-guided-retry", " ".join(payload["rules"]))
+
+            guidance = cli.classify_retry("timeout after submit", "submit upload", "high")
+            self.assertEqual("uncertain-outcome", guidance["category"])
+            self.assertFalse(guidance["retry_allowed"])
+            self.assertEqual("UNKNOWN", guidance["kernel_state"])
+
+            guidance = cli.classify_retry("element is obscured", "click dropdown", "low")
+            self.assertEqual("stale-observation", guidance["category"])
+            self.assertTrue(guidance["retry_allowed"])
 
 
 if __name__ == "__main__":
