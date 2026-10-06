@@ -730,6 +730,156 @@ def coord_guided_retry(args: argparse.Namespace) -> None:
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+def parse_time(value: str) -> datetime | None:
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return None
+
+
+def inspect_system(args: argparse.Namespace) -> None:
+    croot = coord_root(args)
+    kroot = kernel_root(args)
+    kernel = ClusterKernel(kroot)
+    now = datetime.now(timezone.utc)
+
+    sessions = {who: session_state(croot, who) for who in AGENTS}
+    missing_sessions = [
+        who for who, state in sessions.items()
+        if state.get("mode") == "sticky"
+        and state.get("new_session_policy") != "allow"
+        and not state.get("thread_id")
+    ]
+    unread = {who: len(unread_messages(croot, who)) for who in AGENTS}
+
+    wake_queue = []
+    queue_dir = coord_file(croot, "wake_queue")
+    if queue_dir.exists():
+        for path in sorted(queue_dir.glob("*.json")):
+            try:
+                event = read_json(path)
+            except ProtocolError:
+                continue
+            at = parse_time(str(event.get("at", "")))
+            age_hours = round((now - at).total_seconds() / 3600, 2) if at else None
+            event["_file"] = str(path)
+            event["age_hours"] = age_hours
+            event["stale"] = bool(age_hours is not None and age_hours > args.stale_wake_hours)
+            wake_queue.append(event)
+
+    tasks = []
+    stale_tasks = []
+    task_dir = coord_file(croot, "task_states")
+    if task_dir.exists():
+        for path in sorted(task_dir.glob("*.json")):
+            try:
+                item = read_json(path)
+            except ProtocolError:
+                continue
+            at = parse_time(str(item.get("at", "")))
+            stale_after = float(item.get("stale_after_hours", 12) or 12)
+            age_hours = round((now - at).total_seconds() / 3600, 2) if at else None
+            item["age_hours"] = age_hours
+            item["stale"] = bool(age_hours is not None and item.get("phase") not in {"done", "abandoned"} and age_hours > stale_after)
+            tasks.append(item)
+            if item["stale"]:
+                stale_tasks.append(item)
+
+    claims = []
+    claims_dir = coord_file(croot, "claims")
+    if claims_dir.exists():
+        for owner in sorted(claims_dir.glob("*/owner.json")):
+            try:
+                claims.append(read_json(owner))
+            except ProtocolError:
+                pass
+
+    events = kernel.events()
+    latest_leases = {}
+    latest_ops = {}
+    kernel_sessions = {}
+    checkpoints = []
+    for event in events:
+        kind = event.get("kind")
+        if str(kind).startswith("LEASE_"):
+            latest_leases[(event.get("lease_type"), event.get("resource"))] = event
+        elif kind == "OPERATION":
+            latest_ops[event.get("operation_key")] = event
+        elif kind == "SESSION_BOUND":
+            kernel_sessions[(event.get("agent"), event.get("workspace"))] = event
+        elif kind == "CHECKPOINT_WRITTEN":
+            checkpoints.append(event)
+    active_leases = [event for event in latest_leases.values() if event.get("kind") in {"LEASE_ACQUIRED", "LEASE_RENEWED"}]
+    unknown_ops = [event for event in latest_ops.values() if event.get("state") == "UNKNOWN"]
+    reserved_ops = [event for event in latest_ops.values() if event.get("state") in {"RESERVED", "STARTED"}]
+
+    recommendations = []
+    if missing_sessions:
+        recommendations.append("Bind sticky session IDs or keep those agents digest-only: " + ", ".join(missing_sessions))
+    if any(item.get("stale") for item in wake_queue):
+        recommendations.append("Archive stale wake requests before executing new work.")
+    if unknown_ops:
+        recommendations.append("Resolve UNKNOWN operations before retrying related external writes.")
+    if active_leases:
+        recommendations.append("Respect active leases; do not bypass owners.")
+    if stale_tasks:
+        recommendations.append("Refresh stale task states or mark them blocked/abandoned/done.")
+    if not recommendations:
+        recommendations.append("No critical coordination hazards detected.")
+
+    report = {
+        "generated_at": utc_now(),
+        "coord_root": str(croot),
+        "kernel_root": str(kroot),
+        "summary": {
+            "unread_total": sum(unread.values()),
+            "wake_queue": len(wake_queue),
+            "stale_wake": sum(1 for item in wake_queue if item.get("stale")),
+            "claims": len(claims),
+            "task_states": len(tasks),
+            "stale_tasks": len(stale_tasks),
+            "kernel_events": len(events),
+            "kernel_chain_valid": kernel.verify_chain(),
+            "active_leases": len(active_leases),
+            "unknown_operations": len(unknown_ops),
+            "inflight_operations": len(reserved_ops),
+            "missing_sticky_session_ids": missing_sessions,
+        },
+        "unread": unread,
+        "claims": claims,
+        "tasks": tasks,
+        "wake_queue": wake_queue,
+        "active_leases": active_leases,
+        "unknown_operations": unknown_ops,
+        "inflight_operations": reserved_ops,
+        "kernel_sessions": list(kernel_sessions.values()),
+        "latest_checkpoints": checkpoints[-args.checkpoint_limit:],
+        "recommendations": recommendations,
+        "next_commands": {
+            "status": f"aep --coord-root {croot} --kernel-root {kroot} inspect",
+            "archive_stale": f"aep --coord-root {croot} coord-archive-stale --older-than-hours {args.stale_wake_hours} --archive-name archived-stale",
+            "guided_retry": f"aep --coord-root {croot} coord-guided-retry --attempted-action <ACTION> --error <ERROR> --risk-level medium",
+        },
+    }
+
+    if args.markdown:
+        print("# Agent Evolution Runbook\n")
+        print(f"- generated_at: `{report['generated_at']}`")
+        print(f"- coord_root: `{croot}`")
+        print(f"- kernel_root: `{kroot}`\n")
+        print("## Summary\n")
+        for key, value in report["summary"].items():
+            print(f"- {key}: `{value}`")
+        print("\n## Recommendations\n")
+        for item in recommendations:
+            print(f"- {item}")
+        print("\n## Next commands\n")
+        for key, value in report["next_commands"].items():
+            print(f"- {key}: `{value}`")
+    else:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+
+
 def kernel_status(args: argparse.Namespace) -> None:
     kernel = ClusterKernel(kernel_root(args))
     events = kernel.events()
@@ -834,6 +984,7 @@ def build_parser() -> argparse.ArgumentParser:
     restart = commands.add_parser("resume"); restart.add_argument("--round-id", required=True); restart.add_argument("--actor", required=True); restart.add_argument("--reason", required=True); restart.add_argument("--human-approved", action="store_true"); restart.set_defaults(func=resume)
     check = commands.add_parser("audit"); check.add_argument("--round-id", required=True); check.set_defaults(func=audit)
     commands.add_parser("doctor").set_defaults(func=coord_doctor)
+    inspect = commands.add_parser("inspect"); inspect.add_argument("--stale-wake-hours", type=float, default=24); inspect.add_argument("--checkpoint-limit", type=int, default=5); inspect.add_argument("--markdown", action="store_true"); inspect.set_defaults(func=inspect_system)
     commands.add_parser("coord-bootstrap").set_defaults(func=coord_bootstrap)
     commands.add_parser("coord-status").set_defaults(func=coord_status)
     digest = commands.add_parser("coord-digest"); digest.add_argument("--agent", required=True); digest.add_argument("--limit", type=int, default=20); digest.add_argument("--samples", type=int, default=2); digest.add_argument("--preview-chars", type=int, default=240); digest.set_defaults(func=coord_digest)
