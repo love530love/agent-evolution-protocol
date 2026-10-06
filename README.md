@@ -58,6 +58,26 @@ Reference code lives under `src/agent_evolution_protocol/coordination/`. It is
 designed for local, event-driven wakeups: ordinary messages do not start models;
 explicit wake requests are audited and routed through adapters.
 
+## Unified local coordination CLI
+
+Install locally and initialize a coordination root:
+
+```powershell
+pwsh.exe -File .\scripts\bootstrap.ps1 -CoordRoot coordination
+```
+
+The `aep` command is an alias for `agent-evolution` and exposes both planes:
+
+- governance plane: `init`, `commit`, `reveal`, `challenge`, `threat`, `decide`, `audit`;
+- coordination plane: `doctor`, `coord-status`, `coord-digest`, `coord-send`, `coord-wake`, `coord-wake-status`, `coord-archive-stale`, `coord-session-set`, `coord-onboarding`.
+
+The coordination CLI is local-file based and does not call models. It is meant
+to make onboarding deterministic: a new agent reads the current digest and
+sticky-session policy before doing work, and missing session IDs become a
+visible handoff problem instead of silently spawning new chats.
+
+See the Chinese [coordination CLI quick guide](docs/COORDINATION_CLI.zh-CN.md).
+
 See [the beginner introduction](docs/INTRODUCTION.zh-CN.md), [the protocol](docs/PROTOCOL.md), [the evolution history](docs/EVOLUTION.md), and [the Chinese README](README.zh-CN.md).
 
 ## Status

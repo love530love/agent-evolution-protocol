@@ -18,6 +18,7 @@ classifiers = [
 
 [project.scripts]
 agent-evolution = "agent_evolution_protocol.cli:main"
+aep = "agent_evolution_protocol.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -1,4 +1,8 @@
-"""Offline commit-reveal ledger. No model calls, polling, or external execution."""
+"""Offline commit-reveal ledger and local coordination CLI.
+
+No model calls, polling, or external execution are performed by this module.
+Coordination commands only read/write local files under ``--coord-root``.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +12,7 @@ import json
 import os
 import re
 import sys
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -19,6 +24,12 @@ CHALLENGE_FIELDS = {"challenged_assumption", "alternative_hypothesis", "structur
 THREAT_FIELDS = {"source", "observed_at", "freshness_ttl", "confidence", "impact", "affected_assumptions", "cheapest_confirmation", "recommended_response", "response_deadline"}
 DECISION_FIELDS = {"decision", "alternatives_considered", "evidence_used", "dissent_preserved", "budget_spent", "prediction_vs_result", "what_would_reverse_decision", "next_review_at"}
 GENESIS_HASH = "0" * 64
+AGENTS = ("codex", "workbuddy", "qoder", "codebuddy", "github_copilot", "hermes_desktop", "autoclaw")
+MESSAGE_KINDS = ("update", "proposal", "question", "result", "warning", "context")
+WAKE_BUDGETS = ("one-shot", "bounded", "manual")
+SESSION_POLICIES = ("forbid-by-default", "allow-on-explicit-wake", "allow")
+HANDOFF_STYLES = ("digest-first", "full-context", "minimal")
+TASK_PHASES = ("todo", "claimed", "working", "waiting", "blocked", "needs-review", "ready", "done", "abandoned")
 
 
 class ProtocolError(ValueError):
@@ -49,6 +60,19 @@ def valid_id(value: str, label: str) -> str:
     return value
 
 
+def valid_agent(value: str) -> str:
+    if value not in AGENTS:
+        raise ProtocolError("agent must be one of: " + ", ".join(AGENTS))
+    return value
+
+
+def valid_task(value: str) -> str:
+    value = value.upper()
+    if not re.fullmatch(r"T[0-9]{1,4}(-[A-Z0-9]{1,16})?", value):
+        raise ProtocolError("task must look like T89 or T103-R6Q")
+    return value
+
+
 def atomic_write(path: Path, payload: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
@@ -57,6 +81,61 @@ def atomic_write(path: Path, payload: bytes) -> None:
         handle.flush()
         os.fsync(handle.fileno())
     os.replace(temporary, path)
+
+
+def atomic_write_json(path: Path, data: dict) -> None:
+    atomic_write(path, canonical(data))
+
+
+def read_json(path: Path) -> dict:
+    return load(path)
+
+
+def coord_root(args: argparse.Namespace) -> Path:
+    root = getattr(args, "coord_root", None)
+    if root is None:
+        root = Path(os.environ.get("AEP_COORD_ROOT", "coordination"))
+    return Path(root)
+
+
+def coord_file(root: Path, *parts: str) -> Path:
+    return root.joinpath(*parts)
+
+
+def session_state(root: Path, who: str) -> dict:
+    who = valid_agent(who)
+    path = coord_file(root, "sessions", f"{who}.json")
+    if path.exists():
+        return read_json(path)
+    return {
+        "agent": who,
+        "mode": "sticky",
+        "thread_id": "",
+        "new_session_policy": "forbid-by-default",
+        "handoff_style": "digest-first",
+        "notes": "",
+        "updated_at": "",
+    }
+
+
+def unread_messages(root: Path, who: str) -> list[dict]:
+    valid_agent(who)
+    folder = coord_file(root, "messages", who)
+    if not folder.exists():
+        return []
+    items: list[dict] = []
+    for path in sorted(folder.glob("*.json")):
+        if coord_file(root, "acks", who, path.name).exists():
+            continue
+        try:
+            items.append(read_json(path))
+        except ProtocolError:
+            continue
+    return items
+
+
+def wake_id() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ") + "-" + hashlib.sha256(os.urandom(16)).hexdigest()[:8]
 
 
 def append(directory: Path, event: dict) -> None:
@@ -270,9 +349,236 @@ def audit(args: argparse.Namespace) -> None:
         raise ProtocolError("ledger audit failed")
 
 
+def coord_doctor(args: argparse.Namespace) -> None:
+    root = coord_root(args)
+    checks = []
+    checks.append({"name": "python", "ok": sys.version_info >= (3, 10), "detail": sys.version.split()[0]})
+    checks.append({"name": "coord_root_exists", "ok": root.exists(), "detail": str(root)})
+    required_dirs = ("messages", "acks", "sessions", "wake_queue", "wake_done", "wake_failed", "task_states")
+    for name in required_dirs:
+        path = coord_file(root, name)
+        checks.append({"name": f"dir:{name}", "ok": path.exists() and path.is_dir(), "detail": str(path)})
+    sessions = {who: session_state(root, who) for who in AGENTS}
+    missing_thread = [
+        who for who, state in sessions.items()
+        if state.get("mode") == "sticky"
+        and state.get("new_session_policy") != "allow"
+        and not state.get("thread_id")
+    ]
+    queue_count = len(list(coord_file(root, "wake_queue").glob("*.json"))) if coord_file(root, "wake_queue").exists() else 0
+    checks.append({"name": "sticky_sessions_locatable", "ok": not missing_thread, "detail": {"missing_thread_id": missing_thread}})
+    checks.append({"name": "wake_queue_count", "ok": True, "detail": queue_count})
+    ok = all(item["ok"] for item in checks if item["name"] != "sticky_sessions_locatable")
+    report = {
+        "coord_root": str(root),
+        "ok": ok,
+        "checks": checks,
+        "guidance": [
+            "Ordinary messages should not wake a model.",
+            "Use digest-first handoff before any new session.",
+            "A missing sticky thread_id means write a digest/status update instead of spawning.",
+        ],
+    }
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    if not ok:
+        raise ProtocolError("coordination doctor found missing required directories")
+
+
+def coord_bootstrap(args: argparse.Namespace) -> None:
+    root = coord_root(args)
+    for name in ("messages", "acks", "sessions", "wake_queue", "wake_done", "wake_failed", "wake_pending", "wake_ack", "task_states", "claims"):
+        coord_file(root, name).mkdir(parents=True, exist_ok=True)
+    for who in AGENTS:
+        path = coord_file(root, "sessions", f"{who}.json")
+        if not path.exists():
+            atomic_write_json(path, session_state(root, who))
+    print(json.dumps({"coord_root": str(root), "created": True}, ensure_ascii=False, indent=2))
+
+
+def coord_status(args: argparse.Namespace) -> None:
+    root = coord_root(args)
+    sessions = {who: session_state(root, who) for who in AGENTS}
+    unread = {who: len(unread_messages(root, who)) for who in AGENTS}
+    wake_dirs = {}
+    for name in ("wake_queue", "wake_done", "wake_failed", "wake_pending"):
+        path = coord_file(root, name)
+        wake_dirs[name] = len(list(path.glob("*.json"))) if path.exists() else 0
+    tasks = []
+    task_dir = coord_file(root, "task_states")
+    if task_dir.exists():
+        for path in sorted(task_dir.glob("*.json")):
+            try:
+                tasks.append(read_json(path))
+            except ProtocolError:
+                pass
+    print(json.dumps({"coord_root": str(root), "sessions": sessions, "unread": unread, "wake": wake_dirs, "tasks": tasks}, ensure_ascii=False, indent=2))
+
+
+def coord_digest(args: argparse.Namespace) -> None:
+    root = coord_root(args)
+    who = valid_agent(args.agent)
+    grouped: dict[str, dict] = {}
+    for msg in unread_messages(root, who):
+        topic = msg.get("topic", "(none)")
+        entry = grouped.setdefault(topic, {"topic": topic, "count": 0, "latest_at": "", "senders": set(), "samples": []})
+        entry["count"] += 1
+        entry["latest_at"] = max(entry["latest_at"], msg.get("at", ""))
+        entry["senders"].add(msg.get("sender", ""))
+        if len(entry["samples"]) < args.samples:
+            text = (msg.get("text", "") or "").replace("\r", " ").replace("\n", " ")
+            entry["samples"].append({"id": msg.get("id"), "kind": msg.get("kind"), "preview": text[:args.preview_chars]})
+    topics = []
+    for entry in grouped.values():
+        entry["senders"] = sorted(s for s in entry["senders"] if s)
+        topics.append(entry)
+    topics.sort(key=lambda item: item["latest_at"], reverse=True)
+    print(json.dumps({"agent": who, "unread_count": len(unread_messages(root, who)), "topics": topics[:args.limit], "session": session_state(root, who)}, ensure_ascii=False, indent=2))
+
+
+def coord_send(args: argparse.Namespace) -> None:
+    root = coord_root(args)
+    sender, receiver = valid_agent(args.sender), valid_agent(args.to)
+    if sender == receiver:
+        raise ProtocolError("sender and receiver must differ")
+    text = args.text if args.text is not None else Path(args.text_file).read_text(encoding="utf-8")
+    if not text.strip():
+        raise ProtocolError("message body is empty")
+    mid = wake_id()
+    msg = {"id": mid, "at": utc_now(), "sender": sender, "to": receiver, "topic": args.topic, "kind": args.kind, "text": text}
+    atomic_write_json(coord_file(root, "messages", receiver, f"{mid}.json"), msg)
+    print(json.dumps(msg, ensure_ascii=False, indent=2))
+
+
+def coord_ack_topic(args: argparse.Namespace) -> None:
+    root = coord_root(args)
+    who = valid_agent(args.agent)
+    count = 0
+    for msg in unread_messages(root, who):
+        if msg.get("topic") != args.topic:
+            continue
+        mid = msg.get("id")
+        if not mid:
+            continue
+        atomic_write_json(coord_file(root, "acks", who, f"{mid}.json"), {"id": mid, "agent": who, "at": utc_now(), "topic": args.topic, "batch": True})
+        count += 1
+    print(json.dumps({"agent": who, "topic": args.topic, "acked": count}, ensure_ascii=False, indent=2))
+
+
+def coord_session_set(args: argparse.Namespace) -> None:
+    root = coord_root(args)
+    who = valid_agent(args.agent)
+    state = {
+        "agent": who,
+        "mode": args.mode,
+        "thread_id": args.thread_id or "",
+        "new_session_policy": args.new_session_policy,
+        "handoff_style": args.handoff_style,
+        "notes": args.notes or "",
+        "updated_at": utc_now(),
+    }
+    atomic_write_json(coord_file(root, "sessions", f"{who}.json"), state)
+    print(json.dumps(state, ensure_ascii=False, indent=2))
+
+
+def coord_wake(args: argparse.Namespace) -> None:
+    root = coord_root(args)
+    sender, receiver = valid_agent(args.sender), valid_agent(args.to)
+    if sender == receiver:
+        raise ProtocolError("sender and receiver must differ")
+    task_name = valid_task(args.task)
+    if not args.reason.strip():
+        raise ProtocolError("wake reason is empty")
+    wid = wake_id()
+    event = {
+        "id": wid,
+        "type": "wake_request",
+        "at": utc_now(),
+        "sender": sender,
+        "to": receiver,
+        "task": task_name,
+        "reason": args.reason,
+        "budget": args.budget,
+        "entrypoint": args.entrypoint or "",
+        "requires_user_auth": bool(args.requires_user_auth),
+        "no_polling": True,
+        "dry_run": bool(args.dry_run),
+        "session": session_state(root, receiver),
+        "allow_new_session": bool(args.allow_new_session),
+        "claim_timeout_seconds": args.claim_timeout_seconds,
+    }
+    atomic_write_json(coord_file(root, "wake_queue", f"{wid}.json"), event)
+    print(json.dumps(event, ensure_ascii=False, indent=2))
+
+
+def coord_wake_status(args: argparse.Namespace) -> None:
+    root = coord_root(args)
+    def count(name: str) -> int:
+        path = coord_file(root, name)
+        return len(list(path.glob("*.json"))) if path.exists() else 0
+    log_path = coord_file(root, "wake_log.jsonl")
+    tail = []
+    if log_path.exists():
+        tail = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()[-args.tail:] if line.strip()]
+    print(json.dumps({"queue": count("wake_queue"), "done": count("wake_done"), "failed": count("wake_failed"), "pending": count("wake_pending"), "log_tail": tail}, ensure_ascii=False, indent=2))
+
+
+def coord_archive_stale(args: argparse.Namespace) -> None:
+    root = coord_root(args)
+    queue = coord_file(root, "wake_queue")
+    archive = coord_file(root, "wake_done", args.archive_name)
+    if not queue.exists():
+        print(json.dumps({"archived": 0, "archive": str(archive)}, ensure_ascii=False, indent=2))
+        return
+    archive.mkdir(parents=True, exist_ok=True)
+    moved = []
+    for path in sorted(queue.glob("*.json")):
+        event = read_json(path)
+        if not args.all:
+            at = event.get("at", "")
+            try:
+                age_hours = (datetime.now(timezone.utc) - datetime.fromisoformat(at.replace("Z", "+00:00"))).total_seconds() / 3600
+            except ValueError:
+                age_hours = args.older_than_hours + 1
+            if age_hours < args.older_than_hours:
+                continue
+        target = archive / path.name
+        shutil.move(str(path), str(target))
+        moved.append({"id": event.get("id", path.stem), "to": event.get("to"), "task": event.get("task")})
+    digest = {
+        "at": utc_now(),
+        "archive": str(archive),
+        "archived": len(moved),
+        "items": moved,
+        "note": "Archived wake requests are preserved as JSON; archive does not imply execution.",
+    }
+    atomic_write_json(archive / "ARCHIVE_DIGEST.json", digest)
+    print(json.dumps(digest, ensure_ascii=False, indent=2))
+
+
+def coord_onboarding(args: argparse.Namespace) -> None:
+    root = coord_root(args)
+    who = valid_agent(args.agent)
+    payload = {
+        "agent": who,
+        "coord_root": str(root),
+        "session": session_state(root, who),
+        "unread_digest_command": f"agent-evolution --coord-root {root} coord-digest --agent {who}",
+        "status_command": f"agent-evolution --coord-root {root} coord-status",
+        "rules": [
+            "Read README / introduction / latest status board before acting.",
+            "Ordinary messages do not wake models; use explicit wake requests.",
+            "Prefer digest-first handoff and existing sticky sessions.",
+            "Do not create a new session unless the user explicitly authorizes it or allow_new_session=true.",
+            "If the sticky session cannot be located, write a digest/status update and stop.",
+        ],
+    }
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path(".agent-evolution"))
+    parser.add_argument("--coord-root", type=Path, default=Path(os.environ.get("AEP_COORD_ROOT", "coordination")), help="local coordination root for coord-* commands")
     commands = parser.add_subparsers(dest="command", required=True)
     init = commands.add_parser("init")
     init.add_argument("--round-id", required=True); init.add_argument("--task", required=True); init.add_argument("--leader", required=True); init.add_argument("--cells", nargs="+", required=True); init.add_argument("--budget", type=float, required=True); init.add_argument("--reserve", type=float, default=0.20); init.set_defaults(func=init_round)
@@ -284,6 +590,20 @@ def build_parser() -> argparse.ArgumentParser:
     pause = commands.add_parser("hold"); pause.add_argument("--round-id", required=True); pause.add_argument("--actor", required=True); pause.add_argument("--reason", required=True); pause.add_argument("--kind", choices=["HUMAN_HOLD", "INCIDENT_HOLD"], default="HUMAN_HOLD"); pause.set_defaults(func=hold)
     restart = commands.add_parser("resume"); restart.add_argument("--round-id", required=True); restart.add_argument("--actor", required=True); restart.add_argument("--reason", required=True); restart.add_argument("--human-approved", action="store_true"); restart.set_defaults(func=resume)
     check = commands.add_parser("audit"); check.add_argument("--round-id", required=True); check.set_defaults(func=audit)
+    commands.add_parser("doctor").set_defaults(func=coord_doctor)
+    commands.add_parser("coord-bootstrap").set_defaults(func=coord_bootstrap)
+    commands.add_parser("coord-status").set_defaults(func=coord_status)
+    digest = commands.add_parser("coord-digest"); digest.add_argument("--agent", required=True); digest.add_argument("--limit", type=int, default=20); digest.add_argument("--samples", type=int, default=2); digest.add_argument("--preview-chars", type=int, default=240); digest.set_defaults(func=coord_digest)
+    send = commands.add_parser("coord-send")
+    send.add_argument("--from", dest="sender", required=True); send.add_argument("--to", required=True); send.add_argument("--topic", required=True); send.add_argument("--kind", choices=MESSAGE_KINDS, required=True)
+    body = send.add_mutually_exclusive_group(required=True); body.add_argument("--text"); body.add_argument("--text-file")
+    send.set_defaults(func=coord_send)
+    ack_topic = commands.add_parser("coord-ack-topic"); ack_topic.add_argument("--agent", required=True); ack_topic.add_argument("--topic", required=True); ack_topic.set_defaults(func=coord_ack_topic)
+    session = commands.add_parser("coord-session-set"); session.add_argument("--agent", required=True); session.add_argument("--mode", choices=("sticky", "manual", "spawn-allowed"), default="sticky"); session.add_argument("--thread-id"); session.add_argument("--new-session-policy", choices=SESSION_POLICIES, default="forbid-by-default"); session.add_argument("--handoff-style", choices=HANDOFF_STYLES, default="digest-first"); session.add_argument("--notes"); session.set_defaults(func=coord_session_set)
+    wake = commands.add_parser("coord-wake"); wake.add_argument("--from", dest="sender", required=True); wake.add_argument("--to", required=True); wake.add_argument("--task", required=True); wake.add_argument("--reason", required=True); wake.add_argument("--budget", choices=WAKE_BUDGETS, default="one-shot"); wake.add_argument("--entrypoint"); wake.add_argument("--requires-user-auth", action="store_true"); wake.add_argument("--dry-run", action="store_true"); wake.add_argument("--allow-new-session", action="store_true"); wake.add_argument("--claim-timeout-seconds", type=int, default=600); wake.set_defaults(func=coord_wake)
+    wake_status = commands.add_parser("coord-wake-status"); wake_status.add_argument("--tail", type=int, default=10); wake_status.set_defaults(func=coord_wake_status)
+    archive = commands.add_parser("coord-archive-stale"); archive.add_argument("--older-than-hours", type=float, default=24); archive.add_argument("--archive-name", default="archived-stale"); archive.add_argument("--all", action="store_true"); archive.set_defaults(func=coord_archive_stale)
+    onboarding = commands.add_parser("coord-onboarding"); onboarding.add_argument("--agent", required=True); onboarding.set_defaults(func=coord_onboarding)
     return parser
 
 

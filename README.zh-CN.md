@@ -31,3 +31,20 @@
 
 参考代码位于 `src/agent_evolution_protocol/coordination/`。设计原则是：普通消息只留言，
 不会启动模型；只有显式 wake request 才进入可审计的唤醒队列，并通过 adapter 触达具体桌面 Agent。
+
+## 统一本地 CLI
+
+第一次使用可以直接运行：
+
+```powershell
+pwsh.exe -File .\scripts\bootstrap.ps1 -CoordRoot coordination
+```
+
+安装后可以使用 `aep`（等价于 `agent-evolution`）：
+
+- 治理平面：`init`、`commit`、`reveal`、`challenge`、`threat`、`decide`、`audit`
+- 协作平面：`doctor`、`coord-status`、`coord-digest`、`coord-send`、`coord-wake`、`coord-wake-status`、`coord-archive-stale`、`coord-session-set`、`coord-onboarding`
+
+协作 CLI 只读写本地文件，不调用模型。它的目标是让新加入的 agent 先读 digest、状态板和 sticky session 策略，再决定是否行动；如果缺少长期会话 ID，就暴露为 handoff 问题，而不是默默新建无意义会话。
+
+更多命令示例见 [多 Agent 协作 CLI 快速指南](docs/COORDINATION_CLI.zh-CN.md)。
