@@ -82,6 +82,40 @@ class CollaborationTests(unittest.TestCase):
             self.assertEqual(hook.main(), 0)
         self.assertEqual(calls, [])
 
+    def test_disconnected_client_is_handled_without_traceback(self):
+        hub = load("realtime_hub_disconnect_test", "realtime_hub.py")
+        handler = object.__new__(hub.Handler)
+        for error in (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            with self.subTest(error=error), mock.patch.object(hub.BaseHTTPRequestHandler, "handle", side_effect=error):
+                handler.close_connection = False
+                handler.handle()
+                self.assertTrue(handler.close_connection)
+
+    def test_health_does_not_expose_token(self):
+        hub = load("realtime_hub_health_test", "realtime_hub.py")
+        handler = object.__new__(hub.Handler)
+        handler.path = "/api/health"
+        with mock.patch.object(handler, "send_json") as send:
+            handler.do_GET()
+        status, payload = send.call_args.args
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["status"], "ok")
+        self.assertNotIn("token", payload)
+
+    def test_resume_recovers_more_than_snapshot_limit_in_append_order(self):
+        hub = load("realtime_hub_resume_test", "realtime_hub.py")
+        with tempfile.TemporaryDirectory() as temp:
+            hub.EVENTS = Path(temp) / "events.jsonl"
+            store = hub.EventStore()
+            store.events = [{"id": "z", "room": "test"}] + [
+                {"id": str(index), "room": "test"} for index in range(600)
+            ]
+            self.assertEqual(len(store.snapshot("test")), 500)
+            pending = store.pending("test", "z")
+            self.assertEqual(len(pending), 600)
+            self.assertEqual(pending[0]["id"], "0")
+            self.assertEqual(len(store.pending("test", "missing")), 601)
+
 
 if __name__ == "__main__":
     unittest.main()

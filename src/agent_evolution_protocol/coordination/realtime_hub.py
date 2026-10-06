@@ -13,7 +13,6 @@ import os
 from pathlib import Path
 import secrets
 import subprocess
-import sys
 import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -22,12 +21,11 @@ from uuid import uuid4
 
 try:
     from cluster_kernel import ClusterKernel
-except ImportError:
+except ImportError:  # imported as competition.coordination.realtime_hub
     try:
-        from .cluster_kernel import ClusterKernel
+        from agent_evolution_protocol.coordination.cluster_kernel import ClusterKernel
     except ImportError:
-        sys.path.insert(0, str(Path(__file__).resolve().parent))
-        from cluster_kernel import ClusterKernel
+        from competition.coordination.cluster_kernel import ClusterKernel
 
 
 ROOT = Path(__file__).resolve().parent
@@ -106,6 +104,17 @@ class EventStore:
     def snapshot(self, room: str, limit: int = 500) -> list[dict]:
         with self.lock:
             return [item for item in self.events if item.get("room") == room][-limit:]
+
+    def pending(self, room: str, since: str) -> list[dict]:
+        """Resume by append order, including gaps larger than the UI snapshot."""
+        with self.lock:
+            if not since:
+                return self.snapshot(room)
+            cursor = next((i for i, event in enumerate(self.events) if event["id"] == since), None)
+            if cursor is None:
+                # Unknown cursors replay the room; clients deduplicate by ID.
+                return [event for event in self.events if event.get("room") == room]
+            return [event for event in self.events[cursor + 1:] if event.get("room") == room]
 
 
 STORE = EventStore()
@@ -252,6 +261,14 @@ def launch_worker(event: dict) -> None:
 class Handler(BaseHTTPRequestHandler):
     server_version = "CollabHub/1.0"
 
+    def handle(self) -> None:
+        # A disconnected client must not turn an already persisted event into
+        # an apparent server failure or produce a traceback on every reconnect.
+        try:
+            super().handle()
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            self.close_connection = True
+
     def log_message(self, fmt: str, *args: object) -> None:
         print(f"[{now()}] {self.address_string()} {fmt % args}")
 
@@ -276,6 +293,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
+        if parsed.path == "/api/health":
+            with STORE.lock:
+                count = len(STORE.events)
+            self.send_json(HTTPStatus.OK, {"service": "collaboration-hub", "status": "ok", "pid": os.getpid(), "events": count})
+            return
         if parsed.path in {"/", "/index.html"}:
             body = DASHBOARD.read_bytes()
             self.send_response(HTTPStatus.OK)
@@ -301,23 +323,26 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 while True:
                     with STORE.lock:
-                        candidates = STORE.snapshot(room)
-                        if since:
-                            candidates = [item for item in candidates if item["id"] > since]
-                        elif sent:
+                        candidates = STORE.pending(room, since)
+                        if not since and sent:
                             candidates = []
                         if not candidates:
                             STORE.lock.wait(timeout=25)
-                            self.wfile.write(b": keepalive\n\n")
-                            self.wfile.flush()
-                            continue
+                            candidates = STORE.pending(room, since)
+                            if not since and sent:
+                                candidates = []
+                    # Never hold the event-store lock while writing to a socket.
+                    if not candidates:
+                        self.wfile.write(b": keepalive\n\n")
+                        self.wfile.flush()
+                        continue
                     for event in candidates:
                         data = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
                         self.wfile.write(f"id: {event['id']}\ndata: {data}\n\n".encode("utf-8"))
                         self.wfile.flush()
                         since = event["id"]
                         sent = True
-            except (BrokenPipeError, ConnectionResetError):
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                 return
         self.send_error(HTTPStatus.NOT_FOUND)
 
