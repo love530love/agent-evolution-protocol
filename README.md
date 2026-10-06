@@ -69,7 +69,8 @@ pwsh.exe -File .\scripts\bootstrap.ps1 -CoordRoot coordination
 The `aep` command is an alias for `agent-evolution` and exposes both planes:
 
 - governance plane: `init`, `commit`, `reveal`, `challenge`, `threat`, `decide`, `audit`;
-- coordination plane: `doctor`, `coord-status`, `coord-digest`, `coord-send`, `coord-wake`, `coord-wake-status`, `coord-archive-stale`, `coord-session-set`, `coord-claim`, `coord-release`, `coord-task-state`, `coord-onboarding`.
+- coordination plane: `doctor`, `coord-status`, `coord-digest`, `coord-send`, `coord-wake`, `coord-wake-status`, `coord-archive-stale`, `coord-session-set`, `coord-claim`, `coord-release`, `coord-task-state`, `coord-onboarding`;
+- recovery kernel: `kernel-status`, `kernel-lease-acquire`, `kernel-lease-release`, `kernel-op-reserve`, `kernel-op-transition`, `kernel-session-bind`, `kernel-continuation-plan`, `kernel-checkpoint`.
 
 The coordination CLI is local-file based and does not call models. It is meant
 to make onboarding deterministic: a new agent reads the current digest and

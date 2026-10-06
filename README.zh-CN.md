@@ -44,6 +44,7 @@ pwsh.exe -File .\scripts\bootstrap.ps1 -CoordRoot coordination
 
 - 治理平面：`init`、`commit`、`reveal`、`challenge`、`threat`、`decide`、`audit`
 - 协作平面：`doctor`、`coord-status`、`coord-digest`、`coord-send`、`coord-wake`、`coord-wake-status`、`coord-archive-stale`、`coord-session-set`、`coord-claim`、`coord-release`、`coord-task-state`、`coord-onboarding`
+- 恢复内核：`kernel-status`、`kernel-lease-acquire`、`kernel-lease-release`、`kernel-op-reserve`、`kernel-op-transition`、`kernel-session-bind`、`kernel-continuation-plan`、`kernel-checkpoint`
 
 协作 CLI 只读写本地文件，不调用模型。它的目标是让新加入的 agent 先读 digest、状态板和 sticky session 策略，再决定是否行动；如果缺少长期会话 ID，就暴露为 handoff 问题，而不是默默新建无意义会话。
 

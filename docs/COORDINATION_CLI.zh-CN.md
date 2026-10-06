@@ -27,6 +27,28 @@ aep --coord-root coordination coord-archive-stale --older-than-hours 24 --archiv
 aep --coord-root coordination coord-onboarding --agent hermes_desktop
 ```
 
+## 恢复内核 / 资源锁命令
+
+当多个 agent 可能同时操作同一浏览器 Tab、同一文件、同一上传额度或同一外部平台时，使用 `kernel-*` 命令记录可恢复的资源锁和幂等操作：
+
+```powershell
+aep --kernel-root .aep-kernel kernel-status
+aep --kernel-root .aep-kernel kernel-lease-acquire --lease-type BROWSER_SESSION_LEASE --resource tab:1 --executor codex --ttl-seconds 300
+aep --kernel-root .aep-kernel kernel-lease-release --lease-type BROWSER_SESSION_LEASE --resource tab:1 --executor codex --lease-epoch 1
+aep --kernel-root .aep-kernel kernel-op-reserve --operation-key upload:T125:r1 --request-json '{"task":"T125","artifact":"sha256..."}'
+aep --kernel-root .aep-kernel kernel-op-transition --operation-key upload:T125:r1 --state STARTED --evidence-json '{"started_by":"codex"}'
+aep --kernel-root .aep-kernel kernel-op-transition --operation-key upload:T125:r1 --state COMMITTED --evidence-json '{"receipt":"ok"}'
+aep --kernel-root .aep-kernel kernel-session-bind --agent workbuddy --provider hermes --workspace K:\PythonProjects5\FlagGems-sglang --session-id "<existing-session-id>"
+aep --kernel-root .aep-kernel kernel-continuation-plan --agent workbuddy --workspace K:\PythonProjects5\FlagGems-sglang
+```
+
+设计原则：
+
+- 读操作可以并行，写操作必须持有 lease。
+- 高风险外部动作先 `kernel-op-reserve`，执行中转 `STARTED`，结果明确后转 `COMMITTED` 或 `ROLLED_BACK`；结果未知时转 `UNKNOWN`。
+- 续跑前先看 `kernel-continuation-plan`，不要因为找不到旧会话就自动开新会话。
+- 长任务中断前写 `kernel-checkpoint`，让另一个 agent 可以从 evidence 和 next step 接续。
+
 ## 协作纪律
 
 - 普通消息不唤醒模型。

@@ -16,6 +16,8 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
+from agent_evolution_protocol.coordination.cluster_kernel import ClusterKernel
+
 SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 PROPOSAL_FIELDS = {"candidate_id", "cell_id", "hypothesis", "structural_difference", "prediction", "cheapest_falsification", "max_budget", "stop_condition", "artifact_sha256", "contaminated"}
@@ -95,6 +97,13 @@ def coord_root(args: argparse.Namespace) -> Path:
     root = getattr(args, "coord_root", None)
     if root is None:
         root = Path(os.environ.get("AEP_COORD_ROOT", "coordination"))
+    return Path(root)
+
+
+def kernel_root(args: argparse.Namespace) -> Path:
+    root = getattr(args, "kernel_root", None)
+    if root is None:
+        root = Path(os.environ.get("AEP_KERNEL_ROOT", ".aep-kernel"))
     return Path(root)
 
 
@@ -634,10 +643,98 @@ def coord_onboarding(args: argparse.Namespace) -> None:
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+def kernel_status(args: argparse.Namespace) -> None:
+    kernel = ClusterKernel(kernel_root(args))
+    events = kernel.events()
+    latest_leases = {}
+    latest_ops = {}
+    sessions = {}
+    for event in events:
+        kind = event.get("kind")
+        if str(kind).startswith("LEASE_"):
+            latest_leases[(event.get("lease_type"), event.get("resource"))] = event
+        elif kind == "OPERATION":
+            latest_ops[event.get("operation_key")] = event
+        elif kind == "SESSION_BOUND":
+            sessions[(event.get("agent"), event.get("workspace"))] = event
+    print(json.dumps({
+        "kernel_root": str(kernel.root),
+        "event_count": len(events),
+        "chain_valid": kernel.verify_chain(),
+        "leases": list(latest_leases.values()),
+        "operations": list(latest_ops.values()),
+        "sessions": list(sessions.values()),
+    }, ensure_ascii=False, indent=2))
+
+
+def kernel_lease_acquire(args: argparse.Namespace) -> None:
+    kernel = ClusterKernel(kernel_root(args))
+    event = kernel.acquire_lease(
+        args.lease_type,
+        args.resource,
+        args.executor,
+        task_id=args.task_id or "",
+        artifact_sha=args.artifact_sha or "",
+        ttl_seconds=args.ttl_seconds,
+    )
+    print(json.dumps(event, ensure_ascii=False, indent=2))
+
+
+def kernel_lease_release(args: argparse.Namespace) -> None:
+    kernel = ClusterKernel(kernel_root(args))
+    event = kernel.release_lease(args.lease_type, args.resource, args.executor, args.lease_epoch)
+    print(json.dumps(event, ensure_ascii=False, indent=2))
+
+
+def kernel_op_reserve(args: argparse.Namespace) -> None:
+    kernel = ClusterKernel(kernel_root(args))
+    request = json.loads(args.request_json) if args.request_json else read_json(Path(args.request_file))
+    if not isinstance(request, dict):
+        raise ProtocolError("operation request must be a JSON object")
+    event = kernel.reserve_operation(args.operation_key, request)
+    print(json.dumps(event, ensure_ascii=False, indent=2))
+
+
+def kernel_op_transition(args: argparse.Namespace) -> None:
+    kernel = ClusterKernel(kernel_root(args))
+    evidence = json.loads(args.evidence_json) if args.evidence_json else {}
+    if not isinstance(evidence, dict):
+        raise ProtocolError("evidence must be a JSON object")
+    event = kernel.transition_operation(args.operation_key, args.state, **evidence)
+    print(json.dumps(event, ensure_ascii=False, indent=2))
+
+
+def kernel_session_bind(args: argparse.Namespace) -> None:
+    kernel = ClusterKernel(kernel_root(args))
+    event = kernel.bind_session(args.agent, args.provider, args.workspace, args.session_id, resume_supported=not args.no_resume)
+    print(json.dumps(event, ensure_ascii=False, indent=2))
+
+
+def kernel_continuation_plan(args: argparse.Namespace) -> None:
+    kernel = ClusterKernel(kernel_root(args))
+    plan = kernel.continuation_plan(
+        args.agent,
+        args.workspace,
+        requested_session_id=args.requested_session_id or "",
+        allow_new_session=bool(args.allow_new_session),
+    )
+    print(json.dumps({"action": plan.action, "provider": plan.provider, "session_id": plan.session_id, "reason": plan.reason}, ensure_ascii=False, indent=2))
+
+
+def kernel_checkpoint(args: argparse.Namespace) -> None:
+    kernel = ClusterKernel(kernel_root(args))
+    payload = json.loads(args.payload_json) if args.payload_json else read_json(Path(args.payload_file))
+    if not isinstance(payload, dict):
+        raise ProtocolError("checkpoint payload must be a JSON object")
+    event = kernel.checkpoint(args.task_id, args.executor, payload)
+    print(json.dumps(event, ensure_ascii=False, indent=2))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path(".agent-evolution"))
     parser.add_argument("--coord-root", type=Path, default=Path(os.environ.get("AEP_COORD_ROOT", "coordination")), help="local coordination root for coord-* commands")
+    parser.add_argument("--kernel-root", type=Path, default=Path(os.environ.get("AEP_KERNEL_ROOT", ".aep-kernel")), help="local recovery kernel root for kernel-* commands")
     commands = parser.add_subparsers(dest="command", required=True)
     init = commands.add_parser("init")
     init.add_argument("--round-id", required=True); init.add_argument("--task", required=True); init.add_argument("--leader", required=True); init.add_argument("--cells", nargs="+", required=True); init.add_argument("--budget", type=float, required=True); init.add_argument("--reserve", type=float, default=0.20); init.set_defaults(func=init_round)
@@ -666,6 +763,14 @@ def build_parser() -> argparse.ArgumentParser:
     task_state = commands.add_parser("coord-task-state"); task_state.add_argument("--agent", required=True); task_state.add_argument("--task", required=True); task_state.add_argument("--phase", required=True); task_state.add_argument("--goal", required=True); task_state.add_argument("--evidence", nargs="*"); task_state.add_argument("--blocked-reason"); task_state.add_argument("--next-action"); task_state.add_argument("--wake-phrase"); task_state.add_argument("--human-required", action="store_true"); task_state.add_argument("--stale-after-hours", type=float, default=12); task_state.set_defaults(func=coord_task_state)
     claim = commands.add_parser("coord-claim"); claim.add_argument("--agent", required=True); claim.add_argument("--task", required=True); claim.add_argument("--paths", nargs="*"); claim.set_defaults(func=coord_claim)
     release = commands.add_parser("coord-release"); release.add_argument("--agent", required=True); release.add_argument("--task", required=True); release.set_defaults(func=coord_release)
+    commands.add_parser("kernel-status").set_defaults(func=kernel_status)
+    lease_acquire = commands.add_parser("kernel-lease-acquire"); lease_acquire.add_argument("--lease-type", choices=("TASK_WRITE_LEASE", "UPLOAD_INTENT_LEASE", "BROWSER_SESSION_LEASE"), required=True); lease_acquire.add_argument("--resource", required=True); lease_acquire.add_argument("--executor", required=True); lease_acquire.add_argument("--task-id"); lease_acquire.add_argument("--artifact-sha"); lease_acquire.add_argument("--ttl-seconds", type=int, default=300); lease_acquire.set_defaults(func=kernel_lease_acquire)
+    lease_release = commands.add_parser("kernel-lease-release"); lease_release.add_argument("--lease-type", choices=("TASK_WRITE_LEASE", "UPLOAD_INTENT_LEASE", "BROWSER_SESSION_LEASE"), required=True); lease_release.add_argument("--resource", required=True); lease_release.add_argument("--executor", required=True); lease_release.add_argument("--lease-epoch", type=int, required=True); lease_release.set_defaults(func=kernel_lease_release)
+    op_reserve = commands.add_parser("kernel-op-reserve"); op_reserve.add_argument("--operation-key", required=True); request_body = op_reserve.add_mutually_exclusive_group(required=True); request_body.add_argument("--request-json"); request_body.add_argument("--request-file"); op_reserve.set_defaults(func=kernel_op_reserve)
+    op_transition = commands.add_parser("kernel-op-transition"); op_transition.add_argument("--operation-key", required=True); op_transition.add_argument("--state", choices=("RESERVED", "STARTED", "COMMITTED", "UNKNOWN", "ROLLED_BACK"), required=True); op_transition.add_argument("--evidence-json"); op_transition.set_defaults(func=kernel_op_transition)
+    session_bind = commands.add_parser("kernel-session-bind"); session_bind.add_argument("--agent", required=True); session_bind.add_argument("--provider", choices=("codex", "hermes", "qoder", "codebuddy", "github_copilot"), required=True); session_bind.add_argument("--workspace", required=True); session_bind.add_argument("--session-id", required=True); session_bind.add_argument("--no-resume", action="store_true"); session_bind.set_defaults(func=kernel_session_bind)
+    plan = commands.add_parser("kernel-continuation-plan"); plan.add_argument("--agent", required=True); plan.add_argument("--workspace", required=True); plan.add_argument("--requested-session-id"); plan.add_argument("--allow-new-session", action="store_true"); plan.set_defaults(func=kernel_continuation_plan)
+    checkpoint = commands.add_parser("kernel-checkpoint"); checkpoint.add_argument("--task-id", required=True); checkpoint.add_argument("--executor", required=True); checkpoint_body = checkpoint.add_mutually_exclusive_group(required=True); checkpoint_body.add_argument("--payload-json"); checkpoint_body.add_argument("--payload-file"); checkpoint.set_defaults(func=kernel_checkpoint)
     return parser
 
 
