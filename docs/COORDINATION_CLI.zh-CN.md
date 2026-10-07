@@ -15,6 +15,7 @@ pwsh.exe -File .\scripts\bootstrap.ps1 -CoordRoot coordination
 ```powershell
 aep --coord-root coordination doctor
 aep --coord-root coordination --kernel-root .aep-kernel inspect --markdown
+aep --coord-root coordination --kernel-root .aep-kernel join --agent hermes_desktop --task T125 --workspace K:\PythonProjects5\FlagGems-sglang --markdown
 aep --coord-root coordination coord-status
 aep --coord-root coordination coord-digest --agent workbuddy
 aep --coord-root coordination coord-session-set --agent workbuddy --thread-id "<existing-thread-id>"
@@ -73,3 +74,4 @@ aep --kernel-root .aep-kernel kernel-continuation-plan --agent workbuddy --works
 - [新 Agent 接入契约](AGENT_ONBOARDING_CONTRACT.zh-CN.md)
 - [Guided Retry 策略](GUIDED_RETRY_POLICY.zh-CN.md)
 - [`aep inspect` 作战简报](RUNBOOK_INSPECT.zh-CN.md)
+- [新 Agent 如何接入任意任务](JOINING_ANY_TASK.zh-CN.md)

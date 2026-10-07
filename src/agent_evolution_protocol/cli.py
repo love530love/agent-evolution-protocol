@@ -880,6 +880,94 @@ def inspect_system(args: argparse.Namespace) -> None:
         print(json.dumps(report, ensure_ascii=False, indent=2))
 
 
+def join_agent(args: argparse.Namespace) -> None:
+    croot = coord_root(args)
+    kroot = kernel_root(args)
+    who = valid_agent(args.agent)
+    session = session_state(croot, who)
+    digest = unread_messages(croot, who)
+    task_name = valid_task(args.task) if args.task else ""
+    workspace = args.workspace or str(Path.cwd())
+    plan = ClusterKernel(kroot).continuation_plan(
+        who,
+        workspace,
+        requested_session_id=args.requested_session_id or "",
+        allow_new_session=bool(args.allow_new_session),
+    )
+    claim_guidance = None
+    if task_name:
+        claim_path = coord_file(croot, "claims", task_name, "owner.json")
+        if claim_path.exists():
+            try:
+                claim_guidance = {"claim_available": False, "owner": read_json(claim_path)}
+            except ProtocolError:
+                claim_guidance = {"claim_available": False, "owner": "unreadable"}
+        else:
+            claim_guidance = {
+                "claim_available": True,
+                "command": f"aep --coord-root {croot} coord-claim --agent {who} --task {task_name}",
+            }
+    packet = {
+        "agent": who,
+        "task": task_name,
+        "workspace": workspace,
+        "coord_root": str(croot),
+        "kernel_root": str(kroot),
+        "session": session,
+        "continuation_plan": {
+            "action": plan.action,
+            "provider": plan.provider,
+            "session_id": plan.session_id,
+            "reason": plan.reason,
+        },
+        "unread_count": len(digest),
+        "claim_guidance": claim_guidance,
+        "must_read": [
+            "README.md",
+            "docs/INTRODUCTION.zh-CN.md",
+            "docs/COORDINATION_CLI.zh-CN.md",
+            "docs/AGENT_ONBOARDING_CONTRACT.zh-CN.md",
+            "docs/GUIDED_RETRY_POLICY.zh-CN.md",
+            "docs/RUNBOOK_INSPECT.zh-CN.md",
+        ],
+        "first_commands": [
+            f"aep --coord-root {croot} --kernel-root {kroot} inspect --markdown",
+            f"aep --coord-root {croot} coord-onboarding --agent {who}",
+            f"aep --coord-root {croot} coord-digest --agent {who}",
+        ],
+        "task_commands": [
+            f"aep --coord-root {croot} coord-claim --agent {who} --task {task_name}" if task_name else "",
+            f"aep --coord-root {croot} coord-task-state --agent {who} --task {task_name} --phase working --goal \"<goal>\" --next-action \"<next>\"" if task_name else "",
+        ],
+        "operating_rules": [
+            "Do not create a new session by default.",
+            "Do not execute stale wake requests until current digest/status has been read.",
+            "Claim before writes; lease before shared resource or external write.",
+            "Use guided retry after failure; never blindly replay uncertain writes.",
+            "If continuation_plan.action is BLOCKED_HANDOFF_REQUIRED, write a digest/status update and stop.",
+        ],
+    }
+    packet["task_commands"] = [item for item in packet["task_commands"] if item]
+    if args.markdown:
+        print(f"# Agent Join Packet: {who}\n")
+        print(f"- task: `{task_name or '(none)'}`")
+        print(f"- workspace: `{workspace}`")
+        print(f"- continuation: `{plan.action}` ({plan.reason})")
+        print(f"- unread_count: `{len(digest)}`")
+        print("\n## First commands\n")
+        for command in packet["first_commands"]:
+            print(f"```powershell\n{command}\n```")
+        if packet["task_commands"]:
+            print("\n## Task commands\n")
+            for command in packet["task_commands"]:
+                print(f"```powershell\n{command}\n```")
+        print("\n## Rules\n")
+        for rule in packet["operating_rules"]:
+            print(f"- {rule}")
+    else:
+        print(json.dumps(packet, ensure_ascii=False, indent=2))
+
+
 def kernel_status(args: argparse.Namespace) -> None:
     kernel = ClusterKernel(kernel_root(args))
     events = kernel.events()
@@ -985,6 +1073,7 @@ def build_parser() -> argparse.ArgumentParser:
     check = commands.add_parser("audit"); check.add_argument("--round-id", required=True); check.set_defaults(func=audit)
     commands.add_parser("doctor").set_defaults(func=coord_doctor)
     inspect = commands.add_parser("inspect"); inspect.add_argument("--stale-wake-hours", type=float, default=24); inspect.add_argument("--checkpoint-limit", type=int, default=5); inspect.add_argument("--markdown", action="store_true"); inspect.set_defaults(func=inspect_system)
+    join = commands.add_parser("join"); join.add_argument("--agent", required=True); join.add_argument("--task"); join.add_argument("--workspace"); join.add_argument("--requested-session-id"); join.add_argument("--allow-new-session", action="store_true"); join.add_argument("--markdown", action="store_true"); join.set_defaults(func=join_agent)
     commands.add_parser("coord-bootstrap").set_defaults(func=coord_bootstrap)
     commands.add_parser("coord-status").set_defaults(func=coord_status)
     digest = commands.add_parser("coord-digest"); digest.add_argument("--agent", required=True); digest.add_argument("--limit", type=int, default=20); digest.add_argument("--samples", type=int, default=2); digest.add_argument("--preview-chars", type=int, default=240); digest.set_defaults(func=coord_digest)
