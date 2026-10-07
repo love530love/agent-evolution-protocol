@@ -43,9 +43,9 @@ pwsh.exe -File .\scripts\bootstrap.ps1 -CoordRoot coordination
 安装后可以使用 `aep`（等价于 `agent-evolution`）：
 
 - 治理平面：`init`、`commit`、`reveal`、`challenge`、`threat`、`decide`、`audit`
-- 协作平面：`doctor`、`inspect`、`join`、`coord-status`、`coord-digest`、`coord-send`、`coord-wake`、`coord-wake-status`、`coord-archive-stale`、`coord-session-set`、`coord-claim`、`coord-release`、`coord-task-state`、`coord-onboarding`、`coord-guided-retry`
+- 协作平面：`doctor`、`workspace-init`、`inspect`、`join`、`coord-status`、`coord-digest`、`coord-send`、`coord-wake`、`coord-wake-status`、`coord-archive-stale`、`coord-session-set`、`coord-claim`、`coord-release`、`coord-task-state`、`coord-onboarding`、`coord-guided-retry`
 - 恢复内核：`kernel-status`、`kernel-lease-acquire`、`kernel-lease-release`、`kernel-op-reserve`、`kernel-op-transition`、`kernel-session-bind`、`kernel-continuation-plan`、`kernel-checkpoint`
 
 协作 CLI 只读写本地文件，不调用模型。它的目标是让新加入的 agent 先读 digest、状态板和 sticky session 策略，再决定是否行动；如果缺少长期会话 ID，就暴露为 handoff 问题，而不是默默新建无意义会话。
 
-更多命令示例见 [多 Agent 协作 CLI 快速指南](docs/COORDINATION_CLI.zh-CN.md)、[新 Agent 接入契约](docs/AGENT_ONBOARDING_CONTRACT.zh-CN.md)、[Guided Retry 策略](docs/GUIDED_RETRY_POLICY.zh-CN.md)、[`aep inspect` 作战简报](docs/RUNBOOK_INSPECT.zh-CN.md) 和 [新 Agent 如何接入任意任务](docs/JOINING_ANY_TASK.zh-CN.md)。
+更多命令示例见 [多 Agent 协作 CLI 快速指南](docs/COORDINATION_CLI.zh-CN.md)、[新 Agent 接入契约](docs/AGENT_ONBOARDING_CONTRACT.zh-CN.md)、[Guided Retry 策略](docs/GUIDED_RETRY_POLICY.zh-CN.md)、[`aep inspect` 作战简报](docs/RUNBOOK_INSPECT.zh-CN.md)、[新 Agent 如何接入任意任务](docs/JOINING_ANY_TASK.zh-CN.md) 和 [自然语言接入](docs/NATURAL_LANGUAGE_JOIN.zh-CN.md)。

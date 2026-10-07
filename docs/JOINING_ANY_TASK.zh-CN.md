@@ -2,6 +2,8 @@
 
 `aep join` 是新 agent 的统一入口。它不会调用模型，也不会创建会话；它只生成接入包，告诉 agent 当前该读什么、能不能接续旧会话、是否能 claim 任务，以及哪些动作被禁止。
 
+如果希望更自然，先在共享工作区运行 `aep workspace-init --agents-md`。以后新 agent 只需要听懂一句话：“请加入这个工作区协作。” 详见 [自然语言接入](NATURAL_LANGUAGE_JOIN.zh-CN.md)。
+
 ## 接入协作机制
 
 ```powershell

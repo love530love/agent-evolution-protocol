@@ -69,7 +69,7 @@ pwsh.exe -File .\scripts\bootstrap.ps1 -CoordRoot coordination
 The `aep` command is an alias for `agent-evolution` and exposes both planes:
 
 - governance plane: `init`, `commit`, `reveal`, `challenge`, `threat`, `decide`, `audit`;
-- coordination plane: `doctor`, `inspect`, `join`, `coord-status`, `coord-digest`, `coord-send`, `coord-wake`, `coord-wake-status`, `coord-archive-stale`, `coord-session-set`, `coord-claim`, `coord-release`, `coord-task-state`, `coord-onboarding`, `coord-guided-retry`;
+- coordination plane: `doctor`, `workspace-init`, `inspect`, `join`, `coord-status`, `coord-digest`, `coord-send`, `coord-wake`, `coord-wake-status`, `coord-archive-stale`, `coord-session-set`, `coord-claim`, `coord-release`, `coord-task-state`, `coord-onboarding`, `coord-guided-retry`;
 - recovery kernel: `kernel-status`, `kernel-lease-acquire`, `kernel-lease-release`, `kernel-op-reserve`, `kernel-op-transition`, `kernel-session-bind`, `kernel-continuation-plan`, `kernel-checkpoint`.
 
 The coordination CLI is local-file based and does not call models. It is meant
@@ -77,7 +77,7 @@ to make onboarding deterministic: a new agent reads the current digest and
 sticky-session policy before doing work, and missing session IDs become a
 visible handoff problem instead of silently spawning new chats.
 
-See the Chinese [coordination CLI quick guide](docs/COORDINATION_CLI.zh-CN.md), [agent onboarding contract](docs/AGENT_ONBOARDING_CONTRACT.zh-CN.md), [guided retry policy](docs/GUIDED_RETRY_POLICY.zh-CN.md), [`aep inspect` runbook](docs/RUNBOOK_INSPECT.zh-CN.md), and [joining any task](docs/JOINING_ANY_TASK.zh-CN.md).
+See the Chinese [coordination CLI quick guide](docs/COORDINATION_CLI.zh-CN.md), [agent onboarding contract](docs/AGENT_ONBOARDING_CONTRACT.zh-CN.md), [guided retry policy](docs/GUIDED_RETRY_POLICY.zh-CN.md), [`aep inspect` runbook](docs/RUNBOOK_INSPECT.zh-CN.md), [joining any task](docs/JOINING_ANY_TASK.zh-CN.md), and [natural-language join](docs/NATURAL_LANGUAGE_JOIN.zh-CN.md).
 
 See [the beginner introduction](docs/INTRODUCTION.zh-CN.md), [the protocol](docs/PROTOCOL.md), [the evolution history](docs/EVOLUTION.md), and [the Chinese README](README.zh-CN.md).
 

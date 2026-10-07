@@ -33,6 +33,8 @@ SESSION_POLICIES = ("forbid-by-default", "allow-on-explicit-wake", "allow")
 HANDOFF_STYLES = ("digest-first", "full-context", "minimal")
 TASK_PHASES = ("todo", "claimed", "working", "waiting", "blocked", "needs-review", "ready", "done", "abandoned")
 RISK_LEVELS = ("low", "medium", "high")
+WORKSPACE_CONFIG = ".aep/workspace.json"
+AEP_JOIN_FILE = "AEP_JOIN.md"
 
 
 class ProtocolError(ValueError):
@@ -94,10 +96,30 @@ def read_json(path: Path) -> dict:
     return load(path)
 
 
+def discover_workspace_config(start: Path | None = None) -> dict:
+    current = (start or Path.cwd()).resolve()
+    candidates = [current, *current.parents]
+    for folder in candidates:
+        config = folder / WORKSPACE_CONFIG
+        if config.exists():
+            try:
+                data = read_json(config)
+            except ProtocolError:
+                return {}
+            if isinstance(data, dict):
+                data.setdefault("workspace", str(folder))
+                return data
+    return {}
+
+
 def coord_root(args: argparse.Namespace) -> Path:
     root = getattr(args, "coord_root", None)
     if root is None:
         root = Path(os.environ.get("AEP_COORD_ROOT", "coordination"))
+    if Path(root) == Path("coordination") and "AEP_COORD_ROOT" not in os.environ:
+        config = discover_workspace_config()
+        if config.get("coord_root"):
+            return Path(str(config["coord_root"]))
     return Path(root)
 
 
@@ -105,6 +127,10 @@ def kernel_root(args: argparse.Namespace) -> Path:
     root = getattr(args, "kernel_root", None)
     if root is None:
         root = Path(os.environ.get("AEP_KERNEL_ROOT", ".aep-kernel"))
+    if Path(root) == Path(".aep-kernel") and "AEP_KERNEL_ROOT" not in os.environ:
+        config = discover_workspace_config()
+        if config.get("kernel_root"):
+            return Path(str(config["kernel_root"]))
     return Path(root)
 
 
@@ -968,6 +994,99 @@ def join_agent(args: argparse.Namespace) -> None:
         print(json.dumps(packet, ensure_ascii=False, indent=2))
 
 
+def natural_join_text(workspace: Path, coord: Path, kernel: Path, default_task: str = "") -> str:
+    task_hint = f" --task {default_task}" if default_task else " --task <task_id>"
+    return f"""# Agent Evolution Protocol - Join This Workspace
+
+If you are a new AI agent opened inside this folder, join the collaboration before doing work.
+
+Human phrase to you may be as short as:
+
+> 请加入这个工作区协作。
+
+What to do:
+
+1. Treat this folder as the shared workspace: `{workspace}`.
+2. Do not create a new long-running chat/session unless the user explicitly asks or the protocol says `allow_new_session=true`.
+3. If you can run commands, run:
+
+```powershell
+aep join --agent <your_agent_name>{task_hint} --workspace "{workspace}" --markdown
+aep inspect --markdown
+aep coord-digest --agent <your_agent_name>
+```
+
+The `aep` CLI auto-discovers `.aep/workspace.json` from this folder. If auto-discovery fails, use:
+
+```powershell
+aep --coord-root "{coord}" --kernel-root "{kernel}" join --agent <your_agent_name>{task_hint} --workspace "{workspace}" --markdown
+```
+
+4. If you cannot run commands, read this file plus:
+   - `README.md`
+   - `docs/INTRODUCTION.zh-CN.md`
+   - `docs/COORDINATION_CLI.zh-CN.md`
+   - `docs/AGENT_ONBOARDING_CONTRACT.zh-CN.md`
+   - `docs/GUIDED_RETRY_POLICY.zh-CN.md`
+   - `docs/RUNBOOK_INSPECT.zh-CN.md`
+   - `docs/JOINING_ANY_TASK.zh-CN.md`
+
+First reply template:
+
+```text
+我是 <agent>。我已加入本工作区协作。
+我已读取 AEP_JOIN / inspect / digest。
+当前任务：<task or none>。
+会话策略：优先 sticky session，不默认新建会话。
+我是否 claim：<yes/no/blocked by owner>。
+下一步 bounded action：<one concrete action>。
+```
+
+Operating rules:
+
+- Ordinary messages do not wake models.
+- Read digest/status before acting on old wake requests.
+- Claim before writes.
+- Lease before shared resources or external writes.
+- After failure, run guided retry or follow `docs/GUIDED_RETRY_POLICY.zh-CN.md`.
+- Never blindly replay uncertain submit/upload/publish/delete actions.
+"""
+
+
+def workspace_init(args: argparse.Namespace) -> None:
+    workspace = Path(args.workspace or Path.cwd()).resolve()
+    coord = Path(args.coord_dir).resolve() if args.coord_dir else workspace / "coordination"
+    kernel = Path(args.kernel_dir).resolve() if args.kernel_dir else workspace / ".aep-kernel"
+    (workspace / ".aep").mkdir(parents=True, exist_ok=True)
+    coord.mkdir(parents=True, exist_ok=True)
+    kernel.mkdir(parents=True, exist_ok=True)
+    config = {
+        "schema": "agent-evolution-workspace-v1",
+        "workspace": str(workspace),
+        "coord_root": str(coord),
+        "kernel_root": str(kernel),
+        "default_task": args.default_task or "",
+        "join_file": AEP_JOIN_FILE,
+        "natural_trigger": "请加入这个工作区协作",
+        "updated_at": utc_now(),
+    }
+    atomic_write_json(workspace / WORKSPACE_CONFIG, config)
+    atomic_write(workspace / AEP_JOIN_FILE, natural_join_text(workspace, coord, kernel, args.default_task or "").encode("utf-8"))
+    if args.agents_md:
+        agents_path = workspace / "AGENTS.md"
+        block = (
+            "\n<!-- AEP JOIN START -->\n"
+            "# Agent Evolution Protocol\n\n"
+            "If you are an AI agent opened in this workspace, first read `AEP_JOIN.md` and join the collaboration. "
+            "Do not create a new session by default; use digest-first handoff, claim before writes, and guided retry after failures.\n"
+            "<!-- AEP JOIN END -->\n"
+        )
+        existing = agents_path.read_text(encoding="utf-8") if agents_path.exists() else ""
+        if "<!-- AEP JOIN START -->" not in existing:
+            atomic_write(agents_path, (existing.rstrip() + "\n" + block).lstrip().encode("utf-8"))
+    print(json.dumps(config, ensure_ascii=False, indent=2))
+
+
 def kernel_status(args: argparse.Namespace) -> None:
     kernel = ClusterKernel(kernel_root(args))
     events = kernel.events()
@@ -1072,6 +1191,7 @@ def build_parser() -> argparse.ArgumentParser:
     restart = commands.add_parser("resume"); restart.add_argument("--round-id", required=True); restart.add_argument("--actor", required=True); restart.add_argument("--reason", required=True); restart.add_argument("--human-approved", action="store_true"); restart.set_defaults(func=resume)
     check = commands.add_parser("audit"); check.add_argument("--round-id", required=True); check.set_defaults(func=audit)
     commands.add_parser("doctor").set_defaults(func=coord_doctor)
+    workspace = commands.add_parser("workspace-init"); workspace.add_argument("--workspace"); workspace.add_argument("--coord-dir"); workspace.add_argument("--kernel-dir"); workspace.add_argument("--default-task"); workspace.add_argument("--agents-md", action="store_true"); workspace.set_defaults(func=workspace_init)
     inspect = commands.add_parser("inspect"); inspect.add_argument("--stale-wake-hours", type=float, default=24); inspect.add_argument("--checkpoint-limit", type=int, default=5); inspect.add_argument("--markdown", action="store_true"); inspect.set_defaults(func=inspect_system)
     join = commands.add_parser("join"); join.add_argument("--agent", required=True); join.add_argument("--task"); join.add_argument("--workspace"); join.add_argument("--requested-session-id"); join.add_argument("--allow-new-session", action="store_true"); join.add_argument("--markdown", action="store_true"); join.set_defaults(func=join_agent)
     commands.add_parser("coord-bootstrap").set_defaults(func=coord_bootstrap)
@@ -1103,6 +1223,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8")
     try:
         args = build_parser().parse_args()
         args.func(args)

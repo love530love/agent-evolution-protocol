@@ -14,6 +14,7 @@ pwsh.exe -File .\scripts\bootstrap.ps1 -CoordRoot coordination
 
 ```powershell
 aep --coord-root coordination doctor
+aep workspace-init --workspace K:\PythonProjects5\FlagGems-sglang --agents-md
 aep --coord-root coordination --kernel-root .aep-kernel inspect --markdown
 aep --coord-root coordination --kernel-root .aep-kernel join --agent hermes_desktop --task T125 --workspace K:\PythonProjects5\FlagGems-sglang --markdown
 aep --coord-root coordination coord-status
@@ -75,3 +76,4 @@ aep --kernel-root .aep-kernel kernel-continuation-plan --agent workbuddy --works
 - [Guided Retry 策略](GUIDED_RETRY_POLICY.zh-CN.md)
 - [`aep inspect` 作战简报](RUNBOOK_INSPECT.zh-CN.md)
 - [新 Agent 如何接入任意任务](JOINING_ANY_TASK.zh-CN.md)
+- [自然语言接入](NATURAL_LANGUAGE_JOIN.zh-CN.md)
