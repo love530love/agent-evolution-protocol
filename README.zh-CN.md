@@ -43,9 +43,27 @@ pwsh.exe -File .\scripts\bootstrap.ps1 -CoordRoot coordination
 安装后可以使用 `aep`（等价于 `agent-evolution`）：
 
 - 治理平面：`init`、`commit`、`reveal`、`challenge`、`threat`、`decide`、`audit`
-- 协作平面：`doctor`、`workspace-init`、`inspect`、`join`、`coord-status`、`coord-digest`、`coord-send`、`coord-wake`、`coord-wake-status`、`coord-archive-stale`、`coord-session-set`、`coord-claim`、`coord-release`、`coord-task-state`、`coord-onboarding`、`coord-guided-retry`
+- 协作平面：`doctor`、`workspace-init`、`inspect`、`route`、`join`、`coord-status`、`coord-digest`、`coord-send`、`coord-wake`、`coord-wake-status`、`coord-archive-stale`、`coord-session-set`、`coord-claim`、`coord-release`、`coord-task-state`、`coord-onboarding`、`coord-guided-retry`
 - 恢复内核：`kernel-status`、`kernel-lease-acquire`、`kernel-lease-release`、`kernel-op-reserve`、`kernel-op-transition`、`kernel-session-bind`、`kernel-continuation-plan`、`kernel-checkpoint`
 
 协作 CLI 只读写本地文件，不调用模型。它的目标是让新加入的 agent 先读 digest、状态板和 sticky session 策略，再决定是否行动；如果缺少长期会话 ID，就暴露为 handoff 问题，而不是默默新建无意义会话。
 
-更多命令示例见 [多 Agent 协作 CLI 快速指南](docs/COORDINATION_CLI.zh-CN.md)、[新 Agent 接入契约](docs/AGENT_ONBOARDING_CONTRACT.zh-CN.md)、[Guided Retry 策略](docs/GUIDED_RETRY_POLICY.zh-CN.md)、[`aep inspect` 作战简报](docs/RUNBOOK_INSPECT.zh-CN.md)、[新 Agent 如何接入任意任务](docs/JOINING_ANY_TASK.zh-CN.md) 和 [自然语言接入](docs/NATURAL_LANGUAGE_JOIN.zh-CN.md)。
+更多命令示例见 [多 Agent 协作 CLI 快速指南](docs/COORDINATION_CLI.zh-CN.md)、[新 Agent 接入契约](docs/AGENT_ONBOARDING_CONTRACT.zh-CN.md)、[Guided Retry 策略](docs/GUIDED_RETRY_POLICY.zh-CN.md)、[`aep inspect` 作战简报](docs/RUNBOOK_INSPECT.zh-CN.md)、[新 Agent 如何接入任意任务](docs/JOINING_ANY_TASK.zh-CN.md)、[自然语言接入](docs/NATURAL_LANGUAGE_JOIN.zh-CN.md) 和 [`aep route` 需求调研与开发计划](docs/ROUTE_DEVELOPMENT_PLAN.zh-CN.md)。
+
+## 一句话让新 Agent 接入
+
+共享项目初始化一次：
+
+```powershell
+aep workspace-init --workspace 'K:\PythonProjects5\MyProject' --agents-md
+```
+
+之后给新 agent 一句话：“请加入这个工作区协作，接入 T125。”支持项目指令的 agent 会从 `AGENTS.md` 找到 `AEP_JOIN.md`；不自动读入口的产品，补一句“先读根目录 AEP_JOIN.md”。命令型 agent 按原话获取协作指引：
+
+```powershell
+aep route --agent hermes --workspace 'K:\PythonProjects5\MyProject' --intent '请加入这个工作区协作，接入 T125' --markdown
+```
+
+同一入口支持了解项目、加入任务、接手、只审查、独立探索、共享资源操作、失败恢复、唤醒和状态汇报。任务不限赛题，可用 `--task BUG-42` 或 `--task DOCS-INTRO`。项目习惯用语放入可选 `.aep/routing.json`；决策 trace 可帮助解释命中和歧义。`route` 只给建议，实际认领、资源租约和执行均有独立步骤。
+
+长程任务优先复用已有会话，先读摘要和最新检查点，需要时再展开历史。只读文件的 agent 也能参与审查和分析，由命令型 agent 协助完成认领或租约。添加 agent 名称不等于接通产品适配器；真实唤醒、原窗口续接仍需对应产品支持。完整示例和能力边界见[自然语言协作路由](docs/SCENARIO_ROUTER.zh-CN.md)。

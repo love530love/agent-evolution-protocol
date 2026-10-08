@@ -69,7 +69,7 @@ pwsh.exe -File .\scripts\bootstrap.ps1 -CoordRoot coordination
 The `aep` command is an alias for `agent-evolution` and exposes both planes:
 
 - governance plane: `init`, `commit`, `reveal`, `challenge`, `threat`, `decide`, `audit`;
-- coordination plane: `doctor`, `workspace-init`, `inspect`, `join`, `coord-status`, `coord-digest`, `coord-send`, `coord-wake`, `coord-wake-status`, `coord-archive-stale`, `coord-session-set`, `coord-claim`, `coord-release`, `coord-task-state`, `coord-onboarding`, `coord-guided-retry`;
+- coordination plane: `doctor`, `workspace-init`, `inspect`, `route`, `join`, `coord-status`, `coord-digest`, `coord-send`, `coord-wake`, `coord-wake-status`, `coord-archive-stale`, `coord-session-set`, `coord-claim`, `coord-release`, `coord-task-state`, `coord-onboarding`, `coord-guided-retry`;
 - recovery kernel: `kernel-status`, `kernel-lease-acquire`, `kernel-lease-release`, `kernel-op-reserve`, `kernel-op-transition`, `kernel-session-bind`, `kernel-continuation-plan`, `kernel-checkpoint`.
 
 The coordination CLI is local-file based and does not call models. It is meant
@@ -77,9 +77,38 @@ to make onboarding deterministic: a new agent reads the current digest and
 sticky-session policy before doing work, and missing session IDs become a
 visible handoff problem instead of silently spawning new chats.
 
-See the Chinese [coordination CLI quick guide](docs/COORDINATION_CLI.zh-CN.md), [agent onboarding contract](docs/AGENT_ONBOARDING_CONTRACT.zh-CN.md), [guided retry policy](docs/GUIDED_RETRY_POLICY.zh-CN.md), [`aep inspect` runbook](docs/RUNBOOK_INSPECT.zh-CN.md), [joining any task](docs/JOINING_ANY_TASK.zh-CN.md), and [natural-language join](docs/NATURAL_LANGUAGE_JOIN.zh-CN.md).
+See the Chinese [coordination CLI quick guide](docs/COORDINATION_CLI.zh-CN.md), [agent onboarding contract](docs/AGENT_ONBOARDING_CONTRACT.zh-CN.md), [guided retry policy](docs/GUIDED_RETRY_POLICY.zh-CN.md), [`aep inspect` runbook](docs/RUNBOOK_INSPECT.zh-CN.md), [joining any task](docs/JOINING_ANY_TASK.zh-CN.md), [natural-language join](docs/NATURAL_LANGUAGE_JOIN.zh-CN.md), and [`aep route` requirements and development plan](docs/ROUTE_DEVELOPMENT_PLAN.zh-CN.md).
 
 See [the beginner introduction](docs/INTRODUCTION.zh-CN.md), [the protocol](docs/PROTOCOL.md), [the evolution history](docs/EVOLUTION.md), and [the Chinese README](README.zh-CN.md).
+
+## Join a workspace in plain language
+
+Initialize the shared project once:
+
+```powershell
+aep workspace-init --workspace 'K:\PythonProjects5\MyProject' --agents-md
+```
+
+Then tell a new agent: “Join this workspace and work on T125.” An agent that reads
+`AGENTS.md` follows `AEP_JOIN.md`; otherwise point it to that file. A command-capable
+agent can translate the original request into a read-only plan:
+
+```powershell
+aep route --agent hermes --workspace 'K:\PythonProjects5\MyProject' --task T125 --intent 'Join this task' --markdown
+```
+
+The router covers orientation, task joining, takeover, review, independent
+exploration, shared-resource operations, recovery, wake requests, reporting and
+file-only participation. Task IDs also support general work such as `BUG-42` and
+`DOCS-INTRO`. Optional `.aep/routing.json` keywords adapt it to project vocabulary;
+decision traces explain matches and ambiguity. Routing does not acquire ownership,
+execute suggested commands or wake another model.
+
+Existing sessions are preferred, with digest-first and checkpoint-based handoff.
+An adapter must support actual session resumption or wake delivery; accepting a
+new agent name does not provide that adapter. Agents without a CLI can read the
+workspace entry and available status files, then request command-capable help.
+See the [scenario router guide](docs/SCENARIO_ROUTER.zh-CN.md) for examples and limits.
 
 ## Status
 

@@ -10,6 +10,16 @@ from agent_evolution_protocol import cli
 
 
 class CoordinationCliTest(unittest.TestCase):
+    def test_custom_agent_is_visible_after_claim(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with redirect_stdout(StringIO()):
+                cli.coord_claim(SimpleNamespace(coord_root=root, agent="custom_agent", task="docs-intro", paths=[]))
+            with redirect_stdout(StringIO()) as output:
+                cli.coord_status(SimpleNamespace(coord_root=root))
+            self.assertIn("custom_agent", json.loads(output.getvalue())["sessions"])
+            self.assertEqual("custom_agent", cli.infer_target_agent("通知 custom_agent", "codex", cli.known_agents(root)))
+
     def test_bootstrap_send_digest_wake_archive(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
