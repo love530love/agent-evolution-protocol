@@ -21,6 +21,7 @@ from agent_evolution_protocol.coordination.conversation_journal import append_ev
 from agent_evolution_protocol.coordination.joint_attack import open_case as open_joint_case, review_case as review_joint_case, case_status as joint_case_status
 from agent_evolution_protocol.coordination.capability_roster import declare as declare_capabilities, match as match_capabilities
 from agent_evolution_protocol.coordination.mechanism_audit import audit as audit_mechanism
+from agent_evolution_protocol.coordination.volley_plan import plan as plan_volley
 from agent_evolution_protocol.routing import classify_intent, load_route_config
 from agent_evolution_protocol.route_state import analyze_route_state, continuation_from_events, select_resource_type
 
@@ -622,6 +623,16 @@ def coord_capabilities(args: argparse.Namespace) -> None:
 def coord_mechanism_audit(args: argparse.Namespace) -> None:
     try:
         result = audit_mechanism(args.metrics_file)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise ProtocolError(str(exc)) from exc
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+def coord_volley_plan(args: argparse.Namespace) -> None:
+    try:
+        result = plan_volley(args.manifest_file, args.results_file,
+                             quota_remaining=args.quota_remaining, reserve=args.reserve,
+                             wave_size=args.wave_size)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         raise ProtocolError(str(exc)) from exc
     print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -1706,6 +1717,7 @@ def build_parser() -> argparse.ArgumentParser:
     joint = commands.add_parser("coord-joint-case"); joint.add_argument("action", choices=("open", "review", "status")); joint.add_argument("--task", required=True); joint.add_argument("--submission", required=True); joint.add_argument("--lead"); joint.add_argument("--deputy"); joint.add_argument("--artifact-sha256"); joint.add_argument("--result-file", type=Path); joint.add_argument("--agent"); joint.add_argument("--role", choices=("lead", "deputy", "cross_platform", "catfish", "package_reviewer")); joint.add_argument("--review-file", type=Path); joint.set_defaults(func=coord_joint_case)
     capability = commands.add_parser("coord-capabilities"); capability.add_argument("action", choices=("declare", "match")); capability.add_argument("--agent"); capability.add_argument("--chips", nargs="*", default=[]); capability.add_argument("--compilers", nargs="*", default=[]); capability.add_argument("--strengths", nargs="*", default=[]); capability.add_argument("--evidence", nargs="*", default=[]); capability.add_argument("--ttl-minutes", type=int, default=30); capability.add_argument("--chip"); capability.add_argument("--compiler"); capability.add_argument("--strength"); capability.set_defaults(func=coord_capabilities)
     mechanism = commands.add_parser("coord-mechanism-audit"); mechanism.add_argument("--metrics-file", type=Path, required=True); mechanism.set_defaults(func=coord_mechanism_audit)
+    volley = commands.add_parser("coord-volley-plan"); volley.add_argument("--manifest-file", type=Path, required=True); volley.add_argument("--results-file", type=Path, required=True); volley.add_argument("--quota-remaining", type=int, required=True); volley.add_argument("--reserve", type=int, default=0); volley.add_argument("--wave-size", type=int, default=3); volley.set_defaults(func=coord_volley_plan)
     chat_publish = commands.add_parser("coord-chat-publish"); chat_publish.add_argument("--source", required=True); chat_publish.add_argument("--role", choices=("user", "assistant"), required=True); chat_publish.add_argument("--room", default="workspace"); chat_publish.add_argument("--session-id"); chat_publish.add_argument("--workspace"); chat_body = chat_publish.add_mutually_exclusive_group(required=True); chat_body.add_argument("--text"); chat_body.add_argument("--text-file"); chat_publish.set_defaults(func=coord_chat_publish)
     chat_read = commands.add_parser("coord-chat-read"); chat_read.add_argument("--agent", required=True); chat_read.add_argument("--after"); chat_read.add_argument("--limit", type=int, default=50); chat_read.add_argument("--include-raw", action="store_true"); chat_read.set_defaults(func=coord_chat_read)
     chat_ack = commands.add_parser("coord-chat-ack"); chat_ack.add_argument("--agent", required=True); chat_ack.add_argument("--through", required=True); chat_ack.set_defaults(func=coord_chat_ack)
