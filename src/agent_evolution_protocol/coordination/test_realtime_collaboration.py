@@ -19,6 +19,46 @@ def load(name, filename):
 
 
 class CollaborationTests(unittest.TestCase):
+    def test_wake_cooldown_is_scoped_to_task(self):
+        daemon = load("wake_daemon_cooldown_test", "wake_daemon.py")
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            log = root / "wake_log.jsonl"
+            log.write_text(json.dumps({
+                "id": "first", "to": "workbuddy", "task": "T132",
+                "status": "adapter-executed", "monotonic": 100.0,
+            }) + "\n", encoding="utf-8")
+            with mock.patch.object(daemon, "LOG", log):
+                self.assertEqual(daemon.recent_success("workbuddy", "T132", 101.0), "first")
+                self.assertIsNone(daemon.recent_success("workbuddy", "T130", 101.0))
+                self.assertIsNone(daemon.recent_success("qoder", "T132", 101.0))
+                self.assertIsNone(daemon.recent_success("workbuddy", "T132", 131.0))
+
+    def test_new_task_wake_is_not_discarded_by_other_task_cooldown(self):
+        daemon = load("wake_daemon_distinct_task_test", "wake_daemon.py")
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            queue = root / "wake_queue"
+            queue.mkdir()
+            wake = queue / "second.json"
+            wake.write_text(json.dumps({"id": "second", "type": "wake_request", "to": "workbuddy", "task": "T130"}), encoding="utf-8")
+            log = root / "wake_log.jsonl"
+            log.write_text(json.dumps({
+                "id": "first", "to": "workbuddy", "task": "T132",
+                "status": "adapter-executed", "monotonic": 100.0,
+            }) + "\n", encoding="utf-8")
+            adapter = root / "wake_adapters" / "workbuddy.ps1"
+            adapter.parent.mkdir()
+            adapter.touch()
+            report = json.dumps({"status": "window-focused-no-delivery", "task_delivered": False, "agent_accepted": False})
+            with mock.patch.object(daemon, "LOG", log), mock.patch.object(daemon, "DONE", root / "done"), mock.patch.object(daemon, "PENDING", root / "pending"), mock.patch.object(daemon, "ADAPTERS", adapter.parent), mock.patch.object(daemon.time, "monotonic", return_value=101.0), mock.patch.object(daemon.subprocess, "run", return_value=mock.Mock(returncode=0, stdout=report, stderr="")) as run:
+                self.assertEqual(daemon.consume(wake), 0)
+                run.assert_called_once()
+                self.assertTrue((root / "pending" / "second.json").exists())
+                pending = json.loads((root / "pending" / "second.json").read_text(encoding="utf-8"))
+                self.assertEqual(pending["adapter_status"], "window-focused-no-delivery")
+                self.assertFalse(daemon.adapter_report(report)["task_delivered"])
+
     def test_post_executes_http_request(self):
         hook = load("realtime_hook_post_test", "realtime_hook.py")
         response = mock.MagicMock()
@@ -44,20 +84,23 @@ class CollaborationTests(unittest.TestCase):
         hook = load("realtime_hook_prompt_test", "realtime_hook.py")
         calls = []
         payload = json.dumps({"prompt": "ordinary message", "cwd": str(HERE)})
-        with mock.patch.object(hook, "post", side_effect=lambda path, body: calls.append((path, body)) or True), mock.patch.object(
-            hook.sys, "stdin", io.StringIO(payload)
-        ), mock.patch.object(hook.sys, "argv", ["hook", "--agent", "codex", "--event", "prompt"]):
-            self.assertEqual(hook.main(), 0)
+        with tempfile.TemporaryDirectory() as temp:
+            with mock.patch.object(hook, "JOURNAL_ROOT", Path(temp)), mock.patch.object(hook, "post", side_effect=lambda path, body: calls.append((path, body)) or True), mock.patch.object(
+                hook.sys, "stdin", io.StringIO(payload)
+            ), mock.patch.object(hook.sys, "argv", ["hook", "--agent", "codex", "--event", "prompt"]):
+                self.assertEqual(hook.main(), 0)
+            self.assertEqual(len(list((Path(temp) / "private_conversations" / "events").glob("*.json"))), 1)
         self.assertEqual([path for path, _ in calls], ["/api/event"])
 
     def test_exact_wake_requests_one_execution(self):
         hook = load("realtime_hook_wake_test", "realtime_hook.py")
         calls = []
         payload = json.dumps({"extra": {"user_message": "@wake codex: run tests"}, "cwd": str(HERE)})
-        with mock.patch.object(hook, "post", side_effect=lambda path, body: calls.append((path, body)) or True), mock.patch.object(
-            hook.sys, "stdin", io.StringIO(payload)
-        ), mock.patch.object(hook.sys, "argv", ["hook", "--agent", "workbuddy", "--event", "prompt"]):
-            self.assertEqual(hook.main(), 0)
+        with tempfile.TemporaryDirectory() as temp:
+            with mock.patch.object(hook, "JOURNAL_ROOT", Path(temp)), mock.patch.object(hook, "post", side_effect=lambda path, body: calls.append((path, body)) or True), mock.patch.object(
+                hook.sys, "stdin", io.StringIO(payload)
+            ), mock.patch.object(hook.sys, "argv", ["hook", "--agent", "workbuddy", "--event", "prompt"]):
+                self.assertEqual(hook.main(), 0)
         self.assertEqual([path for path, _ in calls], ["/api/event", "/api/wake"])
         self.assertTrue(calls[-1][1]["execute"])
 
@@ -81,6 +124,17 @@ class CollaborationTests(unittest.TestCase):
         ), mock.patch.object(hook.sys, "argv", ["hook", "--agent", "codex", "--event", "prompt"]):
             self.assertEqual(hook.main(), 0)
         self.assertEqual(calls, [])
+
+    def test_offline_hub_still_archives_full_hook_payload(self):
+        hook = load("realtime_hook_offline_test", "realtime_hook.py")
+        with tempfile.TemporaryDirectory() as temp:
+            payload = {"prompt": "@all do not submit yet", "cwd": str(HERE), "session_id": "s1", "extra": {"opaque": "kept verbatim"}}
+            with mock.patch.object(hook, "JOURNAL_ROOT", Path(temp)), mock.patch.object(hook, "post", return_value=False), mock.patch.object(hook.sys, "stdin", io.StringIO(json.dumps(payload))), mock.patch.object(hook.sys, "argv", ["hook", "--agent", "codex", "--event", "prompt"]):
+                self.assertEqual(hook.main(), 0)
+            events = list((Path(temp) / "private_conversations" / "events").glob("*.json"))
+            self.assertEqual(len(events), 1)
+            saved = json.loads(events[0].read_text(encoding="utf-8"))
+            self.assertEqual(saved["raw_hook"], payload)
 
     def test_disconnected_client_is_handled_without_traceback(self):
         hub = load("realtime_hub_disconnect_test", "realtime_hub.py")

@@ -59,7 +59,7 @@ Inspect queue and recent audit log:
 1. Ordinary mailbox messages must not wake models.
 2. A wake request must name target agent, task, reason, budget, and entrypoint.
 3. High-risk actions still need current authorization or `human_required=true`.
-4. The daemon has a short per-agent cooldown to prevent wake storms.
+4. The daemon deduplicates only a recent wake for the same agent **and task**. A different task must not be silently dropped; deduplication is dispatch control, never proof of acceptance.
 5. The daemon logs to `wake_log.jsonl` and moves consumed events into
    `wake_done` or `wake_failed`.
 6. Adapters are the only place that may launch desktop apps, CLI tools, URI

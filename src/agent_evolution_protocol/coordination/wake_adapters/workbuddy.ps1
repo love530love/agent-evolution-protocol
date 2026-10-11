@@ -19,15 +19,15 @@ if ($allowNewSession -or $policy -eq 'allow') {
   Start-Process -FilePath $uri | Out-Null
   $method = 'uri'
 } else {
-  # Default sticky-session behavior: focus/start WorkBuddy only.  The task
-  # context remains in bridge inbox/digest/status-board; WorkBuddy should read
-  # it from the existing conversation instead of spawning a fresh task window.
-  Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe) | Out-Null
-  $method = 'focus-existing'
+  # Never start a fresh desktop instance for a sticky session. Locate exactly
+  # one existing window; the inbox/digest remains the source of task context.
+  $probe = Join-Path $PSScriptRoot 'existing_window.ps1'
+  $windowEvidence = & $probe -Agent workbuddy -ProcessName WorkBuddy -ExpectedPath $exe -ExpectedTitle WorkBuddy -AllowUnknownPath | ConvertFrom-Json
+  $method = 'existing-window-focus'
 }
 
 [pscustomobject]@{
-  status = 'wake-dispatched'
+  status = if ($method -eq 'uri') { 'uri-dispatched-unverified' } else { 'window-focused-no-delivery' }
   agent = 'workbuddy'
   task = $event.task
   reason = $event.reason
@@ -36,4 +36,7 @@ if ($allowNewSession -or $policy -eq 'allow') {
   executable = $exe
   new_session_policy = $policy
   allow_new_session = $allowNewSession
+  window_evidence = $windowEvidence
+  task_delivered = $false
+  agent_accepted = $false
 } | ConvertTo-Json -Compress

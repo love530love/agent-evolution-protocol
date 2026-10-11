@@ -36,6 +36,17 @@ def read_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def adapter_report(stdout: str) -> dict:
+    for line in reversed(stdout.splitlines()):
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(item, dict):
+            return {key: item[key] for key in ("status", "method", "task_delivered", "agent_accepted") if key in item}
+    return {}
+
+
 def append_log(entry: dict) -> None:
     LOG.parent.mkdir(parents=True, exist_ok=True)
     with LOG.open("a", encoding="utf-8") as f:
@@ -83,24 +94,25 @@ def adapter_for(agent: str) -> Path:
     return ADAPTERS / f"{agent}.ps1"
 
 
-def recent_success(agent: str, now: float) -> bool:
+def recent_success(agent: str, task: str, now: float) -> str | None:
     if not LOG.exists():
-        return False
+        return None
     try:
         lines = LOG.read_text(encoding="utf-8").splitlines()[-50:]
     except OSError:
-        return False
+        return None
     for line in reversed(lines):
         try:
             entry = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if entry.get("to") != agent or entry.get("status") != "adapter-executed":
+        # A different task for the same agent is new work, not a wake storm.
+        if entry.get("to") != agent or entry.get("task") != task or entry.get("status") != "adapter-executed":
             continue
         ts = entry.get("monotonic")
         if isinstance(ts, (int, float)) and now - ts < COOLDOWN_SECONDS:
-            return True
-    return False
+            return str(entry.get("id", ""))
+    return None
 
 
 def consume(path: Path, *, dry_run: bool = False) -> int:
@@ -122,8 +134,9 @@ def consume(path: Path, *, dry_run: bool = False) -> int:
     adapter = adapter_for(target)
     effective_dry_run = dry_run or bool(event.get("dry_run"))
 
-    if recent_success(target, now):
-        append_log(dict(at=stamp(), status="cooldown", id=aid, to=target, task=event.get("task"), monotonic=now))
+    duplicate_of = recent_success(target, str(event.get("task", "")), now)
+    if duplicate_of:
+        append_log(dict(at=stamp(), status="duplicate-wake", id=aid, duplicate_of=duplicate_of, to=target, task=event.get("task"), monotonic=now))
         move_atomic(path, DONE)
         return 0
 
@@ -155,6 +168,7 @@ def consume(path: Path, *, dry_run: bool = False) -> int:
         move_atomic(path, FAILED)
         return 3
 
+    report = adapter_report(completed.stdout)
     entry = dict(
         at=stamp(),
         status="adapter-executed" if completed.returncode == 0 else "adapter-failed",
@@ -164,11 +178,12 @@ def consume(path: Path, *, dry_run: bool = False) -> int:
         returncode=completed.returncode,
         stdout=completed.stdout[-2000:],
         stderr=completed.stderr[-2000:],
+        adapter_report=report,
         monotonic=now,
     )
     append_log(entry)
     if completed.returncode == 0:
-        mark_pending(event, status="adapter-executed")
+        mark_pending(event, status=str(report.get("status", "adapter-executed")))
     move_atomic(path, DONE if completed.returncode == 0 else FAILED)
     return 0 if completed.returncode == 0 else completed.returncode
 

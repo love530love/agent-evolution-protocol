@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from agent_evolution_protocol.coordination.cluster_kernel import ClusterKernel
+from agent_evolution_protocol.coordination.conversation_journal import append_event as append_chat_event, read_events as read_chat_events, cursor_for as chat_cursor_for, acknowledge as acknowledge_chat
 from agent_evolution_protocol.routing import classify_intent, load_route_config
 from agent_evolution_protocol.route_state import analyze_route_state, continuation_from_events, select_resource_type
 
@@ -539,6 +540,40 @@ def coord_ack_topic(args: argparse.Namespace) -> None:
     print(json.dumps({"agent": who, "topic": args.topic, "acked": count}, ensure_ascii=False, indent=2))
 
 
+def coord_chat_publish(args: argparse.Namespace) -> None:
+    root = coord_root(args)
+    source = valid_agent(args.source)
+    text = args.text if args.text is not None else Path(args.text_file).read_text(encoding="utf-8")
+    if not text.strip():
+        raise ProtocolError("chat text is empty")
+    event = append_chat_event(root, room=args.room, actor=args.role, source=source,
+                              kind="message" if args.role == "user" else "result",
+                              text=text, session_id=args.session_id or "",
+                              cwd=str(workspace_root(args)), raw_hook=None)
+    print(json.dumps({"id": event["id"], "recorded_at": event["recorded_at"], "source": source}, ensure_ascii=False, indent=2))
+
+
+def coord_chat_read(args: argparse.Namespace) -> None:
+    root = coord_root(args)
+    who = valid_agent(args.agent)
+    after = args.after if args.after is not None else chat_cursor_for(root, who)
+    try:
+        events = read_chat_events(root, after=after, limit=args.limit, include_raw=args.include_raw)
+    except ValueError as exc:
+        raise ProtocolError(str(exc)) from exc
+    print(json.dumps({"agent": who, "after": after, "events": events,
+                      "next_cursor": events[-1]["id"] if events else after,
+                      "ack_required": bool(events)}, ensure_ascii=False, indent=2))
+
+
+def coord_chat_ack(args: argparse.Namespace) -> None:
+    try:
+        result = acknowledge_chat(coord_root(args), agent=valid_agent(args.agent), through=args.through)
+    except ValueError as exc:
+        raise ProtocolError(str(exc)) from exc
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
 def coord_session_set(args: argparse.Namespace) -> None:
     root = coord_root(args)
     who = valid_agent(args.agent)
@@ -603,6 +638,13 @@ def coord_task_state(args: argparse.Namespace) -> None:
     task_name = valid_task(args.task)
     if args.phase not in TASK_PHASES:
         raise ProtocolError("phase must be one of: " + ", ".join(TASK_PHASES))
+    claim_file = coord_file(root, "claims", task_name, "owner.json")
+    if claim_file.exists():
+        claim_owner = read_json(claim_file).get("agent")
+        if claim_owner != who:
+            raise ProtocolError(f"TASK_CLAIM_CONFLICT: {task_name} is claimed by {claim_owner}")
+    elif coord_file(root, "claims", task_name).exists():
+        raise ProtocolError(f"TASK_CLAIM_PENDING: {task_name} claim is incomplete")
     state = {
         "task": task_name,
         "owner": who,
@@ -858,6 +900,24 @@ def inspect_system(args: argparse.Namespace) -> None:
                 claims.append(read_json(owner))
             except ProtocolError:
                 pass
+    tasks_by_id = {str(item.get("task")): item for item in tasks}
+    claim_state_conflicts = [
+        {"task": claim.get("task"), "claim_owner": claim.get("agent"), "state_owner": tasks_by_id[str(claim.get("task"))].get("owner")}
+        for claim in claims
+        if str(claim.get("task")) in tasks_by_id
+        and claim.get("agent") != tasks_by_id[str(claim.get("task"))].get("owner")
+    ]
+    pending_wakes = []
+    pending_dir = coord_file(croot, "wake_pending")
+    if pending_dir.exists():
+        for path in sorted(pending_dir.glob("*.json")):
+            try:
+                item = read_json(path)
+            except ProtocolError:
+                continue
+            deadline = parse_time(str(item.get("claim_deadline", "")))
+            item["expired"] = bool(deadline and now > deadline)
+            pending_wakes.append(item)
 
     events = kernel.events()
     latest_leases = {}
@@ -889,6 +949,10 @@ def inspect_system(args: argparse.Namespace) -> None:
         recommendations.append("Respect active leases; do not bypass owners.")
     if stale_tasks:
         recommendations.append("Refresh stale task states or mark them blocked/abandoned/done.")
+    if claim_state_conflicts:
+        recommendations.append("Resolve claim/task-state owner conflicts before any write or submission.")
+    if any(item["expired"] for item in pending_wakes):
+        recommendations.append("Inspect expired wake receipts; adapter dispatch is not agent acceptance. Do not blindly re-wake.")
     if not recommendations:
         recommendations.append("No critical coordination hazards detected.")
 
@@ -903,6 +967,9 @@ def inspect_system(args: argparse.Namespace) -> None:
             "claims": len(claims),
             "task_states": len(tasks),
             "stale_tasks": len(stale_tasks),
+            "claim_state_conflicts": len(claim_state_conflicts),
+            "pending_wake_receipts": len(pending_wakes),
+            "expired_wake_receipts": sum(1 for item in pending_wakes if item["expired"]),
             "kernel_events": len(events),
             "kernel_chain_valid": kernel.verify_chain(),
             "active_leases": len(active_leases),
@@ -913,6 +980,8 @@ def inspect_system(args: argparse.Namespace) -> None:
         "unread": unread,
         "claims": claims,
         "tasks": tasks,
+        "claim_state_conflicts": claim_state_conflicts,
+        "pending_wakes": pending_wakes,
         "wake_queue": wake_queue,
         "active_leases": active_leases,
         "unknown_operations": unknown_ops,
@@ -988,6 +1057,7 @@ def join_agent(args: argparse.Namespace) -> None:
             f"aep --coord-root {powershell_literal(str(croot))} --kernel-root {powershell_literal(str(kroot))} inspect --markdown",
             f"aep --coord-root {powershell_literal(str(croot))} coord-onboarding --agent {who}",
             f"aep --coord-root {powershell_literal(str(croot))} coord-digest --agent {who}",
+            f"aep --coord-root {powershell_literal(str(croot))} coord-chat-read --agent {who} --limit 50",
         ],
         "task_commands": [
             claim_guidance.get("command", "") if claim_guidance else "",
@@ -997,6 +1067,7 @@ def join_agent(args: argparse.Namespace) -> None:
             "Do not create a new session by default.",
             "Do not execute stale wake requests until current digest/status has been read.",
             "Claim before writes; lease before shared resource or external write.",
+            "Read and acknowledge workspace chat events before acting on a stale task; raw hook payloads are available on demand.",
             "Use guided retry after failure; never blindly replay uncertain writes.",
             "BLOCKED_HANDOFF_REQUIRED blocks remote resume, not work in this current chat. Keep this chat; bind a supported adapter session before remote wake.",
         ],
@@ -1543,6 +1614,9 @@ def build_parser() -> argparse.ArgumentParser:
     body = send.add_mutually_exclusive_group(required=True); body.add_argument("--text"); body.add_argument("--text-file")
     send.set_defaults(func=coord_send)
     ack_topic = commands.add_parser("coord-ack-topic"); ack_topic.add_argument("--agent", required=True); ack_topic.add_argument("--topic", required=True); ack_topic.set_defaults(func=coord_ack_topic)
+    chat_publish = commands.add_parser("coord-chat-publish"); chat_publish.add_argument("--source", required=True); chat_publish.add_argument("--role", choices=("user", "assistant"), required=True); chat_publish.add_argument("--room", default="workspace"); chat_publish.add_argument("--session-id"); chat_publish.add_argument("--workspace"); chat_body = chat_publish.add_mutually_exclusive_group(required=True); chat_body.add_argument("--text"); chat_body.add_argument("--text-file"); chat_publish.set_defaults(func=coord_chat_publish)
+    chat_read = commands.add_parser("coord-chat-read"); chat_read.add_argument("--agent", required=True); chat_read.add_argument("--after"); chat_read.add_argument("--limit", type=int, default=50); chat_read.add_argument("--include-raw", action="store_true"); chat_read.set_defaults(func=coord_chat_read)
+    chat_ack = commands.add_parser("coord-chat-ack"); chat_ack.add_argument("--agent", required=True); chat_ack.add_argument("--through", required=True); chat_ack.set_defaults(func=coord_chat_ack)
     session = commands.add_parser("coord-session-set"); session.add_argument("--agent", required=True); session.add_argument("--mode", choices=("sticky", "manual", "spawn-allowed"), default="sticky"); session.add_argument("--thread-id"); session.add_argument("--new-session-policy", choices=SESSION_POLICIES, default="forbid-by-default"); session.add_argument("--handoff-style", choices=HANDOFF_STYLES, default="digest-first"); session.add_argument("--notes"); session.set_defaults(func=coord_session_set)
     wake = commands.add_parser("coord-wake"); wake.add_argument("--from", dest="sender", required=True); wake.add_argument("--to", required=True); wake.add_argument("--task", required=True); wake.add_argument("--reason", required=True); wake.add_argument("--budget", choices=WAKE_BUDGETS, default="one-shot"); wake.add_argument("--entrypoint"); wake.add_argument("--requires-user-auth", action="store_true"); wake.add_argument("--dry-run", action="store_true"); wake.add_argument("--allow-new-session", action="store_true"); wake.add_argument("--claim-timeout-seconds", type=int, default=600); wake.set_defaults(func=coord_wake)
     wake_status = commands.add_parser("coord-wake-status"); wake_status.add_argument("--tail", type=int, default=10); wake_status.set_defaults(func=coord_wake_status)

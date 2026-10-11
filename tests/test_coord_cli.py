@@ -114,6 +114,25 @@ class CoordinationCliTest(unittest.TestCase):
             cli.coord_release(SimpleNamespace(coord_root=root, agent="codex", task="T125"))
             self.assertFalse((root / "claims" / "T125" / "owner.json").exists())
 
+    def test_t132_claim_prevents_another_agent_overwriting_task_state(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with redirect_stdout(StringIO()):
+                cli.coord_claim(SimpleNamespace(coord_root=root, agent="workbuddy", task="T132", paths=[]))
+            def state_args(agent):
+                return SimpleNamespace(
+                    coord_root=root, agent=agent, task="T132", phase="working",
+                    goal="isolated coordination rehearsal", evidence=[], blocked_reason="",
+                    next_action="check receipt", wake_phrase=None, human_required=False,
+                    stale_after_hours=12,
+                )
+            with self.assertRaisesRegex(cli.ProtocolError, "TASK_CLAIM_CONFLICT"):
+                cli.coord_task_state(state_args("qoder"))
+            self.assertFalse((root / "task_states" / "T132.json").exists())
+            with redirect_stdout(StringIO()):
+                cli.coord_task_state(state_args("workbuddy"))
+            self.assertEqual("workbuddy", json.loads((root / "task_states" / "T132.json").read_text(encoding="utf-8"))["owner"])
+
     def test_onboarding_contract_and_guided_retry(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

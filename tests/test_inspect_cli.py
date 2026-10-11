@@ -10,6 +10,27 @@ from agent_evolution_protocol import cli
 
 
 class InspectCliTest(unittest.TestCase):
+    def test_t132_detects_owner_split_and_expired_wake_receipt(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            coord = root / "coord"
+            claim = coord / "claims" / "T132" / "owner.json"
+            claim.parent.mkdir(parents=True)
+            claim.write_text(json.dumps({"task": "T132", "agent": "workbuddy"}), encoding="utf-8")
+            state = coord / "task_states" / "T132.json"
+            state.parent.mkdir(parents=True)
+            state.write_text(json.dumps({"task": "T132", "owner": "qoder", "phase": "working"}), encoding="utf-8")
+            receipt = coord / "wake_pending" / "w1.json"
+            receipt.parent.mkdir(parents=True)
+            receipt.write_text(json.dumps({"id": "w1", "task": "T132", "claim_deadline": "2020-01-01T00:00:00+00:00"}), encoding="utf-8")
+            out = StringIO()
+            with redirect_stdout(out):
+                cli.inspect_system(SimpleNamespace(coord_root=coord, kernel_root=root / "kernel", stale_wake_hours=24, checkpoint_limit=5, markdown=False))
+            report = json.loads(out.getvalue())
+            self.assertEqual(1, report["summary"]["claim_state_conflicts"])
+            self.assertEqual(1, report["summary"]["expired_wake_receipts"])
+            self.assertEqual("T132", report["claim_state_conflicts"][0]["task"])
+
     def test_inspect_reports_hazards_and_recommendations(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -323,6 +323,14 @@ def execute(a):
     elif a.cmd == "task-state":
         name = task(a.task)
         who = agent(a.agent)
+        claim_folder = ROOT / "claims" / name
+        claim_file = claim_folder / "owner.json"
+        if claim_file.exists():
+            claim_owner = read(claim_file).get("agent")
+            if claim_owner != who:
+                raise ValueError(f"TASK_CLAIM_CONFLICT: {name} is claimed by {claim_owner}")
+        elif claim_folder.exists():
+            raise ValueError(f"TASK_CLAIM_PENDING: {name} claim is incomplete")
         state = dict(
             task=name,
             owner=who,

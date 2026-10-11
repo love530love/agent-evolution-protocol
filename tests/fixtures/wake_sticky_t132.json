@@ -1,0 +1,10 @@
+{
+  "id": "pilot-t132-observe-only",
+  "type": "wake_request",
+  "task": "T132",
+  "reason": "desktop focus pilot; no task injection",
+  "allow_new_session": false,
+  "session": {
+    "new_session_policy": "forbid-by-default"
+  }
+}

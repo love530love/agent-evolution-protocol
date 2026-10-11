@@ -17,3 +17,5 @@ src/agent_evolution_protocol/coordination/wake_queue/
 src/agent_evolution_protocol/coordination/wake_pending/
 src/agent_evolution_protocol/coordination/wake_ack/
 src/agent_evolution_protocol/coordination/wake_log.jsonl
+src/agent_evolution_protocol/coordination/private_conversations/
+coordination/private_conversations/
