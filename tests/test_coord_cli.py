@@ -10,6 +10,19 @@ from agent_evolution_protocol import cli
 
 
 class CoordinationCliTest(unittest.TestCase):
+    def test_parallel_candidates_do_not_steal_task_lead(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with redirect_stdout(StringIO()):
+                cli.coord_claim(SimpleNamespace(coord_root=root, agent="codex", task="T132", paths=[]))
+                cli.coord_claim(SimpleNamespace(coord_root=root, agent="workbuddy", task="T132-WB-R1", paths=["wb/t132"] ))
+                cli.coord_claim(SimpleNamespace(coord_root=root, agent="qoder", task="T132-QODER-R1", paths=["qoder/t132"] ))
+                cli.coord_task_state(SimpleNamespace(coord_root=root, agent="qoder", task="T132-QODER-R1",
+                    phase="working", goal="cross-platform branch", evidence=[], blocked_reason="", next_action="compile",
+                    wake_phrase="", human_required=False, stale_after_hours=12))
+            self.assertEqual("codex", json.loads((root / "claims" / "T132" / "owner.json").read_text(encoding="utf-8"))["agent"])
+            self.assertEqual("qoder", json.loads((root / "task_states" / "T132-QODER-R1.json").read_text(encoding="utf-8"))["owner"])
+
     def test_delivery_status_distinguishes_deposit_from_ack(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

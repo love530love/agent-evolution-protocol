@@ -19,3 +19,7 @@ src/agent_evolution_protocol/coordination/wake_ack/
 src/agent_evolution_protocol/coordination/wake_log.jsonl
 src/agent_evolution_protocol/coordination/private_conversations/
 coordination/private_conversations/
+coordination/joint_cases/
+coordination/capabilities/
+src/agent_evolution_protocol/coordination/joint_cases/
+src/agent_evolution_protocol/coordination/capabilities/

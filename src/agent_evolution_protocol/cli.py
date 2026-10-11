@@ -18,6 +18,9 @@ from pathlib import Path
 
 from agent_evolution_protocol.coordination.cluster_kernel import ClusterKernel
 from agent_evolution_protocol.coordination.conversation_journal import append_event as append_chat_event, read_events as read_chat_events, cursor_for as chat_cursor_for, acknowledge as acknowledge_chat
+from agent_evolution_protocol.coordination.joint_attack import open_case as open_joint_case, review_case as review_joint_case, case_status as joint_case_status
+from agent_evolution_protocol.coordination.capability_roster import declare as declare_capabilities, match as match_capabilities
+from agent_evolution_protocol.coordination.mechanism_audit import audit as audit_mechanism
 from agent_evolution_protocol.routing import classify_intent, load_route_config
 from agent_evolution_protocol.route_state import analyze_route_state, continuation_from_events, select_resource_type
 
@@ -577,6 +580,53 @@ def coord_ack_message(args: argparse.Namespace) -> None:
     print(json.dumps({"id": args.id, "agent": who, "state": "ACKNOWLEDGED", "execution_proven": False}, ensure_ascii=False, indent=2))
 
 
+def coord_joint_case(args: argparse.Namespace) -> None:
+    root = coord_root(args)
+    try:
+        if args.action == "open":
+            if not all((args.lead, args.deputy, args.artifact_sha256, args.result_file)):
+                raise ValueError("open requires --lead --deputy --artifact-sha256 --result-file")
+            result = open_joint_case(root, task=args.task, submission=args.submission,
+                                     lead=args.lead, deputy=args.deputy,
+                                     artifact_sha256=args.artifact_sha256,
+                                     result_file=args.result_file)
+        elif args.action == "review":
+            if not all((args.agent, args.role, args.review_file)):
+                raise ValueError("review requires --agent --role --review-file")
+            result = review_joint_case(root, task=args.task, submission=args.submission,
+                                       agent=args.agent, role=args.role, review_file=args.review_file)
+        else:
+            result = joint_case_status(root, task=args.task, submission=args.submission)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise ProtocolError(str(exc)) from exc
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+def coord_capabilities(args: argparse.Namespace) -> None:
+    try:
+        if args.action == "declare":
+            if not args.agent:
+                raise ValueError("declare requires --agent")
+            result = declare_capabilities(coord_root(args), agent=valid_agent(args.agent),
+                                          chips=args.chips, compilers=args.compilers,
+                                          strengths=args.strengths, evidence=args.evidence,
+                                          ttl_minutes=args.ttl_minutes)
+        else:
+            result = match_capabilities(coord_root(args), chip=args.chip or "",
+                                        compiler=args.compiler or "", strength=args.strength or "")
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise ProtocolError(str(exc)) from exc
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+def coord_mechanism_audit(args: argparse.Namespace) -> None:
+    try:
+        result = audit_mechanism(args.metrics_file)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise ProtocolError(str(exc)) from exc
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
 def coord_chat_publish(args: argparse.Namespace) -> None:
     root = coord_root(args)
     source = valid_agent(args.source)
@@ -787,7 +837,7 @@ def coord_onboarding(args: argparse.Namespace) -> None:
             "Prefer digest-first handoff and existing sticky sessions.",
             "Do not create a new session unless the user explicitly authorizes it or allow_new_session=true.",
             "If the sticky session cannot be located, write a digest/status update and stop.",
-            "Claim a task before writes; release it when done or abandoned.",
+            "Claim a candidate ID such as T132-QODER-R2 before writes; a whole-task leader claim does not bar independent candidates. Release your claim when done or abandoned.",
             "For risky external effects, reserve a kernel operation before acting.",
             "After failure, run coord-guided-retry and never blindly replay an uncertain write.",
         ],
@@ -1103,7 +1153,7 @@ def join_agent(args: argparse.Namespace) -> None:
         "operating_rules": [
             "Do not create a new session by default.",
             "Do not execute stale wake requests until current digest/status has been read.",
-            "Claim before writes; lease before shared resource or external write.",
+            "For same-task collaboration claim a candidate ID such as T132-QODER-R2, not the whole task; the task leader is a coordinator, not an algorithm monopoly. Lease before shared resource or external write.",
             "Read and acknowledge workspace chat events before acting on a stale task; raw hook payloads are available on demand.",
             "Use guided retry after failure; never blindly replay uncertain writes.",
             "BLOCKED_HANDOFF_REQUIRED blocks remote resume, not work in this current chat. Keep this chat; bind a supported adapter session before remote wake.",
@@ -1146,7 +1196,7 @@ def claim_guidance_for(croot: Path, task_name: str, who: str) -> dict | None:
         return {
             "claim_available": False,
             "owner": owner,
-            "next_step": "Read owner task-state and coordinate handoff; do not steal the claim.",
+            "next_step": "Read leader state; for an independent route claim your own candidate ID (e.g. T132-QODER-R2) and directory. Do not modify the leader's candidate or shared files without a lease.",
         }
     return {
         "claim_available": True,
@@ -1653,6 +1703,9 @@ def build_parser() -> argparse.ArgumentParser:
     ack_topic = commands.add_parser("coord-ack-topic"); ack_topic.add_argument("--agent", required=True); ack_topic.add_argument("--topic", required=True); ack_topic.set_defaults(func=coord_ack_topic)
     delivery = commands.add_parser("coord-delivery-status"); delivery.add_argument("--to", required=True); delivery.add_argument("--id", required=True); delivery.set_defaults(func=coord_delivery_status)
     ack_message = commands.add_parser("coord-ack-message"); ack_message.add_argument("--agent", required=True); ack_message.add_argument("--id", required=True); ack_message.set_defaults(func=coord_ack_message)
+    joint = commands.add_parser("coord-joint-case"); joint.add_argument("action", choices=("open", "review", "status")); joint.add_argument("--task", required=True); joint.add_argument("--submission", required=True); joint.add_argument("--lead"); joint.add_argument("--deputy"); joint.add_argument("--artifact-sha256"); joint.add_argument("--result-file", type=Path); joint.add_argument("--agent"); joint.add_argument("--role", choices=("lead", "deputy", "cross_platform", "catfish", "package_reviewer")); joint.add_argument("--review-file", type=Path); joint.set_defaults(func=coord_joint_case)
+    capability = commands.add_parser("coord-capabilities"); capability.add_argument("action", choices=("declare", "match")); capability.add_argument("--agent"); capability.add_argument("--chips", nargs="*", default=[]); capability.add_argument("--compilers", nargs="*", default=[]); capability.add_argument("--strengths", nargs="*", default=[]); capability.add_argument("--evidence", nargs="*", default=[]); capability.add_argument("--ttl-minutes", type=int, default=30); capability.add_argument("--chip"); capability.add_argument("--compiler"); capability.add_argument("--strength"); capability.set_defaults(func=coord_capabilities)
+    mechanism = commands.add_parser("coord-mechanism-audit"); mechanism.add_argument("--metrics-file", type=Path, required=True); mechanism.set_defaults(func=coord_mechanism_audit)
     chat_publish = commands.add_parser("coord-chat-publish"); chat_publish.add_argument("--source", required=True); chat_publish.add_argument("--role", choices=("user", "assistant"), required=True); chat_publish.add_argument("--room", default="workspace"); chat_publish.add_argument("--session-id"); chat_publish.add_argument("--workspace"); chat_body = chat_publish.add_mutually_exclusive_group(required=True); chat_body.add_argument("--text"); chat_body.add_argument("--text-file"); chat_publish.set_defaults(func=coord_chat_publish)
     chat_read = commands.add_parser("coord-chat-read"); chat_read.add_argument("--agent", required=True); chat_read.add_argument("--after"); chat_read.add_argument("--limit", type=int, default=50); chat_read.add_argument("--include-raw", action="store_true"); chat_read.set_defaults(func=coord_chat_read)
     chat_ack = commands.add_parser("coord-chat-ack"); chat_ack.add_argument("--agent", required=True); chat_ack.add_argument("--through", required=True); chat_ack.set_defaults(func=coord_chat_ack)
