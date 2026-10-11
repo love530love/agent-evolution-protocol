@@ -540,6 +540,43 @@ def coord_ack_topic(args: argparse.Namespace) -> None:
     print(json.dumps({"agent": who, "topic": args.topic, "acked": count}, ensure_ascii=False, indent=2))
 
 
+def coord_delivery_status(args: argparse.Namespace) -> None:
+    """Report observed mailbox state; never infer model receipt from file presence."""
+    root = coord_root(args)
+    who = valid_agent(args.to)
+    if not re.fullmatch(r"[0-9]{8}T[0-9]{12}Z-[0-9a-f]{8}", args.id):
+        raise ProtocolError("invalid message ID")
+    message_path = coord_file(root, "messages", who, f"{args.id}.json")
+    if not message_path.is_file():
+        raise ProtocolError("message not found for recipient")
+    message = read_json(message_path)
+    if message.get("id") != args.id or message.get("to") != who:
+        raise ProtocolError("message identity mismatch")
+    ack_path = coord_file(root, "acks", who, f"{args.id}.json")
+    ack = read_json(ack_path) if ack_path.is_file() else None
+    print(json.dumps({"id": args.id, "to": who, "topic": message.get("topic"),
+                      "state": "ACKNOWLEDGED" if ack else "DEPOSITED_UNCONFIRMED",
+                      "deposited_at": message.get("at"), "acknowledged_at": ack.get("at") if ack else None,
+                      "execution_proven": False}, ensure_ascii=False, indent=2))
+
+
+def coord_ack_message(args: argparse.Namespace) -> None:
+    root = coord_root(args)
+    who = valid_agent(args.agent)
+    if not re.fullmatch(r"[0-9]{8}T[0-9]{12}Z-[0-9a-f]{8}", args.id):
+        raise ProtocolError("invalid message ID")
+    message_path = coord_file(root, "messages", who, f"{args.id}.json")
+    if not message_path.is_file():
+        raise ProtocolError("message not found for recipient")
+    message = read_json(message_path)
+    if message.get("id") != args.id or message.get("to") != who:
+        raise ProtocolError("message identity mismatch")
+    ack_path = coord_file(root, "acks", who, f"{args.id}.json")
+    if not ack_path.exists():
+        atomic_write_json(ack_path, {"id": args.id, "agent": who, "at": utc_now(), "topic": message.get("topic"), "batch": False})
+    print(json.dumps({"id": args.id, "agent": who, "state": "ACKNOWLEDGED", "execution_proven": False}, ensure_ascii=False, indent=2))
+
+
 def coord_chat_publish(args: argparse.Namespace) -> None:
     root = coord_root(args)
     source = valid_agent(args.source)
@@ -1614,6 +1651,8 @@ def build_parser() -> argparse.ArgumentParser:
     body = send.add_mutually_exclusive_group(required=True); body.add_argument("--text"); body.add_argument("--text-file")
     send.set_defaults(func=coord_send)
     ack_topic = commands.add_parser("coord-ack-topic"); ack_topic.add_argument("--agent", required=True); ack_topic.add_argument("--topic", required=True); ack_topic.set_defaults(func=coord_ack_topic)
+    delivery = commands.add_parser("coord-delivery-status"); delivery.add_argument("--to", required=True); delivery.add_argument("--id", required=True); delivery.set_defaults(func=coord_delivery_status)
+    ack_message = commands.add_parser("coord-ack-message"); ack_message.add_argument("--agent", required=True); ack_message.add_argument("--id", required=True); ack_message.set_defaults(func=coord_ack_message)
     chat_publish = commands.add_parser("coord-chat-publish"); chat_publish.add_argument("--source", required=True); chat_publish.add_argument("--role", choices=("user", "assistant"), required=True); chat_publish.add_argument("--room", default="workspace"); chat_publish.add_argument("--session-id"); chat_publish.add_argument("--workspace"); chat_body = chat_publish.add_mutually_exclusive_group(required=True); chat_body.add_argument("--text"); chat_body.add_argument("--text-file"); chat_publish.set_defaults(func=coord_chat_publish)
     chat_read = commands.add_parser("coord-chat-read"); chat_read.add_argument("--agent", required=True); chat_read.add_argument("--after"); chat_read.add_argument("--limit", type=int, default=50); chat_read.add_argument("--include-raw", action="store_true"); chat_read.set_defaults(func=coord_chat_read)
     chat_ack = commands.add_parser("coord-chat-ack"); chat_ack.add_argument("--agent", required=True); chat_ack.add_argument("--through", required=True); chat_ack.set_defaults(func=coord_chat_ack)

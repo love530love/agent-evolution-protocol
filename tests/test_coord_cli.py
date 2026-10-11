@@ -10,6 +10,25 @@ from agent_evolution_protocol import cli
 
 
 class CoordinationCliTest(unittest.TestCase):
+    def test_delivery_status_distinguishes_deposit_from_ack(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with redirect_stdout(StringIO()) as output:
+                cli.coord_send(SimpleNamespace(coord_root=root, sender="codex", to="qoder", topic="T135", kind="context", text="evidence", text_file=None))
+            mid = json.loads(output.getvalue())["id"]
+            with redirect_stdout(StringIO()) as output:
+                cli.coord_delivery_status(SimpleNamespace(coord_root=root, to="qoder", id=mid))
+            self.assertEqual("DEPOSITED_UNCONFIRMED", json.loads(output.getvalue())["state"])
+            with self.assertRaises(cli.ProtocolError):
+                cli.coord_ack_message(SimpleNamespace(coord_root=root, agent="workbuddy", id=mid))
+            with redirect_stdout(StringIO()):
+                cli.coord_ack_message(SimpleNamespace(coord_root=root, agent="qoder", id=mid))
+            with redirect_stdout(StringIO()) as output:
+                cli.coord_delivery_status(SimpleNamespace(coord_root=root, to="qoder", id=mid))
+            status = json.loads(output.getvalue())
+            self.assertEqual("ACKNOWLEDGED", status["state"])
+            self.assertFalse(status["execution_proven"])
+
     def test_custom_agent_is_visible_after_claim(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
