@@ -29,4 +29,6 @@ Microsoft 官方支持 `ms-powerautomate:/console/flow/run?workflowId=...` 或 `
 
 ## 最小试点及通过条件
 
+PAD 接入与回执格式见 [PAD_WAKE_RUNBOOK_20261012.md](PAD_WAKE_RUNBOOK_20261012.md)。
+
 先核实目标原会话的稳定 ID 和 UIA 可读输入框；然后仅发送一条无害、带唯一 `event_id` 的协作测试消息。观察原会话出现同 ID 消息、由目标 Agent 自己回写 ACK、不会开新窗口；重复同 ID 不重复发送。任一步证据缺失即停在相应状态，不向下一家 Agent 扩展。整个过程不使用真实赛题上传额度。

@@ -25,3 +25,5 @@ src/agent_evolution_protocol/coordination/joint_cases/
 src/agent_evolution_protocol/coordination/capabilities/
 coordination/battle_events/
 src/agent_evolution_protocol/coordination/battle_events/
+coordination/pad_receipts/
+src/agent_evolution_protocol/coordination/pad_receipts/

@@ -11,7 +11,13 @@ $protocol = 'workbuddy'
 $uri = ('{0}://wake?task={1}&wake_id={2}&wake_file={3}' -f $protocol, [uri]::EscapeDataString($event.task), [uri]::EscapeDataString($event.id), [uri]::EscapeDataString($WakeFile))
 $allowNewSession = $event.allow_new_session -eq $true
 $policy = $event.session.new_session_policy
+$padFlowId = $env:AEP_PAD_WORKBUDDY_FLOW_ID
 
+if ($padFlowId -and -not ($allowNewSession -or $policy -eq 'allow')) {
+  $pad = Join-Path $PSScriptRoot 'pad_flow.ps1'
+  & $pad -WakeFile $WakeFile -Agent workbuddy -WorkflowId $padFlowId
+  return
+}
 if (-not (Test-Path -LiteralPath $exe)) {
   throw "WorkBuddy executable not found: $exe"
 }

@@ -10,11 +10,17 @@ $exe = 'D:\Programs\Qoder\Qoder.exe'
 $protocol = 'qoder'
 $uri = ('{0}://wake?task={1}&wake_id={2}&wake_file={3}' -f $protocol, [uri]::EscapeDataString($event.task), [uri]::EscapeDataString($event.id), [uri]::EscapeDataString($WakeFile))
 
+$allowNewSession = $event.allow_new_session -eq $true
+$policy = $event.session.new_session_policy
+$padFlowId = $env:AEP_PAD_QODER_FLOW_ID
+if ($padFlowId -and -not ($allowNewSession -or $policy -eq 'allow')) {
+  $pad = Join-Path $PSScriptRoot 'pad_flow.ps1'
+  & $pad -WakeFile $WakeFile -Agent qoder -WorkflowId $padFlowId
+  return
+}
 if (-not (Test-Path -LiteralPath $exe)) {
   throw "Qoder executable not found: $exe"
 }
-$allowNewSession = $event.allow_new_session -eq $true
-$policy = $event.session.new_session_policy
 if ($allowNewSession -or $policy -eq 'allow') {
   Start-Process -FilePath $uri | Out-Null
   $method = 'uri'
