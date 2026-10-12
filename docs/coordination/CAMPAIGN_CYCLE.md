@@ -35,7 +35,15 @@ python -m agent_evolution_protocol.coordination.campaign_cycle official-return -
 
 导入时会派跨平台会诊、鲶鱼反证、主攻整合三条路线。同一芯同一失败签名在两次提交中重复出现，会记停火；要恢复投包仍须使用原有的独立复核、回归报告、额度与上传锁检查。导入器只检查快照结构，**不独立证明它确实来自官方**。
 
-在 PowerShell 7 运行 `& .\scripts\campaign-watch.ps1` 可使用文件系统事件和最近截止时间驱动作战核对与既有唤醒适配器；不进行固定间隔的模型/窗口轮询。若只想投递信箱、暂不执行桌面唤醒，用 `-MailboxOnly`。启动前应先确认目标 Agent 的原会话适配器已验收；未验收者会保持待办或失败回执，不允许静默新建会话。停止监听用 Ctrl+C。
+推荐在 PowerShell 7 使用管理入口启动文件事件监听器：
+
+```powershell
+& .\scripts\campaign-control.ps1 -Action start
+& .\scripts\campaign-control.ps1 -Action status
+& .\scripts\campaign-control.ps1 -Action stop
+```
+
+它按文件系统事件和最近截止时间核对作战状态，不进行固定间隔的模型/窗口轮询。若只想投递信箱、暂不执行桌面唤醒，启动时加 `-MailboxOnly`。管理入口记录 PID 和启动时间，拒绝误停不匹配的进程；如果记录陈旧，需要先人工检查再处理。启动前应先确认目标 Agent 的原会话适配器已验收；未验收者会保持待办或失败回执，不允许静默新建会话。
 
 ## 状态边界
 

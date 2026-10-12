@@ -281,23 +281,24 @@ def official_return(root: Path, bridge_root: Path, *, task: str, submission_id: 
         if previous:
             if previous["package_sha256"] != package_sha256:
                 raise ValueError("submission id reused with a different package")
-            return previous
-        failures = []
-        for chip, row in snapshot["chips"].items():
-            if row.get("status") == "failed":
-                signature = str(row.get("failure_signature", "")).strip()
-                if not signature or not (row.get("raw_error") or row.get("raw_error_path")):
-                    raise ValueError(f"failed chip {chip} needs signature and raw error")
-                failures.append({"chip": chip, "signature": signature})
-            elif row.get("status") not in {"passed", "pending"}:
-                raise ValueError(f"invalid chip status: {chip}")
-        entry = {"submission_id": submission_id, "package_sha256": package_sha256,
-                 "snapshot_path": str(Path(snapshot_path).resolve()), "at": stamp(),
-                 "failures": failures, "verified_official": False}
-        state["returns"].append(entry)
-        _save(root, state, "RESULT_RECORDED", {"submission_id": submission_id,
-                 "failures": failures, "note": "snapshot supplied locally; authenticity not independently verified"})
-        for failure in failures:
+            entry = previous
+        else:
+            failures = []
+            for chip, row in snapshot["chips"].items():
+                if row.get("status") == "failed":
+                    signature = str(row.get("failure_signature", "")).strip()
+                    if not signature or not (row.get("raw_error") or row.get("raw_error_path")):
+                        raise ValueError(f"failed chip {chip} needs signature and raw error")
+                    failures.append({"chip": chip, "signature": signature})
+                elif row.get("status") not in {"passed", "pending"}:
+                    raise ValueError(f"invalid chip status: {chip}")
+            entry = {"submission_id": submission_id, "package_sha256": package_sha256,
+                     "snapshot_path": str(Path(snapshot_path).resolve()), "at": stamp(),
+                     "failures": failures, "verified_official": False}
+            state["returns"].append(entry)
+            _save(root, state, "RESULT_RECORDED", {"submission_id": submission_id,
+                     "failures": failures, "note": "snapshot supplied locally; authenticity not independently verified"})
+        for failure in entry["failures"]:
             chip, signature = failure["chip"], failure["signature"]
             repeated = sum(1 for row in state["returns"] for issue in row["failures"]
                            if issue["chip"] == chip and issue["signature"] == signature)

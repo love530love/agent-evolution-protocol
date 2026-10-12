@@ -3,6 +3,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 from datetime import timedelta
+from unittest.mock import patch
 
 from agent_evolution_protocol.coordination import campaign_cycle as cycle
 
@@ -122,6 +123,32 @@ class CampaignCycleTests(unittest.TestCase):
                                        package_sha256="b" * 64, snapshot_path=path)
         self.assertEqual(first, second)
         self.assertEqual(len(cycle.status(self.root, "T999")["missions"][0]["returns"]), 1)
+
+    def test_retry_repairs_partial_return_dispatch(self):
+        self.open()
+        path = Path(self.temp.name) / "partial.json"
+        path.write_text(json.dumps({"submission_id": "partial", "chips": {
+            "xpu": {"status": "failed", "failure_signature": "MLIR", "raw_error": "pass failed"}}}),
+            encoding="utf-8")
+        original = cycle._assign_locked
+        calls = 0
+
+        def interrupt_after_first(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise RuntimeError("simulated process interruption")
+            return original(*args, **kwargs)
+
+        with patch.object(cycle, "_assign_locked", side_effect=interrupt_after_first):
+            with self.assertRaises(RuntimeError):
+                cycle.official_return(self.root, self.bridge, task="T999", submission_id="partial",
+                                      package_sha256="c" * 64, snapshot_path=path)
+        cycle.official_return(self.root, self.bridge, task="T999", submission_id="partial",
+                              package_sha256="c" * 64, snapshot_path=path)
+        state = cycle.status(self.root, "T999")["missions"][0]
+        self.assertEqual(len(state["returns"]), 1)
+        self.assertEqual(len([row for row in state["assignments"] if row["cause"].startswith("return:partial:")]), 3)
 
 
 if __name__ == "__main__":
