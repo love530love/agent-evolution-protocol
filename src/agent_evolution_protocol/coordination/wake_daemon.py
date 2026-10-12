@@ -107,7 +107,11 @@ def recent_success(agent: str, task: str, now: float) -> str | None:
         except json.JSONDecodeError:
             continue
         # A different task for the same agent is new work, not a wake storm.
-        if entry.get("to") != agent or entry.get("task") != task or entry.get("status") != "adapter-executed":
+        # A focused window or invoked URI is not a delivered task.  Suppress
+        # a new wake only after an adapter positively reports delivery.
+        if (entry.get("to") != agent or entry.get("task") != task
+                or entry.get("status") != "adapter-executed"
+                or entry.get("adapter_report", {}).get("task_delivered") is not True):
             continue
         ts = entry.get("monotonic")
         if isinstance(ts, (int, float)) and now - ts < COOLDOWN_SECONDS:

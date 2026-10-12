@@ -27,12 +27,25 @@ class CollaborationTests(unittest.TestCase):
             log.write_text(json.dumps({
                 "id": "first", "to": "workbuddy", "task": "T132",
                 "status": "adapter-executed", "monotonic": 100.0,
+                "adapter_report": {"task_delivered": True},
             }) + "\n", encoding="utf-8")
             with mock.patch.object(daemon, "LOG", log):
                 self.assertEqual(daemon.recent_success("workbuddy", "T132", 101.0), "first")
                 self.assertIsNone(daemon.recent_success("workbuddy", "T130", 101.0))
                 self.assertIsNone(daemon.recent_success("qoder", "T132", 101.0))
                 self.assertIsNone(daemon.recent_success("workbuddy", "T132", 131.0))
+
+    def test_focus_without_delivery_never_cools_down_new_wake(self):
+        daemon = load("wake_daemon_focus_test", "wake_daemon.py")
+        with tempfile.TemporaryDirectory() as temp:
+            log = Path(temp) / "wake_log.jsonl"
+            log.write_text(json.dumps({
+                "id": "focus-only", "to": "workbuddy", "task": "T132",
+                "status": "adapter-executed", "monotonic": 100.0,
+                "adapter_report": {"status": "window-focused-no-delivery", "task_delivered": False},
+            }) + "\n", encoding="utf-8")
+            with mock.patch.object(daemon, "LOG", log):
+                self.assertIsNone(daemon.recent_success("workbuddy", "T132", 101.0))
 
     def test_new_task_wake_is_not_discarded_by_other_task_cooldown(self):
         daemon = load("wake_daemon_distinct_task_test", "wake_daemon.py")
