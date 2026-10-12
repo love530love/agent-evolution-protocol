@@ -11,7 +11,9 @@
 | 截图/OCR/坐标 | 仅在 UIA 无法读取、有人监督的短试点中使用 | 前后截图及人工核对 | 不做无人值守指挥 |
 | 文件信箱 | 不依赖窗口；保存完整任务与证据 | 文件持久化 | 只是 deposited，不是对方已读 |
 
-PAD 可作为 UI 执行器，但本机未发现常见安装路径中的 PAD。开源候选为 `sbroenne/mcp-windows`、Microsoft AutoGenesis `pywinauto-mcp-server`；先审许可证、能力范围和本机兼容性，再决定引入，不把第三方工具直接放到高权限主通道。Flue 现有适配器不覆盖 WorkBuddy/Qoder 等 Agent 客户端。
+PAD 可作为 UI 执行器。**2026-10-12 已纠正安装探测**：本机是 Microsoft Store 版 `Microsoft.PowerAutomateDesktop 11.2610.155.0`，安装在 `C:\Program Files\WindowsApps\Microsoft.PowerAutomateDesktop_11.2610.155.0_x64__8wekyb3d8bbwe`；`PAD.Console.Host`、`PAD.Designer`、`PAD.BridgeToUIAutomation2` 正在运行，`ms-powerautomate:` 协议已注册。此前只查 MSI 默认路径导致“未发现安装”的误判。开源候选为 `sbroenne/mcp-windows`、Microsoft AutoGenesis `pywinauto-mcp-server`；先审许可证、能力范围和本机兼容性，再决定引入，不把第三方工具直接放到高权限主通道。Flue 现有适配器不覆盖 WorkBuddy/Qoder 等 Agent 客户端。
+
+Microsoft 官方支持 `ms-powerautomate:/console/flow/run?workflowId=...` 或 `workflowName=...`，可传文本等输入参数和 `runId` 用于日志关联。但外部触发默认弹确认；官方文档列出 Premium / pay-as-you-go 前提，且本地 attended 同时只运行一个流程。**不能为了“无人值守”擅自关闭确认或修改安全设置**；先查用户现有许可与流程配置，并验证有权在该环境中外部触发。参考：<https://learn.microsoft.com/en-us/power-automate/desktop-flows/run-desktop-flows-url-shortcuts>。
 
 ## 调度契约
 
