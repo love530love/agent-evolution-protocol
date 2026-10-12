@@ -6,6 +6,7 @@ from pathlib import Path
 from zipfile import ZipFile
 
 from agent_evolution_protocol.coordination.volley_plan import plan
+from agent_evolution_protocol.coordination.battle_orders import issue
 
 
 def package(root: Path, name: str) -> tuple[str, str]:
@@ -23,6 +24,19 @@ def candidate(cid: str, task: str, agent: str, path: str, sha: str) -> dict:
 
 
 class VolleyPlanTest(unittest.TestCase):
+    def test_battle_ceasefire_blocks_plan_even_with_full_gate(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path, sha = package(root, "ready.zip")
+            manifest = root / "m.json"
+            results = root / "r.json"
+            manifest.write_text(json.dumps([candidate("T136-Q", "T136", "qoder", path, sha)]), encoding="utf-8")
+            results.write_text("[]", encoding="utf-8")
+            issue(root, actor="workbuddy", phrase="停火 T136：rounding mismatch", evidence_paths=["case.json"])
+            report = plan(manifest, results, quota_remaining=1, coord_root=root)
+            self.assertFalse(report["waves"])
+            self.assertIn("active_battle_ceasefire", report["held"][0]["reasons"])
+
     def test_repeat_failure_ceasefire_and_other_task_continues(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

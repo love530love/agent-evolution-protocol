@@ -11,6 +11,8 @@ import json
 from pathlib import Path
 from zipfile import BadZipFile, ZipFile
 
+from agent_evolution_protocol.coordination.battle_orders import status as battle_order_status
+
 
 GATES = ("rule_review", "local_gate", "cross_platform_review", "package_review", "independent_reviewer")
 
@@ -44,7 +46,7 @@ def _signature(row: dict) -> tuple[str, str, str]:
 
 
 def plan(manifest_file: Path, results_file: Path, *, quota_remaining: int,
-         reserve: int = 0, wave_size: int = 3) -> dict:
+         reserve: int = 0, wave_size: int = 3, coord_root: Path | None = None) -> dict:
     if quota_remaining < 0 or reserve < 0 or not 1 <= wave_size <= 20:
         raise ValueError("invalid quota, reserve or wave_size")
     candidates = _load_array(manifest_file)
@@ -93,6 +95,8 @@ def plan(manifest_file: Path, results_file: Path, *, quota_remaining: int,
             reasons.append("reviewer_is_author")
         if task in unknown_tasks:
             reasons.append("unreconciled_unknown_submission")
+        if coord_root is not None and battle_order_status(coord_root, task)["active_holds"]:
+            reasons.append("active_battle_ceasefire")
         affected = [incident for incident in ceasefires if incident["task"] == task]
         for incident in affected:
             fix = item.get("fixes", {})
