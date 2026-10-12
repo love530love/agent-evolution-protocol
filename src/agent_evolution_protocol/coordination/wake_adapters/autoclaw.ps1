@@ -10,6 +10,9 @@ $exe = 'D:\Programs\AutoClaw2\AutoClaw2.exe'
 if (-not (Test-Path -LiteralPath $exe)) {
   throw "AutoClaw executable not found: $exe"
 }
+if ($event.allow_new_session -ne $true) {
+  throw 'NO_EXISTING_SESSION_TRANSPORT: AutoClaw cannot be safely launched into a sticky session; mailbox remains pending'
+}
 
 Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe) | Out-Null
 

@@ -10,6 +10,9 @@ $exe = 'D:\Programs\GitHub Copilot\github.exe'
 if (-not (Test-Path -LiteralPath $exe)) {
   throw "GitHub Copilot executable not found: $exe"
 }
+if ($event.allow_new_session -ne $true) {
+  throw 'NO_EXISTING_SESSION_TRANSPORT: GitHub Copilot desktop cannot be safely launched into a sticky session; mailbox remains pending'
+}
 Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe) | Out-Null
 
 [pscustomobject]@{

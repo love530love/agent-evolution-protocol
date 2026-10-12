@@ -13,6 +13,9 @@ $uri = ('{0}://wake?task={1}&wake_id={2}&wake_file={3}' -f $protocol, [uri]::Esc
 if (-not (Test-Path -LiteralPath $exe)) {
   throw "Hermes executable not found: $exe"
 }
+if ($event.allow_new_session -ne $true) {
+  throw 'NO_EXISTING_SESSION_TRANSPORT: Hermes URI has not been verified to preserve the sticky session; mailbox remains pending'
+}
 Start-Process -FilePath $uri | Out-Null
 
 [pscustomobject]@{
