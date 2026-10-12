@@ -16,11 +16,13 @@ if (-not (Test-Path -LiteralPath $exe)) {
 Start-Process -FilePath $uri | Out-Null
 
 [pscustomobject]@{
-  status = 'wake-dispatched'
+  status = 'uri-dispatched-unverified'
   agent = 'hermes_desktop'
   task = $event.task
   reason = $event.reason
   method = 'uri'
   uri = $uri
   executable = $exe
+  task_delivered = $false
+  agent_accepted = $false
 } | ConvertTo-Json -Compress

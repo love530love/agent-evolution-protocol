@@ -14,10 +14,12 @@ if (-not (Test-Path -LiteralPath $exe)) {
 Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe) | Out-Null
 
 [pscustomobject]@{
-  status = 'wake-dispatched'
+  status = 'launch-attempted-unverified'
   agent = 'autoclaw'
   task = $event.task
   reason = $event.reason
   method = 'executable'
   executable = $exe
+  task_delivered = $false
+  agent_accepted = $false
 } | ConvertTo-Json -Compress
