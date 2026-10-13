@@ -13,7 +13,7 @@
 
 | 客户端 | 当前入口 | 已验证的能力 | 下一道验收门槛 |
 | --- | --- | --- | --- |
-| Codex | 产品支持的线程消息接口 | 可向已确定的现有线程发消息；仍需目标回复 | 明确线程 ID，读取目标线程独立 ACK |
+| Codex 桌面端 | UIA（本机 ChatGPT 进程即 OpenAI Codex） | **已实测**：PID 74328 唯一窗口，输入框 `使用 Markdown 编写…` 可定位，`uia-valuepattern` 写出，投递后独立重抓会话可读回事件 ID，`new_session=false`；会话全文 176 行可读 | 目标自己回 `AEP-ACK:<事件 ID>`（2026-10-13 因额度耗尽未回，仍为 `agent_accepted=false`） |
 | WorkBuddy | 窗口/URI/PAD/UIA 实验入口 | 可观察；本机发现两个匹配窗口 | 锚定唯一原会话，发送后读回已发送区及回复 |
 | Qoder | 窗口/URI/PAD/UIA 实验入口 | 可观察唯一窗口 | 同会话送达与独立 ACK 实测 |
 | CodeBuddy CN | 可执行文件启动入口 | 进程运行；主窗口标题为 `Agents` | 绑定 PID/窗口，确认输入框与消息方向 |
