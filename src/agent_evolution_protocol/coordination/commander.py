@@ -30,6 +30,7 @@ from agent_evolution_protocol.coordination import ui_fallback
 SAFE_AGENT = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 ACK_TOKEN = "AEP-ACK"
 CEASE_AFTER_FAILURES = 3
+REINFORCE_AFTER_MINUTES = 20  # 主订单停火或久未ACK后，允许候选agent补位
 
 # DEPOSITED -> WINDOW_FOUND -> INPUT_SUBMITTED -> MESSAGE_VISIBLE -> AGENT_ACK
 ORDER_STATES = ("DEPOSITED", "WINDOW_FOUND", "INPUT_SUBMITTED", "MESSAGE_VISIBLE", "AGENT_ACK", "CEASED", "FAILED")
@@ -66,8 +67,16 @@ def now() -> str:
 
 def submit_order(root: Path, *, target: str, task: str, text: str, sender: str,
                  priority: str = "normal", event_id: str = "", allow_launch: bool = False,
-                 transport: str = "auto", expires_minutes: int = 120) -> dict:
-    """Queue a directive for one client. Nothing is sent until a tick runs."""
+                 transport: str = "auto", expires_minutes: int = 120,
+                 candidates: str = "") -> dict:
+    """Queue a directive for one client. Nothing is sent until a tick runs.
+
+    ``candidates`` is a comma/space separated list of backup agents. When the
+    primary order stalls (ceasefire or long-unacked), a tick may spawn a
+    differentiated "reinforcement" order for one of them instead of blindly
+    re-sending to the same target -- the fire-musket volley: one wave falls back
+    to reload while the next wave steps up.
+    """
     if not SAFE_AGENT.fullmatch(target) or not SAFE_AGENT.fullmatch(sender):
         raise ValueError("invalid agent name")
     if not text.strip():
@@ -81,6 +90,7 @@ def submit_order(root: Path, *, target: str, task: str, text: str, sender: str,
         "transport": transport, "state": "DEPOSITED", "created_at": now(),
         "expires_at": datetime.fromtimestamp(time.time() + expires_minutes * 60, timezone.utc).isoformat(),
         "attempts": [], "ack": None,
+        "candidates": _parse_candidates(candidates), "children": [], "parent": None,
     }
     if event not in body:
         raise ValueError("event id must appear in the message so read-back can verify it")
@@ -376,6 +386,76 @@ def check_acks(root: Path) -> dict:
     return {"at": now(), "acked": acked, "checked": len(_orders(root))}
 
 
+def _parse_candidates(raw: object) -> list[str]:
+    """Split a comma/space separated candidate string into safe agent names."""
+    if not raw:
+        return []
+    items = [a.strip().lower() for a in re.split(r"[,\s]+", str(raw)) if a.strip()]
+    return [a for a in items if SAFE_AGENT.fullmatch(a)]
+
+
+def _pick_reinforcement_candidate(order: dict, others: list[dict]) -> str | None:
+    """Pure selector: next backup agent not yet used as a reinforcement child."""
+    raw = order.get("candidates")
+    if isinstance(raw, list):
+        candidates = [a for a in raw if isinstance(a, str) and SAFE_AGENT.fullmatch(a)]
+    else:
+        candidates = _parse_candidates(raw)
+    if not candidates:
+        return None
+    used = {o.get("target") for o in others if o.get("parent") == order.get("id")}
+    for cand in candidates:
+        if cand != order.get("target") and cand not in used:
+            return cand
+    return None
+
+
+def reinforce(root: Path, order_id: str) -> dict | None:
+    """Spawn a differentiated backup order when the primary has stalled.
+
+    Trigger: primary is CEASED (ceasefire) OR has sat in WINDOW_FOUND /
+    MESSAGE_VISIBLE / INPUT_SUBMITTED for >= REINFORCE_AFTER_MINUTES without an
+    ACK. Never re-sends to the same stalled target; the new order is a separate
+    differentiated wave that the next tick will dispatch. Returns the child order
+    or None.
+    """
+    order = next((o for o in _orders(root) if o.get("id") == order_id), None)
+    if not order or order.get("state") == "AGENT_ACK":
+        return None
+    candidate = _pick_reinforcement_candidate(order, _orders(root))
+    if not candidate:
+        return None
+    if order.get("state") != "CEASED":
+        try:
+            age_minutes = (datetime.now(timezone.utc)
+                           - datetime.fromisoformat(order["created_at"])).total_seconds() / 60.0
+        except (KeyError, ValueError):
+            return None
+        if age_minutes < REINFORCE_AFTER_MINUTES:
+            return None
+        if order.get("state") not in ("WINDOW_FOUND", "MESSAGE_VISIBLE", "INPUT_SUBMITTED"):
+            return None
+    parent_text = order.get("text", "")
+    clean_parent = re.sub(r"\[AEP-ACK:[^\]]*\]", "", parent_text).strip()
+    child_text = (
+        f"[补位] 原题 {order.get('task', '?')} 主订单 {order_id} 暂未达 ACK，"
+        f"请采用差异化打法认领并给出可复现证据，不要重复主订单的失败路径。"
+        f"主订单上下文见 inbox/{order_id}.json。\n\n{clean_parent}"
+    )
+    child = submit_order(
+        root, target=candidate, task=order.get("task", ""), text=child_text,
+        sender=order.get("sender", "commander"),
+        priority=order.get("priority", "normal"),
+        allow_launch=bool(order.get("allow_launch")),
+        transport=order.get("transport", "auto"),
+    )
+    child["parent"] = order_id
+    _atomic(_root(root) / "inbox" / f"{child['id']}.json", child)
+    order.setdefault("children", []).append(child["id"])
+    _atomic(_state_path(root, order_id), order)
+    return child
+
+
 def tick(root: Path, *, perceive_first: bool = True) -> dict:
     perceived = perceive(root) if perceive_first else {"skipped": True}
     acks = check_acks(root)
@@ -397,7 +477,15 @@ def tick(root: Path, *, perceive_first: bool = True) -> dict:
         if order.get("state") in ("MESSAGE_VISIBLE", "INPUT_SUBMITTED"):
             continue
         dispatched.append({"order": order["id"], "target": order["target"], "state": dispatch(root, order=order)["state"]})
-    return {"at": now(), "perceived": perceived, "acks": acks, "dispatched": dispatched}
+    reinforced = []
+    for order in _orders(root):
+        if order.get("state") == "AGENT_ACK":
+            continue
+        child = reinforce(root, order["id"])
+        if child:
+            reinforced.append({"parent": order["id"], "child": child["id"], "target": child["target"]})
+    return {"at": now(), "perceived": perceived, "acks": acks,
+            "dispatched": dispatched, "reinforced": reinforced}
 
 
 def status(root: Path, *, tail: int = 20) -> dict:

@@ -48,3 +48,15 @@ python -m agent_evolution_protocol.coordination.delivery_audit --root coordinati
 ```
 
 2026-10-13 本机结果：7 条信箱消息，已读 0、原会话可见 0、Agent ACK 0、桌面送达停止 1、尚未尝试 6。该结果是**缺口证据**，不是对队友工作状态的评价。审计器只读，不启动客户端、不调用模型、不重试消息。下一步仍是逐客户端建立已验收原会话通道。
+
+### 2026-10-14 进度复核
+
+经代码核查，`src/agent_evolution_protocol/coordination/` 下已实现（代码层面）本表多项目标，须把"已实现代码"与"已实机验收"分开，避免再用"待开发"误导：
+
+- **已实现代码、待逐客户端实机验收**：`commander.dispatch` 的 `profiled-ui` 全闭环（定位→发令→challenge-response 防自 ACK→读回 AGENT_REPLY_VERIFIED）；`commander.watch/tick` 无人值守编排（感知→查 ACK→重投→停火）；`ui_fallback.PowerShellUiaDriver` 同时支持 `uia` 与 `ocr` 两种 transport；`transcript_bus` + `commander.perceive` 会话全文总线；`legion_ledger` 积分/竞赛账本；`delivery_audit` 投递审计；`wake_daemon` 事件驱动队列+去重+冷却+审计。
+- **已实机验收**：仅 Codex 原会话达成 `MESSAGE_VISIBLE`（PID 唯一、`input_verified=true`、独立读回事件 ID、`new_session=false`）；对方 ACK 因 10-13 额度耗尽未回，非机制问题。
+- **主要短板（待锚定，不是机制缺失）**：WorkBuddy / Qoder / CodeBuddy 三家 Electron 系 UIA 无控件，`perceive` 返回 `NO_WINDOW` / `NOTHING_READABLE` / `WINDOW_NOT_UNIQUE`；需建 `ui_profiles/*.json` 并 `coord-client anchor` 钉唯一 PID 后才能走 OCR/键鼠投递。WorkBuddy 两个候选窗口未消歧前禁止发令（适配器已 fail-closed）。
+- **机制缺口（真待开发）**：跨 agent 自动吵架/仲裁器未实现；竞赛"候选包→可投包"升级器缺回表/上传锁数据输入。
+- **已实现代码（2026-10-14，待实机验收）**："换人/多波次"编排——`submit_order` 支持 `candidates`，`commander.reinforce` 在订单 `CEASED` 或久未 ACK 时自动生成差异化补位订单（火枪手轮次），单测 `tests/test_commander_reinforce.py` 已通过。
+
+综合决策与升级路线见 `WARPLAN_UPGRADE_20261014.md`。
