@@ -17,7 +17,7 @@
 
 用户选择 WSL 原生部署，不使用 Docker。官方 [octo-server QUICKSTART](https://github.com/Mininglamp-OSS/octo-server/blob/main/QUICKSTART.md) 的非容器路线要求 Go ≥1.25、WuKongIM v2、MySQL 8（含 OCTO schema）和 Redis 7；文件模块还可能需要 S3 兼容存储。单独编译 `octo-server` 不能构成可发消息的端到端环境。Web 客户端另需 Node/pnpm 并指向该服务。
 
-2026-10-13 **纠错**：此处 `WSLC` 指 Windows 上的 `C:\Program Files\WSL\wslc.exe` 容器工具，不是 WSL 发行版。此前对 `Ubuntu-Preview`/`Ubuntu` 执行 `wsl.exe` 的预检因此没有回答正确问题。FlagGems 协作区 `competition/coordination/knowledge/WSLC_KUNLUN_CONTAINER.md` §0 的较新复测明确：`wslc` 按 session 隔离存储，昆仑容器/镜像在管理员会话 `wslc-cli-admin-love`；普通会话 `ls` 和 `images` 都为空，访问 admin session 报 `ERROR_ELEVATION_REQUIRED`。当前会话的空表因此与该复测吻合。必须由用户处理 UAC，Agent 不代为提权；禁止误用 `wslc run --rm` 重新拉约 36 GB 镜像。**该昆仑编译镜像不是 OCTO 服务依赖栈**；不得把它当作部署 OCTO 的 MySQL、Redis 或 WuKongIM 环境，更不能改写镜像。
+2026-10-13 **状态更新**：此处 `WSLC` 指 Windows 上的 `C:\Program Files\WSL\wslc.exe` 容器工具，不是 WSL 发行版。旧复测曾发现昆仑镜像只在 `wslc-cli-admin-love`，普通会话空表；当晚已用 `save/load` 把同一镜像 ID `9b5a960d9cc3` 复制到普通会话，并创建、启动同名 `azure_ellsworth` 容器。普通会话 `exec` 与 Torch 导入通过，但 `torch.xpu.is_available()` 为 False，完整编译门仍未验收。故“普通会话恒为空／必须由用户双击提权”仅是**迁移前历史结论**，不得当作现行规则。任何会话若见空表，应先核对会话和镜像，禁止盲目 `run/pull`；创建必须显式 `--pull never`。现行详情见 `REA_WSLC_BRIEFING_20261013.md` 与 FlagGems 协作区共享知识顶部。**该昆仑编译镜像不是 OCTO 服务依赖栈**；不得把它当作部署 OCTO 的 MySQL、Redis 或 WuKongIM 环境，更不能改写镜像。
 
 先明确原生 OCTO 部署载体（如 `Ubuntu-Preview`，但不等同于 `wslc` 昆仑容器）并使 shell 可用；再只读检查 `go version`、`mysql --version`、`redis-server --version`、WuKongIM 是否存在及端口占用。之后选隔离目录、独立数据库和空闲端口，备份配置。只在这些条件满足时编译、配置和启动服务。不要复用现有 MySQL schema、Redis 数据库、昆仑编译容器或生产 Bot 令牌。
 
