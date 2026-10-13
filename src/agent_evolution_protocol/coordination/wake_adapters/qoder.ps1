@@ -27,8 +27,35 @@ if ($allowNewSession -or $policy -eq 'allow') {
   $windowEvidence = $null
 } else {
   $probe = Join-Path $PSScriptRoot 'existing_window.ps1'
-  $windowEvidence = & $probe -Agent qoder -ProcessName Qoder -ExpectedPath $exe -ExpectedTitle Qoder | ConvertFrom-Json
+  # Qoder runs elevated, so Process.Path is often unreadable. Match on process
+  # name plus window title and record that the executable path was not verified.
+  $windowEvidence = & $probe -Agent qoder -ProcessName Qoder -ExpectedPath $exe -ExpectedTitle Qoder -AllowUnknownPath | ConvertFrom-Json
   $method = 'existing-window-focus'
+
+  $uia = Join-Path $PSScriptRoot 'uia_session.ps1'
+  $deliverText = if ($event.deliver_text) { [string]$event.deliver_text } else { '' }
+  if ($env:AEP_UIA_DELIVER -eq '1' -and $deliverText) {
+    if ($deliverText -notmatch [regex]::Escape($event.id)) {
+      throw 'EVENT_ID_NOT_IN_TEXT: deliver_text must carry the wake event id'
+    }
+    $receipt = Join-Path (Split-Path -Parent $WakeFile) ('..\uia_receipts\' + $event.id + '-qoder.json')
+    $uiaArgs = @{
+      Agent = 'qoder'
+      ProcessName = 'Qoder'
+      ExpectedPath = $exe
+      ExpectedTitle = 'Qoder'
+      Mode = 'deliver'
+      EventId = $event.id
+      Text = $deliverText
+      OutFile = (Join-Path (Split-Path -Parent $WakeFile) ('..\uia_captures\qoder-' + $event.id + '.txt'))
+      ReceiptFile = $receipt
+      AllowUnknownPath = $true
+      AllowClipboardPaste = [bool]($env:AEP_UIA_ALLOW_CLIPBOARD_PASTE -eq '1')
+    }
+    if ($env:AEP_UIA_OCR -eq '1') { $uiaArgs['OcrVerify'] = $true }
+    & $uia @uiaArgs
+    return
+  }
 }
 
 [pscustomobject]@{

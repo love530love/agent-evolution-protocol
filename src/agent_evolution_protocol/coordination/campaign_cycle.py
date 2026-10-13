@@ -138,7 +138,8 @@ def _notify(root: Path, bridge_root: Path, state: dict, item: dict) -> None:
     if not message_path.exists():
         _write_once(message_path, message)
     adapter = Path(__file__).resolve().parent / "wake_adapters" / f"{agent}.ps1"
-    if not adapter.is_file():
+    profile = Path(root) / "ui_profiles" / f"{agent}.json"
+    if not adapter.is_file() and not profile.is_file():
         item["wake_status"] = "NO_ADAPTER_MAILBOX_ONLY"
         return
     wake = {"id": item["id"], "type": "wake_request", "at": stamp(), "sender": "campaign",
@@ -329,7 +330,8 @@ def reconcile(root: Path, bridge_root: Path, *, at: datetime | None = None) -> d
             for item in list(state["assignments"]):
                 if item.get("wake_status") == "NO_ADAPTER_MAILBOX_ONLY":
                     adapter = Path(__file__).resolve().parent / "wake_adapters" / f"{item['agent']}.ps1"
-                    if adapter.is_file() and item["status"] in {"awaiting_ack", "active"}:
+                    profile = Path(root) / "ui_profiles" / f"{item['agent']}.json"
+                    if (adapter.is_file() or profile.is_file()) and item["status"] in {"awaiting_ack", "active"}:
                         item["wake_status"] = "PENDING"
                 if item["status"] == "queued_capacity":
                     in_flight = sum(row["agent"] == item["agent"] and row["status"] in {"awaiting_ack", "active"}

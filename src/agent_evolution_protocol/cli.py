@@ -11,10 +11,12 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 import shutil
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from uuid import uuid4
 
 from agent_evolution_protocol.coordination.cluster_kernel import ClusterKernel
 from agent_evolution_protocol.coordination.conversation_journal import append_event as append_chat_event, read_events as read_chat_events, cursor_for as chat_cursor_for, acknowledge as acknowledge_chat
@@ -23,6 +25,11 @@ from agent_evolution_protocol.coordination.capability_roster import declare as d
 from agent_evolution_protocol.coordination.mechanism_audit import audit as audit_mechanism
 from agent_evolution_protocol.coordination.volley_plan import plan as plan_volley
 from agent_evolution_protocol.coordination.battle_orders import issue as issue_battle_order, status as battle_order_status
+from agent_evolution_protocol.coordination.legion_ledger import record as record_legion, scoreboard as legion_scoreboard, slacking as detect_slacking, challenge as challenge_legion, chase as chase_leader
+from agent_evolution_protocol.coordination import client_registry
+from agent_evolution_protocol.coordination import transcript_bus
+from agent_evolution_protocol.coordination import transport_cdp
+from agent_evolution_protocol.coordination import commander
 from agent_evolution_protocol.routing import classify_intent, load_route_config
 from agent_evolution_protocol.route_state import analyze_route_state, continuation_from_events, select_resource_type
 
@@ -527,6 +534,20 @@ def coord_send(args: argparse.Namespace) -> None:
     mid = wake_id()
     msg = {"id": mid, "at": utc_now(), "sender": sender, "to": receiver, "topic": args.topic, "kind": args.kind, "text": text}
     atomic_write_json(coord_file(root, "messages", receiver, f"{mid}.json"), msg)
+    dispatch_now = (getattr(args, "dispatch", False) or args.kind == "warning") and not getattr(args, "mailbox_only", False)
+    if dispatch_now:
+        order = commander.submit_order(
+            root, target=receiver, task=args.topic, text=text, sender=sender,
+            priority="urgent" if args.kind == "warning" else "normal",
+            event_id=mid, allow_launch=bool(getattr(args, "allow_launch", False)),
+        )
+        # Dispatch only this order. A generic tick could accidentally replay
+        # unrelated, older orders while trying to deliver one urgent notice.
+        receipt = commander.dispatch(root, order=order)
+        msg["desktop_delivery"] = {
+            "order_id": order["id"], "state": receipt["state"],
+            "note": "AGENT_ACK still requires a reply from the target in the anchored session",
+        }
     print(json.dumps(msg, ensure_ascii=False, indent=2))
 
 
@@ -730,6 +751,7 @@ def coord_wake(args: argparse.Namespace) -> None:
         "session": session_state(root, receiver),
         "allow_new_session": bool(args.allow_new_session),
         "claim_timeout_seconds": args.claim_timeout_seconds,
+        "deliver_text": getattr(args, "deliver_text", "") or "",
     }
     atomic_write_json(coord_file(root, "wake_queue", f"{wid}.json"), event)
     print(json.dumps(event, ensure_ascii=False, indent=2))
@@ -1702,6 +1724,325 @@ def kernel_checkpoint(args: argparse.Namespace) -> None:
     print(json.dumps(event, ensure_ascii=False, indent=2))
 
 
+UIA_CLIENTS = {
+    "workbuddy": {"process": "WorkBuddy", "exe": r"D:\Programs\WorkBuddy\WorkBuddy.exe", "title": "WorkBuddy"},
+    "qoder": {"process": "Qoder", "exe": r"D:\Programs\Qoder\Qoder.exe", "title": "Qoder"},
+}
+
+
+def coord_legion(args: argparse.Namespace) -> None:
+    root = coord_root(args)
+    action = args.action
+    if action == "record":
+        if not args.agent or not args.kind or not args.reporter or not args.note:
+            raise ProtocolError("record needs --agent --kind --reporter --note")
+        try:
+            event = record_legion(root, agent=args.agent, kind=args.kind, reporter=args.reporter,
+                                  task=args.task or "", evidence=args.evidence,
+                                  note=args.note, signature=args.signature or "")
+        except ValueError as exc:
+            raise ProtocolError(str(exc)) from exc
+        print(json.dumps(event, ensure_ascii=False, indent=2))
+        return
+    if action == "scoreboard":
+        print(json.dumps(legion_scoreboard(root, since_hours=args.window_hours), ensure_ascii=False, indent=2))
+        return
+    if action == "slacking":
+        try:
+            report = detect_slacking(root, expected=args.expected or None,
+                                     window_hours=args.window_hours, min_productive=args.min_productive)
+        except ValueError as exc:
+            raise ProtocolError(str(exc)) from exc
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return
+    if action == "chase":
+        print(json.dumps(chase_leader(root, since_hours=args.window_hours,
+                                      min_productive=args.min_productive), ensure_ascii=False, indent=2))
+        return
+    if not args.agent:
+        raise ProtocolError("challenge needs --agent")
+    missing = [name for name in ("reason", "alternative", "predicted_signature",
+                                 "cheapest_test", "stop_condition") if not getattr(args, name)]
+    if missing:
+        raise ProtocolError("challenge needs " + ", ".join("--" + name.replace("_", "-") for name in missing))
+    try:
+        card = challenge_legion(root, agent=args.agent, reason=args.reason,
+                                alternative=args.alternative,
+                                predicted_signature=args.predicted_signature,
+                                cheapest_test=args.cheapest_test,
+                                stop_condition=args.stop_condition,
+                                evidence=args.evidence, task=args.task or "")
+    except ValueError as exc:
+        raise ProtocolError(str(exc)) from exc
+    print(json.dumps(card, ensure_ascii=False, indent=2))
+
+
+def coord_chat_digest(args: argparse.Namespace) -> None:
+    """What has the rest of the legion said recently, for an agent just joining."""
+    root = coord_root(args)
+    who = valid_agent(args.agent)
+    if args.since_hours <= 0:
+        raise ProtocolError("--since-hours must be positive")
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=args.since_hours)
+    events = read_chat_events(root, after="", limit=500)
+    recent = []
+    for item in events:
+        try:
+            stamp = datetime.fromisoformat(item["recorded_at"])
+        except (KeyError, ValueError, TypeError):
+            continue
+        if stamp >= cutoff:
+            recent.append(item)
+    grouped: dict[str, list[dict]] = {}
+    for item in recent:
+        key = str(item.get("source") or item.get("actor") or "unknown")
+        grouped.setdefault(key, []).append(item)
+    actors = []
+    for key in sorted(grouped):
+        items = grouped[key][-args.per_actor:]
+        actors.append({
+            "source": key,
+            "count_in_window": len(grouped[key]),
+            "latest": [
+                {"at": row.get("recorded_at"), "kind": row.get("kind"),
+                 "text": (row.get("text") or "")[: args.chars]}
+                for row in items
+            ],
+        })
+    payload = {"agent": who, "since_hours": args.since_hours, "actors": actors,
+               "note": "Local archive only. Actors without a hook or a manual publish are absent, which is a gap to fix, not proof they are idle."}
+    if args.markdown:
+        lines = [f"# 会话摘要（近 {args.since_hours:g} 小时）", ""]
+        for actor in actors:
+            lines.append(f"## {actor['source']}（{actor['count_in_window']} 条）")
+            for row in actor["latest"]:
+                body = " ".join(str(row["text"]).split())
+                lines.append(f"- `{row['at']}` {row['kind']}: {body}")
+            lines.append("")
+        print("\n".join(lines).rstrip())
+        return
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+def _pwsh() -> str:
+    return shutil.which("pwsh.exe") or shutil.which("powershell.exe") or "powershell.exe"
+
+
+def coord_uia(args: argparse.Namespace) -> None:
+    """Desktop transport probe: observe, capture or deliver to an original window."""
+    root = coord_root(args)
+    who = valid_agent(args.agent)
+    profile = UIA_CLIENTS.get(who, {})
+    process_name = args.process or profile.get("process") or who
+    exe = args.exe or profile.get("exe", "")
+    title = args.title or profile.get("title", "")
+    adapter = Path(__file__).resolve().parent / "coordination" / "wake_adapters" / "uia_session.ps1"
+    if not adapter.is_file():
+        raise ProtocolError(f"uia adapter missing: {adapter}")
+    out_file = args.out_file or str(coord_file(root, "uia_captures", f"{who}-{args.action}.txt"))
+    text = args.text or ""
+    if args.text_file:
+        text = args.text_file.read_text(encoding="utf-8")
+    if args.action == "deliver":
+        if not args.event_id or not text.strip():
+            raise ProtocolError("deliver needs --event-id and --text or --text-file")
+        if args.event_id not in text:
+            raise ProtocolError("EVENT_ID_NOT_IN_TEXT: the message must carry its own event id")
+    command = [
+        _pwsh(), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(adapter),
+        "-Agent", who, "-ProcessName", process_name, "-Mode", args.action,
+        "-OutFile", out_file, "-ReceiptFile", str(coord_file(root, "uia_receipts", f"{args.event_id or 'last'}-{who}.json")),
+    ]
+    if exe:
+        command += ["-ExpectedPath", exe]
+    if title:
+        command += ["-ExpectedTitle", title]
+    if args.event_id:
+        command += ["-EventId", args.event_id]
+    if text:
+        command += ["-Text", text]
+    if args.allow_unknown_path:
+        command += ["-AllowUnknownPath"]
+    if args.allow_clipboard_paste:
+        command += ["-AllowClipboardPaste"]
+    if args.ocr:
+        command += ["-OcrVerify"]
+    command += ["-ReadBackTimeoutSeconds", str(max(1, min(args.timeout, 300)))]
+    try:
+        completed = subprocess.run(command, text=True, capture_output=True, timeout=max(args.timeout + 60, 120), check=False)
+    except Exception as exc:  # noqa: BLE001
+        raise ProtocolError(f"uia adapter failed: {exc}") from exc
+    report = None
+    for line in reversed(completed.stdout.splitlines()):
+        try:
+            candidate = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(candidate, dict):
+            report = candidate
+            break
+    payload = {"agent": who, "action": args.action, "out_file": out_file,
+               "returncode": completed.returncode, "report": report,
+               "stderr": completed.stderr[-2000:],
+               "note": "task_delivered=true only means the event id was read back from the same session; it is never an ACK."}
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+def coord_client(args: argparse.Namespace) -> None:
+    """Name, find, anchor and open the desktop clients the legion can command."""
+    root = coord_root(args)
+    action = args.action
+    if action == "register":
+        if not args.agent:
+            raise ProtocolError("register needs --agent")
+        try:
+            payload = client_registry.register(
+                root, agent=valid_agent(args.agent), display=args.display or "",
+                process=args.process or "", exe=args.exe or "",
+                window_titles=args.window_titles, electron=not args.no_electron,
+                transports=args.transports or None, launch_args=args.launch_args,
+                notes=args.notes or "")
+        except ValueError as exc:
+            raise ProtocolError(str(exc)) from exc
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    if action == "list":
+        rows = []
+        for name in client_registry.known(root):
+            try:
+                rows.append(client_registry.profile(root, name))
+            except ValueError:
+                continue
+        print(json.dumps({"clients": rows}, ensure_ascii=False, indent=2))
+        return
+    if action == "discover":
+        print(json.dumps(client_registry.discover(root, args.agent or ""), ensure_ascii=False, indent=2))
+        return
+    if action == "anchor":
+        if not args.agent or not args.pid:
+            raise ProtocolError("anchor needs --agent and --pid")
+        print(json.dumps(client_registry.set_anchor(
+            root, agent=valid_agent(args.agent), pid=args.pid,
+            title=args.title or "", session_id=args.session_id or ""), ensure_ascii=False, indent=2))
+        return
+    if not args.agent:
+        raise ProtocolError("launch needs --agent")
+    result = client_registry.launch(root, valid_agent(args.agent), allow=args.allow_launch,
+                                    extra_args=args.launch_args, debug_port=args.debug_port or 0)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+def coord_transcript(args: argparse.Namespace) -> None:
+    """Shared conversation bus so every agent can perceive every other session."""
+    root = coord_root(args)
+    action = args.action
+    if action == "publish":
+        if not args.agent:
+            raise ProtocolError("publish needs --agent")
+        if args.file:
+            text = Path(args.file).read_text(encoding="utf-8", errors="ignore")
+        elif args.text:
+            text = args.text
+        else:
+            raise ProtocolError("publish needs --text or --file")
+        payload = transcript_bus.publish(root, agent=valid_agent(args.agent), text=text,
+                                         source=args.source or "manual", window_title=args.title or "")
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    if action == "read":
+        rows = transcript_bus.read_events(root, after=args.after or "", agent=args.agent or "", limit=args.limit)
+        if args.markdown:
+            lines = ["# 共享会话总线", ""]
+            for row in rows:
+                lines.append(f"## {row.get('agent')} · {row.get('recorded_at')} · 新增 {len(row.get('added_lines', []))} 行")
+                for line in row.get("added_lines", [])[-args.tail:]:
+                    lines.append(f"- {line}")
+                lines.append("")
+            print("\n".join(lines).rstrip())
+            return
+        print(json.dumps({"events": rows}, ensure_ascii=False, indent=2))
+        return
+    if action == "awareness":
+        print(json.dumps(transcript_bus.awareness(root, agents=[args.agent] if args.agent else None),
+                         ensure_ascii=False, indent=2))
+        return
+    report = transcript_bus.digest(root, since_events=args.limit, per_agent=args.tail)
+    if args.markdown:
+        lines = ["# 军团会话摘要", ""]
+        for actor in report["actors"]:
+            lines.append(f"## {actor['agent']}")
+            for line in actor["latest"]:
+                lines.append(f"- {line}")
+            lines.append("")
+        print("\n".join(lines).rstrip())
+        return
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+
+
+def coord_cdp(args: argparse.Namespace) -> None:
+    """Chrome DevTools Protocol transport: exact DOM read and composer write."""
+    action = args.action
+    if action == "scan":
+        print(json.dumps({"endpoints": transport_cdp.scan()}, ensure_ascii=False, indent=2))
+        return
+    if action == "targets":
+        print(json.dumps({"port": args.port, "targets": transport_cdp.targets(args.port)}, ensure_ascii=False, indent=2))
+        return
+    target = transport_cdp.pick_target(args.port, title_contains=args.title or "")
+    if action == "read":
+        ws = transport_cdp.connect(target["ws"])
+        try:
+            body = transport_cdp.read_transcript(ws)
+        finally:
+            ws.close()
+        if args.out_file:
+            Path(args.out_file).parent.mkdir(parents=True, exist_ok=True)
+            Path(args.out_file).write_text(body, encoding="utf-8")
+        payload = {"port": args.port, "target": target.get("title"), "chars": len(body),
+                   "preview": body[: args.preview_chars]}
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    if not args.text and not args.text_file:
+        raise ProtocolError("send needs --text or --text-file")
+    text = args.text or Path(args.text_file).read_text(encoding="utf-8")
+    event_id = args.event_id or ("EVT-" + uuid4().hex[:10].upper())
+    if event_id not in text:
+        text = f"{text.rstrip()}\n\n[{commander.ACK_TOKEN}:{event_id}]"
+    receipt = transport_cdp.deliver(target["ws"], text, event_id=event_id, wait_seconds=args.timeout)
+    print(json.dumps({"port": args.port, "target": target.get("title"), "event_id": event_id, **receipt},
+                     ensure_ascii=False, indent=2))
+
+
+def coord_commander(args: argparse.Namespace) -> None:
+    """Queue directives, run the unattended loop, and prove every transition."""
+    root = coord_root(args)
+    action = args.action
+    if action == "submit":
+        if not args.target or not args.text and not args.text_file:
+            raise ProtocolError("submit needs --target and --text or --text-file")
+        text = args.text or Path(args.text_file).read_text(encoding="utf-8")
+        order = commander.submit_order(
+            root, target=valid_agent(args.target), task=args.task or "GENERAL", text=text,
+            sender=valid_agent(args.sender), priority=args.priority,
+            event_id=args.event_id or "", allow_launch=args.allow_launch,
+            transport=args.transport, expires_minutes=args.expires_minutes)
+        print(json.dumps(order, ensure_ascii=False, indent=2))
+        return
+    if action == "perceive":
+        print(json.dumps(commander.perceive(root, agents=[args.agent] if args.agent else None),
+                         ensure_ascii=False, indent=2))
+        return
+    if action == "tick":
+        print(json.dumps(commander.tick(root, perceive_first=not args.no_perceive), ensure_ascii=False, indent=2))
+        return
+    if action == "ack":
+        print(json.dumps(commander.check_acks(root), ensure_ascii=False, indent=2))
+        return
+    if action == "watch":
+        raise SystemExit(commander.watch(root, interval=args.interval, max_ticks=args.max_ticks))
+    print(json.dumps(commander.status(root, tail=args.limit), ensure_ascii=False, indent=2))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path(".agent-evolution"))
@@ -1729,6 +2070,9 @@ def build_parser() -> argparse.ArgumentParser:
     send = commands.add_parser("coord-send")
     send.add_argument("--from", dest="sender", required=True); send.add_argument("--to", required=True); send.add_argument("--topic", required=True); send.add_argument("--kind", choices=MESSAGE_KINDS, required=True)
     body = send.add_mutually_exclusive_group(required=True); body.add_argument("--text"); body.add_argument("--text-file")
+    send.add_argument("--dispatch", action="store_true", help="immediately deliver to the target's existing desktop session")
+    send.add_argument("--mailbox-only", action="store_true", help="for warning messages, opt out of the default immediate desktop attempt")
+    send.add_argument("--allow-launch", action="store_true", help="with --dispatch, allow launching the registered client if no window exists")
     send.set_defaults(func=coord_send)
     ack_topic = commands.add_parser("coord-ack-topic"); ack_topic.add_argument("--agent", required=True); ack_topic.add_argument("--topic", required=True); ack_topic.set_defaults(func=coord_ack_topic)
     delivery = commands.add_parser("coord-delivery-status"); delivery.add_argument("--to", required=True); delivery.add_argument("--id", required=True); delivery.set_defaults(func=coord_delivery_status)
@@ -1742,7 +2086,7 @@ def build_parser() -> argparse.ArgumentParser:
     chat_read = commands.add_parser("coord-chat-read"); chat_read.add_argument("--agent", required=True); chat_read.add_argument("--after"); chat_read.add_argument("--limit", type=int, default=50); chat_read.add_argument("--include-raw", action="store_true"); chat_read.set_defaults(func=coord_chat_read)
     chat_ack = commands.add_parser("coord-chat-ack"); chat_ack.add_argument("--agent", required=True); chat_ack.add_argument("--through", required=True); chat_ack.set_defaults(func=coord_chat_ack)
     session = commands.add_parser("coord-session-set"); session.add_argument("--agent", required=True); session.add_argument("--mode", choices=("sticky", "manual", "spawn-allowed"), default="sticky"); session.add_argument("--thread-id"); session.add_argument("--new-session-policy", choices=SESSION_POLICIES, default="forbid-by-default"); session.add_argument("--handoff-style", choices=HANDOFF_STYLES, default="digest-first"); session.add_argument("--notes"); session.set_defaults(func=coord_session_set)
-    wake = commands.add_parser("coord-wake"); wake.add_argument("--from", dest="sender", required=True); wake.add_argument("--to", required=True); wake.add_argument("--task", required=True); wake.add_argument("--reason", required=True); wake.add_argument("--budget", choices=WAKE_BUDGETS, default="one-shot"); wake.add_argument("--entrypoint"); wake.add_argument("--requires-user-auth", action="store_true"); wake.add_argument("--dry-run", action="store_true"); wake.add_argument("--allow-new-session", action="store_true"); wake.add_argument("--claim-timeout-seconds", type=int, default=600); wake.set_defaults(func=coord_wake)
+    wake = commands.add_parser("coord-wake"); wake.add_argument("--from", dest="sender", required=True); wake.add_argument("--to", required=True); wake.add_argument("--task", required=True); wake.add_argument("--reason", required=True); wake.add_argument("--budget", choices=WAKE_BUDGETS, default="one-shot"); wake.add_argument("--entrypoint"); wake.add_argument("--requires-user-auth", action="store_true"); wake.add_argument("--dry-run", action="store_true"); wake.add_argument("--allow-new-session", action="store_true"); wake.add_argument("--claim-timeout-seconds", type=int, default=600); wake.add_argument("--deliver-text"); wake.set_defaults(func=coord_wake)
     wake_status = commands.add_parser("coord-wake-status"); wake_status.add_argument("--tail", type=int, default=10); wake_status.set_defaults(func=coord_wake_status)
     archive = commands.add_parser("coord-archive-stale"); archive.add_argument("--older-than-hours", type=float, default=24); archive.add_argument("--archive-name", default="archived-stale"); archive.add_argument("--all", action="store_true"); archive.set_defaults(func=coord_archive_stale)
     onboarding = commands.add_parser("coord-onboarding"); onboarding.add_argument("--agent", required=True); onboarding.set_defaults(func=coord_onboarding)
@@ -1758,6 +2102,17 @@ def build_parser() -> argparse.ArgumentParser:
     session_bind = commands.add_parser("kernel-session-bind"); session_bind.add_argument("--agent", required=True); session_bind.add_argument("--provider", choices=("codex", "hermes", "qoder", "codebuddy", "github_copilot"), required=True); session_bind.add_argument("--workspace", required=True); session_bind.add_argument("--session-id", required=True); session_bind.add_argument("--no-resume", action="store_true"); session_bind.set_defaults(func=kernel_session_bind)
     plan = commands.add_parser("kernel-continuation-plan"); plan.add_argument("--agent", required=True); plan.add_argument("--workspace", required=True); plan.add_argument("--requested-session-id"); plan.add_argument("--allow-new-session", action="store_true"); plan.set_defaults(func=kernel_continuation_plan)
     checkpoint = commands.add_parser("kernel-checkpoint"); checkpoint.add_argument("--task-id", required=True); checkpoint.add_argument("--executor", required=True); checkpoint_body = checkpoint.add_mutually_exclusive_group(required=True); checkpoint_body.add_argument("--payload-json"); checkpoint_body.add_argument("--payload-file"); checkpoint.set_defaults(func=kernel_checkpoint)
+    legion = commands.add_parser("coord-legion"); legion.add_argument("action", choices=("record", "scoreboard", "slacking", "challenge", "chase")); legion.add_argument("--agent"); legion.add_argument("--kind"); legion.add_argument("--reporter"); legion.add_argument("--task"); legion.add_argument("--signature"); legion.add_argument("--evidence", nargs="*", default=[]); legion.add_argument("--note"); legion.add_argument("--reason"); legion.add_argument("--alternative"); legion.add_argument("--predicted-signature"); legion.add_argument("--cheapest-test"); legion.add_argument("--stop-condition"); legion.add_argument("--expected", nargs="*", default=[]); legion.add_argument("--window-hours", type=float, default=24); legion.add_argument("--min-productive", type=int, default=1); legion.set_defaults(func=coord_legion)
+    digest = commands.add_parser("coord-chat-digest"); digest.add_argument("--agent", required=True); digest.add_argument("--since-hours", type=float, default=24); digest.add_argument("--per-actor", type=int, default=4); digest.add_argument("--chars", type=int, default=240); digest.add_argument("--markdown", action="store_true"); digest.set_defaults(func=coord_chat_digest)
+    uia = commands.add_parser("coord-uia"); uia.add_argument("action", choices=("observe", "capture", "deliver")); uia.add_argument("--agent", required=True); uia.add_argument("--process"); uia.add_argument("--exe"); uia.add_argument("--title"); uia.add_argument("--event-id"); uia.add_argument("--text"); uia.add_argument("--text-file", type=Path); uia.add_argument("--out-file"); uia.add_argument("--allow-unknown-path", action="store_true"); uia.add_argument("--allow-clipboard-paste", action="store_true"); uia.add_argument("--ocr", action="store_true"); uia.add_argument("--timeout", type=int, default=20); uia.set_defaults(func=coord_uia)
+
+    client = commands.add_parser("coord-client"); client.add_argument("action", choices=("register", "list", "discover", "anchor", "launch")); client.add_argument("--agent"); client.add_argument("--display"); client.add_argument("--process"); client.add_argument("--exe"); client.add_argument("--window-titles", nargs="*", default=[]); client.add_argument("--transports", nargs="*", default=[]); client.add_argument("--launch-args", nargs="*", default=[]); client.add_argument("--notes"); client.add_argument("--no-electron", action="store_true"); client.add_argument("--pid", type=int); client.add_argument("--title"); client.add_argument("--session-id"); client.add_argument("--allow-launch", action="store_true"); client.add_argument("--debug-port", type=int); client.set_defaults(func=coord_client)
+
+    transcript = commands.add_parser("coord-transcript"); transcript.add_argument("action", choices=("publish", "read", "awareness", "digest")); transcript.add_argument("--agent"); transcript.add_argument("--text"); transcript.add_argument("--file"); transcript.add_argument("--source"); transcript.add_argument("--title"); transcript.add_argument("--after"); transcript.add_argument("--limit", type=int, default=100); transcript.add_argument("--tail", type=int, default=6); transcript.add_argument("--markdown", action="store_true"); transcript.set_defaults(func=coord_transcript)
+
+    cdp_cmd = commands.add_parser("coord-cdp"); cdp_cmd.add_argument("action", choices=("scan", "targets", "read", "send")); cdp_cmd.add_argument("--port", type=int, default=9222); cdp_cmd.add_argument("--title"); cdp_cmd.add_argument("--text"); cdp_cmd.add_argument("--text-file"); cdp_cmd.add_argument("--event-id"); cdp_cmd.add_argument("--out-file"); cdp_cmd.add_argument("--preview-chars", type=int, default=600); cdp_cmd.add_argument("--timeout", type=int, default=10); cdp_cmd.set_defaults(func=coord_cdp)
+
+    cmdr = commands.add_parser("coord-commander"); cmdr.add_argument("action", choices=("submit", "perceive", "tick", "ack", "status", "watch")); cmdr.add_argument("--target"); cmdr.add_argument("--sender", default="human"); cmdr.add_argument("--task"); cmdr.add_argument("--text"); cmdr.add_argument("--text-file"); cmdr.add_argument("--event-id"); cmdr.add_argument("--priority", choices=("urgent", "normal", "low"), default="normal"); cmdr.add_argument("--transport", default="auto"); cmdr.add_argument("--expires-minutes", type=int, default=120); cmdr.add_argument("--allow-launch", action="store_true"); cmdr.add_argument("--no-perceive", action="store_true"); cmdr.add_argument("--agent"); cmdr.add_argument("--limit", type=int, default=20); cmdr.add_argument("--interval", type=float, default=30); cmdr.add_argument("--max-ticks", type=int, default=0); cmdr.set_defaults(func=coord_commander)
     return parser
 
 

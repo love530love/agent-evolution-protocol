@@ -91,6 +91,12 @@ def move_atomic(src: Path, dst_dir: Path) -> Path:
 
 
 def adapter_for(agent: str) -> Path:
+    if not agent or not all(char.islower() or char.isdigit() or char in "_-" for char in agent):
+        return ADAPTERS / "__invalid_agent__.ps1"
+    repo_root = ROOT.parents[2]
+    profile = repo_root / "coordination" / "ui_profiles" / f"{agent}.json"
+    if profile.is_file():
+        return ADAPTERS / "ui_fallback.ps1"
     return ADAPTERS / f"{agent}.ps1"
 
 
@@ -154,7 +160,12 @@ def consume(path: Path, *, dry_run: bool = False) -> int:
         move_atomic(path, DONE)
         return 0
 
-    pwsh = shutil.which("pwsh.exe") or "pwsh.exe"
+    pwsh = shutil.which("pwsh.exe")
+    if not pwsh:
+        append_log(dict(at=stamp(), status="adapter-error", id=aid, to=target,
+                        task=event.get("task"), error="PowerShell 7 (pwsh.exe) not found", monotonic=now))
+        move_atomic(path, FAILED)
+        return 3
     cmd = [
         pwsh,
         "-NoProfile",

@@ -120,12 +120,26 @@ def main() -> int:
         ).strip()
         save_local(room=args.room, actor=args.agent, source=args.agent, kind="result",
                    text=text, session_id=session_id, cwd=cwd, raw_hook=data)
+        try:
+            from agent_evolution_protocol.coordination.presence import signal
+            signal(JOURNAL_ROOT, agent=args.agent, state="online",
+                   source="session_hook:reply", session_id=session_id)
+        except (OSError, ValueError) as exc:
+            print(f"presence update failed: {exc}", file=sys.stderr)
         if text:
             post("/api/event", {"room": args.room, "actor": args.agent, "kind": "result", "text": text, "cwd": cwd, "session_id": session_id})
         print("{}")
     else:
         save_local(room=args.room, actor=args.agent, source=args.agent, kind="status",
                    text=args.event, session_id=session_id, cwd=cwd, raw_hook=data)
+        if args.event in {"start", "end"}:
+            try:
+                from agent_evolution_protocol.coordination.presence import signal
+                signal(JOURNAL_ROOT, agent=args.agent,
+                       state="online" if args.event == "start" else "offline",
+                       source=f"session_hook:{args.event}", session_id=session_id)
+            except (OSError, ValueError) as exc:
+                print(f"presence update failed: {exc}", file=sys.stderr)
         post("/api/event", {"room": args.room, "actor": args.agent, "kind": "status", "state": "online" if args.event == "start" else "offline", "text": args.event, "cwd": cwd, "session_id": session_id})
     return 0
 

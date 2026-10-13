@@ -28,4 +28,12 @@ coordination/battle_events/
 src/agent_evolution_protocol/coordination/battle_events/
 coordination/pad_receipts/
 coordination/campaign/
+coordination/ui_profiles/
+coordination/ui_receipts/
+coordination/desktop-input.lock
+coordination/presence/
+coordination/command_memory/
 src/agent_evolution_protocol/coordination/pad_receipts/
+.aep-kernel/
+coordination/
+src/agent_evolution_protocol/coordination/messages/
