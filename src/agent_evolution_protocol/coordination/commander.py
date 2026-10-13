@@ -33,7 +33,7 @@ CEASE_AFTER_FAILURES = 3
 REINFORCE_AFTER_MINUTES = 20  # 主订单停火或久未ACK后，允许候选agent补位
 
 # DEPOSITED -> WINDOW_FOUND -> INPUT_SUBMITTED -> MESSAGE_VISIBLE -> AGENT_ACK
-ORDER_STATES = ("DEPOSITED", "WINDOW_FOUND", "INPUT_SUBMITTED", "MESSAGE_VISIBLE", "AGENT_ACK", "CEASED", "FAILED")
+ORDER_STATES = ("DEPOSITED", "DEFERRED", "WINDOW_FOUND", "INPUT_SUBMITTED", "MESSAGE_VISIBLE", "AGENT_ACK", "CEASED", "FAILED")
 
 
 def _root(base: Path) -> Path:
@@ -305,6 +305,11 @@ def _cdp_port_owned_by_anchor(port: int, anchor_pid: int) -> bool:
 
 def dispatch(root: Path, *, order: dict) -> dict:
     target = order["target"]
+    try:
+        registry.profile(root, target)
+    except ValueError:
+        return _record_attempt(root, order, state="DEFERRED",
+                               note="UNREGISTERED_CLIENT: register a verified client profile before delivery")
     client = None
     for row in registry.discover(root, target)["clients"]:
         if row["agent"] == target:
@@ -313,15 +318,15 @@ def dispatch(root: Path, *, order: dict) -> dict:
     windows = (client or {}).get("windows", [])
     if not windows:
         if not order.get("allow_launch"):
-            return _record_attempt(root, order, state="FAILED", note="NO_WINDOW: client is not open and launch is not authorised")
+            return _record_attempt(root, order, state="DEFERRED", note="NO_WINDOW: client is not open and launch is not authorised")
         launched = registry.launch(root, target, allow=True)
         if not launched.get("launched"):
-            return _record_attempt(root, order, state="FAILED", receipt=launched, note="LAUNCH_REFUSED")
+            return _record_attempt(root, order, state="DEFERRED", receipt=launched, note="LAUNCH_REFUSED")
         _record_attempt(root, order, state="DEPOSITED", note=f"launched pid={launched.get('pid')}")
         return order
 
     if not client["unique"] and not client["anchored"]:
-        return _record_attempt(root, order, state="FAILED",
+        return _record_attempt(root, order, state="DEFERRED",
                                note=f"WINDOW_NOT_UNIQUE: {len(windows)} windows; refusing to guess")
 
     window = next((row for row in windows if row.get("is_anchor")), windows[0])
@@ -366,7 +371,7 @@ def check_acks(root: Path) -> dict:
     """Accept only a role-attributed reply event, never a raw screen snapshot."""
     acked = []
     for order in _orders(root):
-        if order.get("state") in ("AGENT_ACK", "CEASED"):
+        if order.get("state") in ("AGENT_ACK", "CEASED", "FAILED"):
             continue
         token = f"{ACK_TOKEN}:{order['event_id']}"
         for event in bus.read_events(root, agent=order["target"], limit=500):
@@ -474,7 +479,9 @@ def tick(root: Path, *, perceive_first: bool = True) -> dict:
             _record_attempt(root, order, state="CEASED",
                             note=f"ceasefire after {CEASE_AFTER_FAILURES} failed attempts; fix the cause before resuming")
             continue
-        if order.get("state") in ("MESSAGE_VISIBLE", "INPUT_SUBMITTED"):
+        # Only a fresh deposit is safe to dispatch. WINDOW_FOUND may have
+        # reached the composer before a crash; DEFERRED needs a new preflight.
+        if order.get("state") != "DEPOSITED":
             continue
         dispatched.append({"order": order["id"], "target": order["target"], "state": dispatch(root, order=order)["state"]})
     reinforced = []
@@ -486,6 +493,22 @@ def tick(root: Path, *, perceive_first: bool = True) -> dict:
             reinforced.append({"parent": order["id"], "child": child["id"], "target": child["target"]})
     return {"at": now(), "perceived": perceived, "acks": acks,
             "dispatched": dispatched, "reinforced": reinforced}
+
+
+def resume_deferred(root: Path, *, order_id: str) -> dict:
+    """Explicitly retry only a proven pre-input failure, keeping the event ID.
+
+    Never resume CEASED/WINDOW_FOUND/INPUT_SUBMITTED: those may already have
+    reached the target. A caller should first resolve the recorded prerequisite.
+    """
+    order = next((row for row in _orders(root) if row.get("id") == order_id), None)
+    if order is None:
+        raise ValueError("unknown order")
+    if order.get("state") != "DEFERRED":
+        raise ValueError("only DEFERRED pre-input orders can be resumed")
+    if datetime.now(timezone.utc) > datetime.fromisoformat(order["expires_at"]):
+        return _record_attempt(root, order, state="FAILED", note="EXPIRED")
+    return dispatch(root, order=order)
 
 
 def status(root: Path, *, tail: int = 20) -> dict:

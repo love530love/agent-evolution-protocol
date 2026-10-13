@@ -23,6 +23,49 @@ class CommanderDeliverySafetyTests(unittest.TestCase):
         self.assertEqual((transport, info), ("uia", {}))
         probe.assert_not_called()
 
+    def test_unregistered_client_is_deferred_without_desktop_send(self):
+        order = commander.submit_order(self.root, target="autoclaw", task="notice",
+                                       text="Read inbox", sender="codex")
+        with patch.object(commander.registry, "discover") as discover:
+            result = commander.dispatch(self.root, order=order)
+        self.assertEqual(result["state"], "DEFERRED")
+        self.assertIn("UNREGISTERED_CLIENT", result["attempts"][-1]["note"])
+        discover.assert_not_called()
+
+    def test_ambiguous_window_is_deferred_and_tick_does_not_repeat(self):
+        order = commander.submit_order(self.root, target="workbuddy", task="notice",
+                                       text="Read inbox", sender="codex")
+        client = {"agent": "workbuddy", "windows": [{"pid": 1}, {"pid": 2}],
+                  "unique": False, "anchored": False}
+        with patch.object(commander.registry, "discover", return_value={"clients": [client]}) as discover:
+            result = commander.dispatch(self.root, order=order)
+            commander.tick(self.root, perceive_first=False)
+        self.assertEqual(result["state"], "DEFERRED")
+        self.assertEqual(discover.call_count, 1)
+        self.assertEqual(len(commander._orders(self.root)[0]["attempts"]), 1)
+
+    def test_resume_deferred_keeps_event_id_but_ceased_cannot_resume(self):
+        order = commander.submit_order(self.root, target="workbuddy", task="notice",
+                                       text="Read inbox", sender="codex")
+        commander._record_attempt(self.root, order, state="DEFERRED", note="NO_WINDOW")
+        with patch.object(commander, "dispatch", return_value=order) as dispatch:
+            commander.resume_deferred(self.root, order_id=order["id"])
+        self.assertEqual(dispatch.call_args.kwargs["order"]["event_id"], order["event_id"])
+        commander._record_attempt(self.root, order, state="CEASED", note="DELIVERY_UNPROVEN")
+        with self.assertRaisesRegex(ValueError, "only DEFERRED"):
+            commander.resume_deferred(self.root, order_id=order["id"])
+
+    def test_tick_does_not_repeat_window_found_or_failed(self):
+        first = commander.submit_order(self.root, target="workbuddy", task="one",
+                                       text="one", sender="codex")
+        second = commander.submit_order(self.root, target="qoder", task="two",
+                                        text="two", sender="codex")
+        commander._record_attempt(self.root, first, state="WINDOW_FOUND")
+        commander._record_attempt(self.root, second, state="FAILED", note="CDP_ERROR")
+        with patch.object(commander, "dispatch") as dispatch:
+            commander.tick(self.root, perceive_first=False)
+        dispatch.assert_not_called()
+
     def test_unrelated_debug_port_is_rejected(self):
         try:
             import psutil

@@ -2038,6 +2038,15 @@ def coord_commander(args: argparse.Namespace) -> None:
     if action == "ack":
         print(json.dumps(commander.check_acks(root), ensure_ascii=False, indent=2))
         return
+    if action == "resume-deferred":
+        if not args.order_id:
+            raise ProtocolError("resume-deferred requires --order-id")
+        try:
+            result = commander.resume_deferred(root, order_id=args.order_id)
+        except ValueError as exc:
+            raise ProtocolError(str(exc)) from exc
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return
     if action == "watch":
         raise SystemExit(commander.watch(root, interval=args.interval, max_ticks=args.max_ticks))
     print(json.dumps(commander.status(root, tail=args.limit), ensure_ascii=False, indent=2))
@@ -2112,7 +2121,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     cdp_cmd = commands.add_parser("coord-cdp"); cdp_cmd.add_argument("action", choices=("scan", "targets", "read", "send")); cdp_cmd.add_argument("--port", type=int, default=9222); cdp_cmd.add_argument("--title"); cdp_cmd.add_argument("--text"); cdp_cmd.add_argument("--text-file"); cdp_cmd.add_argument("--event-id"); cdp_cmd.add_argument("--out-file"); cdp_cmd.add_argument("--preview-chars", type=int, default=600); cdp_cmd.add_argument("--timeout", type=int, default=10); cdp_cmd.set_defaults(func=coord_cdp)
 
-    cmdr = commands.add_parser("coord-commander"); cmdr.add_argument("action", choices=("submit", "perceive", "tick", "ack", "status", "watch")); cmdr.add_argument("--target"); cmdr.add_argument("--sender", default="human"); cmdr.add_argument("--task"); cmdr.add_argument("--text"); cmdr.add_argument("--text-file"); cmdr.add_argument("--event-id"); cmdr.add_argument("--priority", choices=("urgent", "normal", "low"), default="normal"); cmdr.add_argument("--transport", default="auto"); cmdr.add_argument("--expires-minutes", type=int, default=120); cmdr.add_argument("--allow-launch", action="store_true"); cmdr.add_argument("--no-perceive", action="store_true"); cmdr.add_argument("--agent"); cmdr.add_argument("--limit", type=int, default=20); cmdr.add_argument("--interval", type=float, default=30); cmdr.add_argument("--max-ticks", type=int, default=0); cmdr.set_defaults(func=coord_commander)
+    cmdr = commands.add_parser("coord-commander"); cmdr.add_argument("action", choices=("submit", "perceive", "tick", "ack", "status", "watch", "resume-deferred")); cmdr.add_argument("--target"); cmdr.add_argument("--order-id"); cmdr.add_argument("--sender", default="human"); cmdr.add_argument("--task"); cmdr.add_argument("--text"); cmdr.add_argument("--text-file"); cmdr.add_argument("--event-id"); cmdr.add_argument("--priority", choices=("urgent", "normal", "low"), default="normal"); cmdr.add_argument("--transport", default="auto"); cmdr.add_argument("--expires-minutes", type=int, default=120); cmdr.add_argument("--allow-launch", action="store_true"); cmdr.add_argument("--no-perceive", action="store_true"); cmdr.add_argument("--agent"); cmdr.add_argument("--limit", type=int, default=20); cmdr.add_argument("--interval", type=float, default=30); cmdr.add_argument("--max-ticks", type=int, default=0); cmdr.set_defaults(func=coord_commander)
     return parser
 
 

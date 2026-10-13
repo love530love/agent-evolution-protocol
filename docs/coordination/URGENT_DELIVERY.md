@@ -14,9 +14,12 @@ python -m agent_evolution_protocol coord-send --from codex --to qoder --topic IN
 返回的 `desktop_delivery.state` 是**投递证据级别**，不是 Agent 接单：
 
 - `MESSAGE_VISIBLE`：原窗口读回同一事件 ID，但仍需目标自己回复 ACK。
+- `DEFERRED`：确定还没有触碰输入框（客户端未注册、未开窗、窗口不唯一或启动被拒绝）。保留原事件 ID，普通 tick 不会盲目重发；先注册真实客户端、恢复窗口或锚定经核验的原会话，再显式执行 `coord-commander resume-deferred --order-id <订单ID>`。若仍不满足前置条件，仍保持待办。
 - `CEASED`：适配器失败、无唯一输入框或发送后无法验证；不得盲目重试。读状态文件里的 `attempts[-1].receipt` 排查。
 - `AGENT_ACK`：只有目标原会话的、可归属为 Agent 回复的同一事件 ID 才可升格。
 
 例如本机 Qoder 当前可按 PID 观察到窗口，但 UIA 树没有可编辑控件；2026-10-13 的一次实投收到 `NO_RECEIPT/LAUNCH_FORBIDDEN`，已纠正为 `CEASED`，**没有证据证明它收到消息**。此时保留本地信箱并查找该客户端已验收的原生 API、CDP 或精确会话 UI 通道；不得靠坐标猜测或重复按回车。
+
+2026-10-14 的额度更新广播暴露了另一个问题：六个信箱已写入，但没有任何一个能证明原会话送达/ACK。WorkBuddy 有两个候选窗口；Hermes Desktop、GitHub Copilot、AutoClaw、CodeBuddy 尚无可核验客户端注册；Qoder 适配器失败。现在前两类被保留为 `DEFERRED` 待条件恢复，Qoder 仍保持 `CEASED` 待人工诊断。**本机制不能宣称六人已被唤醒。**归队 Agent 应先读本地信箱并回 ACK；指挥员通过投递审计逐一核验。
 
 每次紧急广播都要给每位队友单独记录：信箱 ID、桌面状态、原会话 ACK、记忆修改证据。任何一项缺失须明确标记为未验证；离线队友归队后仍需补读和回 ACK。
