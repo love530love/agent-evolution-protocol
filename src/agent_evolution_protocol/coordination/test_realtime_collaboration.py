@@ -64,7 +64,7 @@ class CollaborationTests(unittest.TestCase):
             adapter.parent.mkdir()
             adapter.touch()
             report = json.dumps({"status": "window-focused-no-delivery", "task_delivered": False, "agent_accepted": False})
-            with mock.patch.object(daemon, "LOG", log), mock.patch.object(daemon, "DONE", root / "done"), mock.patch.object(daemon, "PENDING", root / "pending"), mock.patch.object(daemon, "ADAPTERS", adapter.parent), mock.patch.object(daemon.time, "monotonic", return_value=101.0), mock.patch.object(daemon.subprocess, "run", return_value=mock.Mock(returncode=0, stdout=report, stderr="")) as run:
+            with mock.patch.object(daemon, "LOG", log), mock.patch.object(daemon, "DONE", root / "done"), mock.patch.object(daemon, "PENDING", root / "pending"), mock.patch.object(daemon, "ADAPTERS", adapter.parent), mock.patch.object(daemon.time, "monotonic", return_value=101.0), mock.patch.object(daemon.shutil, "which", return_value="pwsh.exe"), mock.patch.object(daemon.subprocess, "run", return_value=mock.Mock(returncode=0, stdout=report, stderr="")) as run:
                 self.assertEqual(daemon.consume(wake), 0)
                 run.assert_called_once()
                 self.assertTrue((root / "pending" / "second.json").exists())
@@ -131,11 +131,12 @@ class CollaborationTests(unittest.TestCase):
     def test_out_of_scope_prompt_is_ignored(self):
         hook = load("realtime_hook_scope_test", "realtime_hook.py")
         calls = []
-        payload = json.dumps({"prompt": "private other project", "cwd": "C:/unrelated"})
-        with mock.patch.object(hook, "post", side_effect=lambda path, body: calls.append((path, body)) or True), mock.patch.object(
-            hook.sys, "stdin", io.StringIO(payload)
-        ), mock.patch.object(hook.sys, "argv", ["hook", "--agent", "codex", "--event", "prompt"]):
-            self.assertEqual(hook.main(), 0)
+        with tempfile.TemporaryDirectory() as temp:
+            payload = json.dumps({"prompt": "private other project", "cwd": temp})
+            with mock.patch.object(hook, "SCOPE_ROOT", HERE), mock.patch.object(hook, "post", side_effect=lambda path, body: calls.append((path, body)) or True), mock.patch.object(
+                hook.sys, "stdin", io.StringIO(payload)
+            ), mock.patch.object(hook.sys, "argv", ["hook", "--agent", "codex", "--event", "prompt"]):
+                self.assertEqual(hook.main(), 0)
         self.assertEqual(calls, [])
 
     def test_offline_hub_still_archives_full_hook_payload(self):
