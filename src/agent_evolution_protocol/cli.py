@@ -23,6 +23,7 @@ from agent_evolution_protocol.coordination.conversation_journal import append_ev
 from agent_evolution_protocol.coordination.joint_attack import open_case as open_joint_case, review_case as review_joint_case, case_status as joint_case_status
 from agent_evolution_protocol.coordination.capability_roster import declare as declare_capabilities, match as match_capabilities
 from agent_evolution_protocol.coordination.mechanism_audit import audit as audit_mechanism
+from agent_evolution_protocol.coordination import evolution_gate
 from agent_evolution_protocol.coordination.volley_plan import plan as plan_volley
 from agent_evolution_protocol.coordination.battle_orders import issue as issue_battle_order, status as battle_order_status
 from agent_evolution_protocol.coordination.legion_ledger import record as record_legion, scoreboard as legion_scoreboard, slacking as detect_slacking, challenge as challenge_legion, chase as chase_leader
@@ -646,6 +647,22 @@ def coord_mechanism_audit(args: argparse.Namespace) -> None:
     try:
         result = audit_mechanism(args.metrics_file)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise ProtocolError(str(exc)) from exc
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+def coord_evolution(args: argparse.Namespace) -> None:
+    try:
+        if args.action == "propose":
+            if not all((args.metrics_file, args.change, args.rollback, args.author)):
+                raise ValueError("propose requires --metrics-file, --change, --rollback and --author")
+            result = evolution_gate.propose(coord_root(args), args.metrics_file,
+                                            change=args.change, rollback=args.rollback, author=args.author)
+        else:
+            if not all((args.proposal_id, args.candidate_file)):
+                raise ValueError("evaluate requires --proposal-id and --candidate-file")
+            result = evolution_gate.evaluate(coord_root(args), args.proposal_id, args.candidate_file)
+    except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
         raise ProtocolError(str(exc)) from exc
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
@@ -2089,6 +2106,7 @@ def build_parser() -> argparse.ArgumentParser:
     joint = commands.add_parser("coord-joint-case"); joint.add_argument("action", choices=("open", "review", "status")); joint.add_argument("--task", required=True); joint.add_argument("--submission", required=True); joint.add_argument("--lead"); joint.add_argument("--deputy"); joint.add_argument("--artifact-sha256"); joint.add_argument("--result-file", type=Path); joint.add_argument("--agent"); joint.add_argument("--role", choices=("lead", "deputy", "cross_platform", "catfish", "package_reviewer")); joint.add_argument("--review-file", type=Path); joint.set_defaults(func=coord_joint_case)
     capability = commands.add_parser("coord-capabilities"); capability.add_argument("action", choices=("declare", "match")); capability.add_argument("--agent"); capability.add_argument("--chips", nargs="*", default=[]); capability.add_argument("--compilers", nargs="*", default=[]); capability.add_argument("--strengths", nargs="*", default=[]); capability.add_argument("--evidence", nargs="*", default=[]); capability.add_argument("--ttl-minutes", type=int, default=30); capability.add_argument("--chip"); capability.add_argument("--compiler"); capability.add_argument("--strength"); capability.set_defaults(func=coord_capabilities)
     mechanism = commands.add_parser("coord-mechanism-audit"); mechanism.add_argument("--metrics-file", type=Path, required=True); mechanism.set_defaults(func=coord_mechanism_audit)
+    evolution = commands.add_parser("coord-evolution"); evolution.add_argument("action", choices=("propose", "evaluate")); evolution.add_argument("--metrics-file", type=Path); evolution.add_argument("--candidate-file", type=Path); evolution.add_argument("--proposal-id"); evolution.add_argument("--change"); evolution.add_argument("--rollback"); evolution.add_argument("--author"); evolution.set_defaults(func=coord_evolution)
     volley = commands.add_parser("coord-volley-plan"); volley.add_argument("--manifest-file", type=Path, required=True); volley.add_argument("--results-file", type=Path, required=True); volley.add_argument("--quota-remaining", type=int, required=True); volley.add_argument("--reserve", type=int, default=0); volley.add_argument("--wave-size", type=int, default=3); volley.set_defaults(func=coord_volley_plan)
     battle = commands.add_parser("coord-battle-order"); battle.add_argument("--agent"); battle.add_argument("--text"); battle.add_argument("--to", nargs="*", default=[]); battle.add_argument("--deputy"); battle.add_argument("--evidence", nargs="*", default=[]); battle.add_argument("--reviewer"); battle.add_argument("--fix-author"); battle.add_argument("--status-task"); battle.set_defaults(func=coord_battle_order)
     chat_publish = commands.add_parser("coord-chat-publish"); chat_publish.add_argument("--source", required=True); chat_publish.add_argument("--role", choices=("user", "assistant"), required=True); chat_publish.add_argument("--room", default="workspace"); chat_publish.add_argument("--session-id"); chat_publish.add_argument("--workspace"); chat_body = chat_publish.add_mutually_exclusive_group(required=True); chat_body.add_argument("--text"); chat_body.add_argument("--text-file"); chat_publish.set_defaults(func=coord_chat_publish)
