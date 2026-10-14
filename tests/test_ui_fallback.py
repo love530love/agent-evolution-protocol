@@ -9,7 +9,7 @@ from agent_evolution_protocol.coordination import wake_daemon
 
 
 PROFILE = {"agent": "fake_agent", "process": "FakeAgent", "title": "Fake Agent",
-           "exe": "C:\\Fake\\FakeAgent.exe", "session_marker": "Original task chat",
+           "exe": str((Path.cwd() / "FakeAgent.exe").resolve()), "session_marker": "Original task chat",
            "model_marker": "Model X", "transport": "uia", "reply_timeout_seconds": 5}
 
 
