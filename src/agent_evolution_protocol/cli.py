@@ -20,13 +20,14 @@ from uuid import uuid4
 
 from agent_evolution_protocol.coordination.cluster_kernel import ClusterKernel
 from agent_evolution_protocol.coordination.conversation_journal import append_event as append_chat_event, read_events as read_chat_events, cursor_for as chat_cursor_for, acknowledge as acknowledge_chat
-from agent_evolution_protocol.coordination.joint_attack import open_case as open_joint_case, review_case as review_joint_case, case_status as joint_case_status
+from agent_evolution_protocol.coordination.joint_attack import open_case as open_joint_case, review_case as review_joint_case, case_status as joint_case_status, submit_adversarial_review, adversarial_status
 from agent_evolution_protocol.coordination.capability_roster import declare as declare_capabilities, match as match_capabilities
 from agent_evolution_protocol.coordination.mechanism_audit import audit as audit_mechanism
 from agent_evolution_protocol.coordination import evolution_gate
 from agent_evolution_protocol.coordination.volley_plan import plan as plan_volley
 from agent_evolution_protocol.coordination.battle_orders import issue as issue_battle_order, status as battle_order_status
-from agent_evolution_protocol.coordination.legion_ledger import record as record_legion, scoreboard as legion_scoreboard, slacking as detect_slacking, challenge as challenge_legion, chase as chase_leader
+from agent_evolution_protocol.coordination.legion_ledger import record as record_legion, scoreboard as legion_scoreboard, slacking as detect_slacking, challenge as challenge_legion, chase as chase_leader, adjudicate as adjudicate_legion, incentive_board
+from agent_evolution_protocol.coordination import governance
 from agent_evolution_protocol.coordination import client_registry
 from agent_evolution_protocol.coordination import transcript_bus
 from agent_evolution_protocol.coordination import transport_cdp
@@ -622,6 +623,37 @@ def coord_joint_case(args: argparse.Namespace) -> None:
         else:
             result = joint_case_status(root, task=args.task, submission=args.submission)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise ProtocolError(str(exc)) from exc
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+def coord_adversarial(args: argparse.Namespace) -> None:
+    try:
+        if args.action == "review":
+            if not all((args.agent, args.role, args.review_file)):
+                raise ValueError("review requires --agent, --role and --review-file")
+            result = submit_adversarial_review(coord_root(args), task=args.task,
+                                               submission=args.submission, agent=args.agent,
+                                               role=args.role, review_file=args.review_file)
+        else:
+            result = adversarial_status(coord_root(args), task=args.task, submission=args.submission)
+    except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
+        raise ProtocolError(str(exc)) from exc
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+def coord_governance(args: argparse.Namespace) -> None:
+    try:
+        if args.action == "roles":
+            result = governance.roles()
+        elif args.action == "history":
+            result = governance.read_interventions(coord_root(args))
+        else:
+            if not args.request_file:
+                raise ValueError("intervene requires --request-file")
+            request = json.loads(args.request_file.read_text(encoding="utf-8"))
+            result = governance.submit_intervention(coord_root(args), request)
+    except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
         raise ProtocolError(str(exc)) from exc
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
@@ -1764,6 +1796,19 @@ def coord_legion(args: argparse.Namespace) -> None:
     if action == "scoreboard":
         print(json.dumps(legion_scoreboard(root, since_hours=args.window_hours), ensure_ascii=False, indent=2))
         return
+    if action == "incentive-board":
+        print(json.dumps(incentive_board(root, since_hours=args.window_hours), ensure_ascii=False, indent=2))
+        return
+    if action == "adjudicate":
+        if not all((args.event_id, args.reviewer, args.verdict, args.note)):
+            raise ProtocolError("adjudicate needs --event-id --reviewer --verdict --note")
+        try:
+            result = adjudicate_legion(root, event_id=args.event_id, reviewer=args.reviewer,
+                                      verdict=args.verdict, evidence_files=args.evidence, note=args.note)
+        except (OSError, ValueError) as exc:
+            raise ProtocolError(str(exc)) from exc
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return
     if action == "slacking":
         try:
             report = detect_slacking(root, expected=args.expected or None,
@@ -2104,6 +2149,8 @@ def build_parser() -> argparse.ArgumentParser:
     delivery = commands.add_parser("coord-delivery-status"); delivery.add_argument("--to", required=True); delivery.add_argument("--id", required=True); delivery.set_defaults(func=coord_delivery_status)
     ack_message = commands.add_parser("coord-ack-message"); ack_message.add_argument("--agent", required=True); ack_message.add_argument("--id", required=True); ack_message.set_defaults(func=coord_ack_message)
     joint = commands.add_parser("coord-joint-case"); joint.add_argument("action", choices=("open", "review", "status")); joint.add_argument("--task", required=True); joint.add_argument("--submission", required=True); joint.add_argument("--lead"); joint.add_argument("--deputy"); joint.add_argument("--artifact-sha256"); joint.add_argument("--result-file", type=Path); joint.add_argument("--agent"); joint.add_argument("--role", choices=("lead", "deputy", "cross_platform", "catfish", "package_reviewer")); joint.add_argument("--review-file", type=Path); joint.set_defaults(func=coord_joint_case)
+    adversarial = commands.add_parser("coord-adversarial"); adversarial.add_argument("action", choices=("review", "status")); adversarial.add_argument("--task", required=True); adversarial.add_argument("--submission", required=True); adversarial.add_argument("--agent"); adversarial.add_argument("--role", choices=("ideator", "falsifier", "replicator", "bias_auditor", "referee")); adversarial.add_argument("--review-file", type=Path); adversarial.set_defaults(func=coord_adversarial)
+    governed = commands.add_parser("coord-governance"); governed.add_argument("action", choices=("roles", "intervene", "history")); governed.add_argument("--request-file", type=Path); governed.set_defaults(func=coord_governance)
     capability = commands.add_parser("coord-capabilities"); capability.add_argument("action", choices=("declare", "match")); capability.add_argument("--agent"); capability.add_argument("--chips", nargs="*", default=[]); capability.add_argument("--compilers", nargs="*", default=[]); capability.add_argument("--strengths", nargs="*", default=[]); capability.add_argument("--evidence", nargs="*", default=[]); capability.add_argument("--ttl-minutes", type=int, default=30); capability.add_argument("--chip"); capability.add_argument("--compiler"); capability.add_argument("--strength"); capability.set_defaults(func=coord_capabilities)
     mechanism = commands.add_parser("coord-mechanism-audit"); mechanism.add_argument("--metrics-file", type=Path, required=True); mechanism.set_defaults(func=coord_mechanism_audit)
     evolution = commands.add_parser("coord-evolution"); evolution.add_argument("action", choices=("propose", "evaluate")); evolution.add_argument("--metrics-file", type=Path); evolution.add_argument("--candidate-file", type=Path); evolution.add_argument("--proposal-id"); evolution.add_argument("--change"); evolution.add_argument("--rollback"); evolution.add_argument("--author"); evolution.set_defaults(func=coord_evolution)
@@ -2129,7 +2176,7 @@ def build_parser() -> argparse.ArgumentParser:
     session_bind = commands.add_parser("kernel-session-bind"); session_bind.add_argument("--agent", required=True); session_bind.add_argument("--provider", choices=("codex", "hermes", "qoder", "codebuddy", "github_copilot"), required=True); session_bind.add_argument("--workspace", required=True); session_bind.add_argument("--session-id", required=True); session_bind.add_argument("--no-resume", action="store_true"); session_bind.set_defaults(func=kernel_session_bind)
     plan = commands.add_parser("kernel-continuation-plan"); plan.add_argument("--agent", required=True); plan.add_argument("--workspace", required=True); plan.add_argument("--requested-session-id"); plan.add_argument("--allow-new-session", action="store_true"); plan.set_defaults(func=kernel_continuation_plan)
     checkpoint = commands.add_parser("kernel-checkpoint"); checkpoint.add_argument("--task-id", required=True); checkpoint.add_argument("--executor", required=True); checkpoint_body = checkpoint.add_mutually_exclusive_group(required=True); checkpoint_body.add_argument("--payload-json"); checkpoint_body.add_argument("--payload-file"); checkpoint.set_defaults(func=kernel_checkpoint)
-    legion = commands.add_parser("coord-legion"); legion.add_argument("action", choices=("record", "scoreboard", "slacking", "challenge", "chase")); legion.add_argument("--agent"); legion.add_argument("--kind"); legion.add_argument("--reporter"); legion.add_argument("--task"); legion.add_argument("--signature"); legion.add_argument("--evidence", nargs="*", default=[]); legion.add_argument("--note"); legion.add_argument("--reason"); legion.add_argument("--alternative"); legion.add_argument("--predicted-signature"); legion.add_argument("--cheapest-test"); legion.add_argument("--stop-condition"); legion.add_argument("--expected", nargs="*", default=[]); legion.add_argument("--window-hours", type=float, default=24); legion.add_argument("--min-productive", type=int, default=1); legion.set_defaults(func=coord_legion)
+    legion = commands.add_parser("coord-legion"); legion.add_argument("action", choices=("record", "scoreboard", "slacking", "challenge", "chase", "adjudicate", "incentive-board")); legion.add_argument("--agent"); legion.add_argument("--kind"); legion.add_argument("--reporter"); legion.add_argument("--reviewer"); legion.add_argument("--verdict", choices=("accepted", "rejected")); legion.add_argument("--event-id"); legion.add_argument("--task"); legion.add_argument("--signature"); legion.add_argument("--evidence", nargs="*", default=[]); legion.add_argument("--note"); legion.add_argument("--reason"); legion.add_argument("--alternative"); legion.add_argument("--predicted-signature"); legion.add_argument("--cheapest-test"); legion.add_argument("--stop-condition"); legion.add_argument("--expected", nargs="*", default=[]); legion.add_argument("--window-hours", type=float, default=24); legion.add_argument("--min-productive", type=int, default=1); legion.set_defaults(func=coord_legion)
     digest = commands.add_parser("coord-chat-digest"); digest.add_argument("--agent", required=True); digest.add_argument("--since-hours", type=float, default=24); digest.add_argument("--per-actor", type=int, default=4); digest.add_argument("--chars", type=int, default=240); digest.add_argument("--markdown", action="store_true"); digest.set_defaults(func=coord_chat_digest)
     uia = commands.add_parser("coord-uia"); uia.add_argument("action", choices=("observe", "capture", "deliver")); uia.add_argument("--agent", required=True); uia.add_argument("--process"); uia.add_argument("--exe"); uia.add_argument("--title"); uia.add_argument("--event-id"); uia.add_argument("--text"); uia.add_argument("--text-file", type=Path); uia.add_argument("--out-file"); uia.add_argument("--allow-unknown-path", action="store_true"); uia.add_argument("--allow-clipboard-paste", action="store_true"); uia.add_argument("--ocr", action="store_true"); uia.add_argument("--timeout", type=int, default=20); uia.set_defaults(func=coord_uia)
 

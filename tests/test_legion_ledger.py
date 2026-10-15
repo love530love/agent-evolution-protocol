@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import subprocess
 import shutil
@@ -85,6 +86,84 @@ class LegionLedgerTest(unittest.TestCase):
         second = self.record(kind="proposal", reporter="codex", note="another idea")
         self.assertNotEqual(first["id"], second["id"])
         self.assertEqual(len(list(Path(self.root, "legion", "events").glob("*.json"))), 2)
+
+    def test_incentives_require_independent_review_and_real_cited_bytes(self):
+        proof = self.root / "logs" / "a.txt"
+        proof.parent.mkdir()
+        proof.write_text("official return", encoding="utf-8")
+        event = self.record()
+        self.assertEqual(legion_ledger.incentive_board(self.root)["rows"][0]["rp"], 0)
+        with self.assertRaises(ValueError):
+            legion_ledger.adjudicate(self.root, event_id=event["id"], reviewer="codex",
+                                     verdict="accepted", evidence_files=["logs/a.txt"], note="same agent")
+        with self.assertRaises(ValueError):
+            legion_ledger.adjudicate(self.root, event_id=event["id"], reviewer="workbuddy",
+                                     verdict="accepted", evidence_files=["logs/a.txt"], note="same reporter")
+        with self.assertRaises(ValueError):
+            legion_ledger.adjudicate(self.root, event_id=event["id"], reviewer="qoder",
+                                     verdict="accepted", evidence_files=["missing.txt"], note="not present")
+        review = legion_ledger.adjudicate(self.root, event_id=event["id"], reviewer="qoder",
+                                           verdict="accepted", evidence_files=["logs/a.txt"], note="independent check")
+        self.assertEqual(len(review["evidence"][0]["sha256"]), 64)
+        row = legion_ledger.incentive_board(self.root)["rows"][0]
+        self.assertEqual((row["rp"], row["reputation"], row["accepted"]), (3, 51, 1))
+        with self.assertRaises(FileExistsError):
+            legion_ledger.adjudicate(self.root, event_id=event["id"], reviewer="hermes",
+                                     verdict="accepted", evidence_files=["logs/a.txt"], note="cannot double settle")
+        proof.write_text("changed", encoding="utf-8")
+        row = legion_ledger.incentive_board(self.root)["rows"][0]
+        self.assertEqual((row["rp"], row["invalidated"]), (0, 1))
+
+    def test_rejected_and_duplicate_evidence_do_not_mint_credit(self):
+        proof = self.root / "logs" / "a.txt"
+        proof.parent.mkdir()
+        proof.write_text("same official return", encoding="utf-8")
+        first = self.record()
+        second = self.record(kind="falsification", note="same data different claim")
+        third_proof = self.root / "logs" / "b.txt"
+        third_proof.write_text("new official return", encoding="utf-8")
+        third = self.record(kind="breakthrough", evidence=["logs/b.txt"], note="unproven breakthrough")
+        for event in (first, second):
+            legion_ledger.adjudicate(self.root, event_id=event["id"], reviewer="qoder",
+                                      verdict="accepted", evidence_files=["logs/a.txt"], note="checked")
+        legion_ledger.adjudicate(self.root, event_id=third["id"], reviewer="qoder",
+                                  verdict="rejected", evidence_files=["logs/b.txt"], note="did not reproduce")
+        row = legion_ledger.incentive_board(self.root)["rows"][0]
+        self.assertEqual((row["rp"], row["ap"], row["accepted"], row["duplicate"], row["rejected"]),
+                         (3, 0, 1, 1, 1))
+
+    def test_adjudication_refuses_unclaimed_or_outside_evidence(self):
+        event = self.record()
+        uncited = self.root / "logs" / "uncited.txt"
+        uncited.parent.mkdir()
+        uncited.write_text("proof", encoding="utf-8")
+        with self.assertRaises(ValueError):
+            legion_ledger.adjudicate(self.root, event_id=event["id"], reviewer="qoder",
+                                     verdict="accepted", evidence_files=["logs/uncited.txt"], note="not claimed")
+        with self.assertRaises(ValueError):
+            legion_ledger.adjudicate(self.root, event_id=event["id"], reviewer="qoder",
+                                     verdict="accepted", evidence_files=["../escape.txt"], note="outside")
+
+    def test_reputation_uses_lifetime_history_while_credits_use_window(self):
+        logs = self.root / "logs"
+        logs.mkdir()
+        (logs / "a.txt").write_text("older evidence", encoding="utf-8")
+        (logs / "b.txt").write_text("new evidence", encoding="utf-8")
+        old = self.record()
+        event_file = self.root / "legion" / "events" / f"{old['id']}.json"
+        historical = json.loads(event_file.read_text(encoding="utf-8"))
+        historical["at"] = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+        event_file.write_text(json.dumps(historical), encoding="utf-8")
+        legion_ledger.adjudicate(self.root, event_id=old["id"], reviewer="qoder",
+                                  verdict="accepted", evidence_files=["logs/a.txt"], note="older independent check")
+        recent = self.record(kind="breakthrough", evidence=["logs/b.txt"], note="new result")
+        legion_ledger.adjudicate(self.root, event_id=recent["id"], reviewer="qoder",
+                                  verdict="accepted", evidence_files=["logs/b.txt"], note="new independent check")
+        lifetime = legion_ledger.incentive_board(self.root)["rows"][0]
+        window = legion_ledger.incentive_board(self.root, since_hours=24)["rows"][0]
+        self.assertEqual((lifetime["rp"], lifetime["ap"], lifetime["reputation"]), (3, 6, 52))
+        self.assertEqual((window["rp"], window["ap"], window["reputation"]), (0, 6, 52))
+        self.assertEqual((window["accepted"], window["pending"]), (1, 0))
 
 
 class UiaAdapterContractTest(unittest.TestCase):

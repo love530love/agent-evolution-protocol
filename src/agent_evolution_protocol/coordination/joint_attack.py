@@ -6,6 +6,7 @@ This board does not run models, reserve a platform slot, or submit artifacts.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -15,6 +16,14 @@ import re
 IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 ROLES = {"lead", "deputy", "cross_platform", "catfish", "package_reviewer"}
+ADVERSARIAL_ROLES = ("ideator", "falsifier", "replicator", "bias_auditor", "referee")
+ADVERSARIAL_REQUIRED = {
+    "ideator": ("hypothesis", "predicted_signature", "cheapest_test", "stop_condition"),
+    "falsifier": ("counter_hypothesis", "discriminating_test", "predicted_signature", "stop_condition"),
+    "replicator": ("protocol", "observed_result", "reproduction_status"),
+    "bias_auditor": ("selection_bias", "missing_cases", "audit_conclusion"),
+    "referee": ("verdict", "rationale", "residual_risk"),
+}
 
 
 def _id(value: str) -> str:
@@ -115,3 +124,109 @@ def case_status(root: Path, *, task: str, submission: str) -> dict:
         "gaps": gaps, "upload_ready": False,
         "next": "Run cheapest falsifiable experiments, cross-chip regression, package review, quota and lease checks; do not infer upload readiness from reviews.",
     }
+
+
+def _digest(path: Path) -> str:
+    hasher = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def _adversarial_path(directory: Path, role: str) -> Path:
+    return directory / "adversarial" / f"{role}.json"
+
+
+def _verified_adversarial(directory: Path) -> tuple[list[dict], list[str]]:
+    """Verify the whole frozen chain; a changed review or evidence invalidates successors."""
+    accepted: list[dict] = []
+    gaps: list[str] = []
+    identities: set[str] = set()
+    case = _read_object(directory / "case.json")
+    for role in ADVERSARIAL_ROLES:
+        path = _adversarial_path(directory, role)
+        if not path.is_file():
+            gaps.append(f"{role}_missing")
+            break
+        try:
+            row = _read_object(path)
+            if row.get("role") != role or row.get("case_sha256") != _digest(directory / "case.json"):
+                raise ValueError("case binding changed")
+            if row.get("previous_sha256") != (_digest(_adversarial_path(directory, accepted[-1]["role"])) if accepted else None):
+                raise ValueError("previous review changed")
+            agent = row.get("agent")
+            if not isinstance(agent, str) or not IDENTIFIER.fullmatch(agent) or agent in identities:
+                raise ValueError("reviewer identity is not independent")
+            if role in {"falsifier", "replicator", "bias_auditor", "referee"} and agent == case["lead"]:
+                raise ValueError("case lead cannot review own proposal")
+            for evidence in row.get("evidence", []):
+                evidence_path = Path(evidence["path"])
+                if not evidence_path.is_file() or _digest(evidence_path) != evidence["sha256"]:
+                    raise ValueError("evidence changed or disappeared")
+            if not row.get("evidence"):
+                raise ValueError("no evidence")
+            identities.add(agent)
+            accepted.append(row)
+        except (KeyError, TypeError, ValueError, OSError, json.JSONDecodeError) as exc:
+            gaps.append(f"{role}_invalid: {exc}")
+            break
+    return accepted, gaps
+
+
+def submit_adversarial_review(root: Path, *, task: str, submission: str, agent: str,
+                              role: str, review_file: Path) -> dict:
+    """Append one role's review after independent, evidence-bound predecessors."""
+    _id(agent)
+    if role not in ADVERSARIAL_ROLES:
+        raise ValueError("invalid adversarial role")
+    directory = _case_dir(root, task, submission)
+    case_path = directory / "case.json"
+    if not case_path.is_file():
+        raise ValueError("case not found")
+    case = _read_object(case_path)
+    index = ADVERSARIAL_ROLES.index(role)
+    accepted, gaps = _verified_adversarial(directory)
+    if len(accepted) != index:
+        raise ValueError(f"review order or prior evidence invalid: {gaps}")
+    if agent in {row["agent"] for row in accepted}:
+        raise ValueError("adversarial roles require distinct agents")
+    if index and agent == case["lead"]:
+        raise ValueError("case lead cannot review own proposal")
+    review = _read_object(review_file)
+    if any(not isinstance(review.get(key), str) or not review[key].strip()
+           for key in ADVERSARIAL_REQUIRED[role]):
+        raise ValueError(f"{role} review missing required fields")
+    if role == "replicator" and review["reproduction_status"] not in {"reproduced", "refuted", "inconclusive"}:
+        raise ValueError("invalid reproduction_status")
+    if role == "referee" and review["verdict"] not in {"advance", "hold", "reject"}:
+        raise ValueError("invalid referee verdict")
+    paths = review.get("evidence_paths")
+    if not isinstance(paths, list) or not paths or not all(isinstance(p, str) and p.strip() for p in paths):
+        raise ValueError("evidence_paths must be a nonempty list")
+    evidence = []
+    for value in paths:
+        path = Path(value).resolve()
+        if not path.is_file():
+            raise ValueError(f"evidence file missing: {path}")
+        evidence.append({"path": str(path), "sha256": _digest(path)})
+    previous = _adversarial_path(directory, ADVERSARIAL_ROLES[index - 1]) if index else None
+    payload = {"role": role, "agent": agent, "at": datetime.now(timezone.utc).isoformat(),
+               "case_sha256": _digest(case_path), "previous_sha256": _digest(previous) if previous else None,
+               "evidence": evidence, "review": review, "upload_authorized": False}
+    _write_once(_adversarial_path(directory, role), payload)
+    return payload
+
+
+def adversarial_status(root: Path, *, task: str, submission: str) -> dict:
+    """Read-only review status; even an advance verdict is never upload approval."""
+    directory = _case_dir(root, task, submission)
+    case = _read_object(directory / "case.json")
+    accepted, gaps = _verified_adversarial(directory)
+    complete = len(accepted) == len(ADVERSARIAL_ROLES)
+    verdict = accepted[-1]["review"]["verdict"] if complete else None
+    return {"task": case["task"], "submission_id": submission,
+            "state": "REVIEWED" if complete else "REVIEW_INCOMPLETE",
+            "accepted_roles": [row["role"] for row in accepted], "reviewers": [row["agent"] for row in accepted],
+            "gaps": gaps, "verdict": verdict, "upload_ready": False,
+            "note": "Independent review is advisory; official evidence, package review, quota and lease gates remain separate."}

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -20,6 +21,7 @@ from uuid import uuid4
 
 SAFE_NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 SAFE_TASK = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+SAFE_EVENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
 
 # Positive entries reward evidence that moves the legion forward. Negative
 # entries price the behaviours that quietly pull a multi-agent system back to
@@ -42,6 +44,9 @@ WEIGHTS = {
 
 EVIDENCE_REQUIRED = {"cross_review", "falsification", "foreign_fix", "breakthrough", "repeat_mistake", "blind_upload", "unreconciled"}
 PRODUCTIVE = {name for name, weight in WEIGHTS.items() if weight > 0}
+# AP rewards exploration and delivery; RP rewards independent error discovery
+# and repair. These are *not* transferable credits or operational authority.
+REPAIR_KINDS = {"cross_review", "falsification", "foreign_fix", "playbook"}
 
 
 def _id(value: str, pattern: re.Pattern[str], label: str) -> str:
@@ -68,6 +73,138 @@ def _events(root: Path) -> list[dict]:
     if not folder.exists():
         return []
     return [json.loads(path.read_text(encoding="utf-8")) for path in sorted(folder.glob("*.json"))]
+
+
+def _review_folder(root: Path) -> Path:
+    return Path(root) / "legion" / "adjudications"
+
+
+def adjudicate(root: Path, *, event_id: str, reviewer: str, verdict: str,
+               evidence_files: list[str], note: str) -> dict:
+    """Freeze an independent, locally evidenced decision on one contribution.
+
+    The original event and evidence bytes are hashed. Attribution is a local
+    contract, not identity authentication; human/official review is still
+    required before any consequential action. Decisions are one-shot and
+    append-only so an accidental retry cannot mint extra credit.
+    """
+    _id(event_id, SAFE_EVENT, "event id")
+    _id(reviewer, SAFE_NAME, "reviewer")
+    if verdict not in {"accepted", "rejected"}:
+        raise ValueError("verdict must be accepted or rejected")
+    if not note.strip():
+        raise ValueError("adjudication note is required")
+    source = _ledger(root) / f"{event_id}.json"
+    source_bytes = source.read_bytes()
+    event = json.loads(source_bytes)
+    if event.get("id") != event_id:
+        raise ValueError("event id does not match source file")
+    if reviewer in {event.get("agent"), event.get("reporter")}:
+        raise ValueError("reviewer must be independent of agent and reporter")
+    if not evidence_files:
+        raise ValueError("at least one local evidence file is required")
+    base = Path(root).resolve()
+    anchors = []
+    for value in evidence_files:
+        target = (base / value).resolve()
+        if not target.is_relative_to(base) or not target.is_file():
+            raise ValueError("evidence file must exist inside coordination root")
+        if target.relative_to(base).as_posix() not in {
+            Path(ref).as_posix() for ref in event.get("evidence", [])
+        }:
+            raise ValueError("review evidence must be cited by the original event")
+        anchors.append({"path": target.relative_to(base).as_posix(),
+                        "sha256": hashlib.sha256(target.read_bytes()).hexdigest()})
+    if len({row["sha256"] for row in anchors}) != len(anchors):
+        raise ValueError("duplicate evidence files do not add independent support")
+    now = datetime.now(timezone.utc)
+    payload = {"event_id": event_id, "at": now.isoformat(), "reviewer": reviewer,
+               "verdict": verdict, "event_sha256": hashlib.sha256(source_bytes).hexdigest(),
+               "evidence": anchors, "note": note.strip()}
+    _write_once(_review_folder(root) / f"{event_id}.json", payload)
+    return payload
+
+
+def incentive_board(root: Path, *, since_hours: float = 0) -> dict:
+    """Independently verified AP/RP and slow reputation; never grants authority.
+
+    Existing ``scoreboard`` remains a raw activity counter for compatibility.
+    Reused evidence content for the same agent earns no further credit,
+    including under a different filename, task label, or contribution kind.
+    AP/RP and activity counters honor ``since_hours``; reputation is always
+    derived from the full valid adjudicated history.
+    """
+    rows: dict[str, dict] = {}
+    seen: set[tuple] = set()
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=since_hours)
+              if since_hours > 0 else None)
+    for event in _events(root):
+        agent = event.get("agent", "")
+        if not agent:
+            continue
+        row = rows.setdefault(agent, {"agent": agent, "ap": 0, "rp": 0,
+                                      "reputation": 50, "accepted": 0,
+                                      "rejected": 0, "pending": 0, "duplicate": 0,
+                                      "invalidated": 0})
+        try:
+            stamp = datetime.fromisoformat(event["at"])
+            if stamp.tzinfo is None:
+                raise ValueError("naive event timestamp")
+            in_window = cutoff is None or stamp >= cutoff
+        except (KeyError, TypeError, ValueError):
+            in_window = False
+        event_id = event.get("id", "")
+        if not SAFE_EVENT.fullmatch(event_id):
+            if in_window:
+                row["invalidated"] += 1
+            continue
+        review_path = _review_folder(root) / f"{event_id}.json"
+        if not review_path.is_file():
+            if in_window:
+                row["pending"] += 1
+            continue
+        source = _ledger(root) / f"{event_id}.json"
+        try:
+            review = json.loads(review_path.read_text(encoding="utf-8"))
+            anchors = review["evidence"]
+            if (review["event_id"] != event_id or review["reviewer"] in
+                    {agent, event.get("reporter")} or
+                    review["event_sha256"] != hashlib.sha256(source.read_bytes()).hexdigest() or
+                    not anchors):
+                raise ValueError("invalid review")
+            base = Path(root).resolve()
+            for anchor in anchors:
+                evidence_path = (base / anchor["path"]).resolve()
+                if (not evidence_path.is_relative_to(base) or not evidence_path.is_file() or
+                        hashlib.sha256(evidence_path.read_bytes()).hexdigest() != anchor["sha256"]):
+                    raise ValueError("evidence changed")
+            if review["verdict"] not in {"accepted", "rejected"}:
+                raise ValueError("invalid verdict")
+        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+            if in_window:
+                row["invalidated"] += 1
+            continue
+        if review["verdict"] == "rejected":
+            if in_window:
+                row["rejected"] += 1
+            continue
+        keys = {(agent, anchor["sha256"]) for anchor in anchors}
+        if seen.intersection(keys):
+            if in_window:
+                row["duplicate"] += 1
+            continue
+        seen.update(keys)
+        weight = int(event.get("weight", 0))
+        if in_window:
+            row["accepted"] += 1
+            account = "rp" if event.get("kind") in REPAIR_KINDS else "ap"
+            row[account] += weight
+        # Reputation changes slowly and is bounded. Verified failures cost
+        # less than verified successes earn, to preserve exploration incentives.
+        row["reputation"] = max(0, min(100, row["reputation"] + (1 if weight > 0 else -1)))
+    ranked = sorted(rows.values(), key=lambda row: (-row["ap"] - row["rp"], -row["reputation"], row["agent"]))
+    return {"window_hours": since_hours, "rows": ranked,
+            "note": "AP/RP are windowed and require independent local adjudication; reputation uses all valid history and grants no operational authority."}
 
 
 def record(root: Path, *, agent: str, kind: str, reporter: str, task: str = "",

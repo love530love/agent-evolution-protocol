@@ -60,6 +60,7 @@ multi-agent coordination:
 - [REA evidence capability for the agent team](docs/coordination/REA_CAPABILITY.md)
 - [session affinity](docs/coordination/MULTI_AGENT_SESSION_AFFINITY.md)
 - [anti-collapse protocol](docs/coordination/MULTI_AGENT_ANTI_COLLAPSE_PROTOCOL.md)
+- [role contracts, independent Catfish reviews and evidence-based incentives](docs/coordination/EXPERT_EVOLUTION_REVIEW_20261015.md)
 - [Red Queen / Catfish / Creative Destruction retrospective](docs/coordination/RED_QUEEN_CATFISH_CREATIVE_DESTRUCTION_RETROSPECTIVE_20260928.md)
 
 Reference code lives under `src/agent_evolution_protocol/coordination/`. It is

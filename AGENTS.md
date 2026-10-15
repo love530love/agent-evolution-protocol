@@ -1,5 +1,7 @@
 # Agent Evolution Protocol 本地协作入口
 
+- 自治角色、干预及积分从 `docs/coordination/EXPERT_EVOLUTION_REVIEW_20261015.md` 接入：先发现角色契约，贡献须独立裁定后计入 AP/RP；身份声明不是认证，评审完成不直接授权上传。
+
 - Windows 默认用 PowerShell 7 (`pwsh.exe`)；只有已证实的不兼容调用才隔离使用 Windows PowerShell 5.1。
 - 首次在本机执行命令或遇到报错，先读 `docs/coordination/COMMAND_MEMORY.md` 并查询同类经验；有新坑请记录失败命令、退出码、真实错误和成功修复证据。
 - Windows 编译/长路径先读 `docs/coordination/WINDOWS_BUILD_KNOWLEDGE.md`；长路径优先用受控 `subst` 短盘符映射，不覆盖现有盘符。
