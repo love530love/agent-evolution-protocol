@@ -28,6 +28,7 @@ from agent_evolution_protocol.coordination.volley_plan import plan as plan_volle
 from agent_evolution_protocol.coordination.battle_orders import issue as issue_battle_order, status as battle_order_status
 from agent_evolution_protocol.coordination.legion_ledger import record as record_legion, scoreboard as legion_scoreboard, slacking as detect_slacking, challenge as challenge_legion, chase as chase_leader, adjudicate as adjudicate_legion, incentive_board
 from agent_evolution_protocol.coordination import governance
+from agent_evolution_protocol.coordination import reasoning_contract
 from agent_evolution_protocol.coordination import client_registry
 from agent_evolution_protocol.coordination import transcript_bus
 from agent_evolution_protocol.coordination import transport_cdp
@@ -654,6 +655,21 @@ def coord_governance(args: argparse.Namespace) -> None:
             request = json.loads(args.request_file.read_text(encoding="utf-8"))
             result = governance.submit_intervention(coord_root(args), request)
     except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
+        raise ProtocolError(str(exc)) from exc
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+def coord_reasoning(args: argparse.Namespace) -> None:
+    try:
+        if args.action == "create":
+            if not args.request_file:
+                raise ValueError("create requires --request-file")
+            result = reasoning_contract.create(coord_root(args), json.loads(args.request_file.read_text(encoding="utf-8")))
+        else:
+            if not args.task:
+                raise ValueError("status requires --task")
+            result = reasoning_contract.status(coord_root(args), args.task)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
         raise ProtocolError(str(exc)) from exc
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
@@ -2151,6 +2167,7 @@ def build_parser() -> argparse.ArgumentParser:
     joint = commands.add_parser("coord-joint-case"); joint.add_argument("action", choices=("open", "review", "status")); joint.add_argument("--task", required=True); joint.add_argument("--submission", required=True); joint.add_argument("--lead"); joint.add_argument("--deputy"); joint.add_argument("--artifact-sha256"); joint.add_argument("--result-file", type=Path); joint.add_argument("--agent"); joint.add_argument("--role", choices=("lead", "deputy", "cross_platform", "catfish", "package_reviewer")); joint.add_argument("--review-file", type=Path); joint.set_defaults(func=coord_joint_case)
     adversarial = commands.add_parser("coord-adversarial"); adversarial.add_argument("action", choices=("review", "status")); adversarial.add_argument("--task", required=True); adversarial.add_argument("--submission", required=True); adversarial.add_argument("--agent"); adversarial.add_argument("--role", choices=("ideator", "falsifier", "replicator", "bias_auditor", "referee")); adversarial.add_argument("--review-file", type=Path); adversarial.set_defaults(func=coord_adversarial)
     governed = commands.add_parser("coord-governance"); governed.add_argument("action", choices=("roles", "intervene", "history")); governed.add_argument("--request-file", type=Path); governed.set_defaults(func=coord_governance)
+    reasoning = commands.add_parser("coord-reasoning"); reasoning.add_argument("action", choices=("create", "status")); reasoning.add_argument("--request-file", type=Path); reasoning.add_argument("--task"); reasoning.set_defaults(func=coord_reasoning)
     capability = commands.add_parser("coord-capabilities"); capability.add_argument("action", choices=("declare", "match")); capability.add_argument("--agent"); capability.add_argument("--chips", nargs="*", default=[]); capability.add_argument("--compilers", nargs="*", default=[]); capability.add_argument("--strengths", nargs="*", default=[]); capability.add_argument("--evidence", nargs="*", default=[]); capability.add_argument("--ttl-minutes", type=int, default=30); capability.add_argument("--chip"); capability.add_argument("--compiler"); capability.add_argument("--strength"); capability.set_defaults(func=coord_capabilities)
     mechanism = commands.add_parser("coord-mechanism-audit"); mechanism.add_argument("--metrics-file", type=Path, required=True); mechanism.set_defaults(func=coord_mechanism_audit)
     evolution = commands.add_parser("coord-evolution"); evolution.add_argument("action", choices=("propose", "evaluate")); evolution.add_argument("--metrics-file", type=Path); evolution.add_argument("--candidate-file", type=Path); evolution.add_argument("--proposal-id"); evolution.add_argument("--change"); evolution.add_argument("--rollback"); evolution.add_argument("--author"); evolution.set_defaults(func=coord_evolution)

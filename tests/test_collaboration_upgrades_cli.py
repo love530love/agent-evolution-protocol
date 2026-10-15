@@ -14,6 +14,7 @@ class CollaborationUpgradesCliTests(unittest.TestCase):
         parser = cli.build_parser()
         cases = (
             ["coord-governance", "roles"],
+            ["coord-reasoning", "status", "--task", "T1"],
             ["coord-adversarial", "status", "--task", "T1", "--submission", "S1"],
             ["coord-legion", "incentive-board"],
             ["coord-legion", "adjudicate", "--event-id", "e", "--reviewer", "r",

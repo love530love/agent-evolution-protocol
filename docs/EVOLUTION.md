@@ -24,5 +24,7 @@ Adapted the evidence-first governance loop from [love530love/3D](https://github.
 
 ## Current maturity
 
+v0.3.0 keeps Red Queen / Catfish / Creative Destruction as the umbrella system. The collaborative reasoning workflow is its operating guide. A frozen task contract now records acceptance, declared budgets, interaction mode and stop conditions through `coord-reasoning create|status`; it does not start execution or enforce budgets across adapters. See [system overview](SYSTEM_OVERVIEW.zh-CN.md).
+
 The CLI is shadow tooling. A deployment should first run a historical blind replay, then a low-risk sidecar pilot, and only then connect selected events to its coordination bus. Automated external submission, merging, safety-HOLD removal, reputation adjustment, and unbounded subagent recursion remain out of scope.
 

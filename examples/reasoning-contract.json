@@ -1,0 +1,13 @@
+{
+  "task": "DEMO",
+  "owner": "codex",
+  "objective": "Compare two local implementation routes with reproducible evidence",
+  "acceptance": ["Both routes pass the same tests", "Report runtime and resource tradeoffs"],
+  "constraints": ["Preserve user changes", "Freeze independent proposals before sharing"],
+  "budget": {"max_rounds": 3, "max_minutes": 30},
+  "mode": "standard",
+  "interaction": "checkpoint",
+  "authorizations": ["Read local project sources", "Run reversible local tests"],
+  "stop_conditions": ["Acceptance met", "Budget reached", "No new evidence after a review round"],
+  "restart_conditions": ["New failing test or external evidence arrives"]
+}

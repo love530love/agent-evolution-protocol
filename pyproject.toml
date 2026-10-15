@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-evolution-protocol"
-version = "0.2.0"
+version = "0.3.0"
 description = "Evidence-driven anti-collapse governance for multi-agent systems"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -22,3 +22,6 @@ aep = "agent_evolution_protocol.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"agent_evolution_protocol.coordination" = ["*.ps1", "*.html", "*.md", "wake_adapters/*.ps1"]

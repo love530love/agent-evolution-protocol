@@ -1,5 +1,7 @@
 # Agent Evolution Protocol 本地协作入口
 
+- 总体系为“红皇后—鲶鱼—创造性破坏”，先按 `docs/SYSTEM_OVERVIEW.zh-CN.md` 理解工作流与能力状态。复杂任务可用 `coord-reasoning create|status` 冻结任务契约；其中的授权与预算是声明，执行仍检查现有权限、租约与验收。
+
 - 自治角色、干预及积分从 `docs/coordination/EXPERT_EVOLUTION_REVIEW_20261015.md` 接入：先发现角色契约，贡献须独立裁定后计入 AP/RP；身份声明不是认证，评审完成不直接授权上传。
 
 - Windows 默认用 PowerShell 7 (`pwsh.exe`)；只有已证实的不兼容调用才隔离使用 Windows PowerShell 5.1。

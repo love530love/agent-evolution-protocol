@@ -1,5 +1,9 @@
 # Agent Evolution Protocol
 
+红皇后—鲶鱼—创造性破坏：多 Agent 自治协作与进化体系。
+
+[总体系与能力状态](docs/SYSTEM_OVERVIEW.zh-CN.md) · [协同推理工作流](docs/COLLABORATIVE_REASONING_FRAMEWORK.zh-CN.md) · [v0.3.0 发布说明](docs/releases/v0.3.0.md)
+
 An evidence-driven governance protocol for multi-agent systems that need diversity without coordination collapse.
 
 **New here?** Start with the plain-language [Chinese introduction](docs/INTRODUCTION.zh-CN.md), which explains the failure mode, design rationale, roles, one complete round, and a beginner walkthrough.
@@ -61,6 +65,7 @@ multi-agent coordination:
 - [session affinity](docs/coordination/MULTI_AGENT_SESSION_AFFINITY.md)
 - [anti-collapse protocol](docs/coordination/MULTI_AGENT_ANTI_COLLAPSE_PROTOCOL.md)
 - [role contracts, independent Catfish reviews and evidence-based incentives](docs/coordination/EXPERT_EVOLUTION_REVIEW_20261015.md)
+- [红皇后体系下的协同推理工作流：16 条方法的审议与完善](docs/COLLABORATIVE_REASONING_FRAMEWORK.zh-CN.md)
 - [Red Queen / Catfish / Creative Destruction retrospective](docs/coordination/RED_QUEEN_CATFISH_CREATIVE_DESTRUCTION_RETROSPECTIVE_20260928.md)
 
 Reference code lives under `src/agent_evolution_protocol/coordination/`. It is
