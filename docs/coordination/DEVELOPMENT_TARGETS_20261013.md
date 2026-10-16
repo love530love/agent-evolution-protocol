@@ -62,3 +62,7 @@ python -m agent_evolution_protocol.coordination.delivery_audit --root coordinati
 - **已实现代码（2026-10-14，待实机验收）**："换人/多波次"编排——`submit_order` 支持 `candidates`，`commander.reinforce` 在订单 `CEASED` 或久未 ACK 时自动生成差异化补位订单（火枪手轮次），单测 `tests/test_commander_reinforce.py` 已通过。
 
 综合决策与升级路线见 `WARPLAN_UPGRADE_20261014.md`。
+
+## 2026-10-17 补充：可迁移扩展工程
+
+新增 [架构、理念与开发路线图](../PORTABLE_CAPABILITY_ROADMAP.zh-CN.md)：本轮实现隔离 SDK 安装、provider 来源版本清单和受限客户端配置导出。下一优先级是干净 Windows 验证的单 provider 安装器、原会话执行与 ACK 闭环；完整离线包和任意客户端兼容尚未完成。

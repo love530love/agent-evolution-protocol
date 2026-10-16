@@ -6,6 +6,18 @@
 
 An evidence-driven governance protocol for multi-agent systems that need diversity without coordination collapse.
 
+## Portable desktop capabilities (preview)
+
+See the [portable architecture and delivery roadmap](docs/PORTABLE_CAPABILITY_ROADMAP.zh-CN.md) for dependency setup, DIY interfaces, implemented capabilities and future milestones.
+
+```powershell
+# PowerShell 7: preview first, then opt in to an isolated AEP + MCP SDK install
+./scripts/bootstrap-desktop.ps1 -Python python.exe
+./scripts/bootstrap-desktop.ps1 -Python python.exe -Install
+```
+
+This installs the protocol and optional SDK, not all third-party desktop servers. Provider sources are pinned in [the provenance manifest](examples/desktop-provider-sources.lock.json); offline bundles and clean-machine provider installers remain roadmap items.
+
 **New here?** Start with the plain-language [Chinese introduction](docs/INTRODUCTION.zh-CN.md), which explains the failure mode, design rationale, roles, one complete round, and a beginner walkthrough.
 
 The design combines three forces:

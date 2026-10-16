@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "purpose": "Source provenance, not an offline or transitive dependency lock",
+  "providers": [
+    {"name":"shuyu","repository":"https://github.com/shuyu-labs/Windows-MCP.Net.git","commit":"fcaa31c9de8165ce26a3b7a62f70c5f78a7f1dbf","runtime":".NET 10"},
+    {"name":"sbroenne","repository":"https://github.com/sbroenne/mcp-windows.git","commit":"67ba78d6b3a99bdabee27898dab64b38aafb55ed","runtime":".NET 10 / Windows SDK"},
+    {"name":"mcpcontrol","repository":"https://github.com/claude-did-this/MCPControl.git","commit":"f90024255aa6ff9b2e9f7efd03b209ccb95baa08","runtime":"Node.js / MSVC / Python node-gyp","local_patch":"patches/keysender-2.3.0-msvc.patch"},
+    {"name":"mario","repository":"https://github.com/mario-andreschak/mcp-windows-desktop-automation.git","commit":"255148427352aa3d3e1695a4013a7a0157b1cf1e","runtime":"Node.js / bundled AutoItX"},
+    {"name":"cursortouch","repository":"https://github.com/CursorTouch/Windows-MCP.git","commit":"97979d6f6ff987f591ccfad8d2c15b9103db1091","runtime":"Python >=3.14 / uv"}
+  ]
+}

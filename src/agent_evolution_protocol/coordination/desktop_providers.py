@@ -163,3 +163,18 @@ def plan(root: Path, *, operation: str, previous_state: str = "NOT_STARTED") -> 
     return {"status": "PLAN_ONLY" if candidates else "NO_QUALIFIED_PROVIDER",
             "operation": operation, "candidates": sorted(candidates, key=lambda r: (r["priority"], r["provider"])),
             "execution_started": False, "note": "MCP tool discovery does not prove original-session targeting or safe retry. Use a verified session adapter and the shared desktop-input lease."}
+
+
+def export_config(root: Path, name: str) -> dict:
+    """Return one explicit opt-in stdio client configuration; never edit clients."""
+    name = _name(name)
+    row = next((r for r in inventory(root)["providers"] if r["name"] == name), None)
+    if not row or not row["registered"] or row["missing_dependencies"]:
+        raise ValueError("provider must be registered with available dependencies")
+    profile = row["profile"]
+    # cwd is not portable across MCP clients: refuse to silently discard it.
+    if profile.get("cwd"):
+        raise ValueError("provider requires cwd; use a client-specific launcher supporting cwd")
+    if profile.get("env"):
+        raise ValueError("environment may contain secrets; export requires a secret-free launcher")
+    return {"mcpServers": {name: {"command": profile["command"], "args": profile.get("args", [])}}}

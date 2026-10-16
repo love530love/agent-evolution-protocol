@@ -20,6 +20,9 @@ classifiers = [
 agent-evolution = "agent_evolution_protocol.cli:main"
 aep = "agent_evolution_protocol.cli:main"
 
+[project.optional-dependencies]
+desktop = ["mcp==1.30.0; python_version >= '3.10'"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

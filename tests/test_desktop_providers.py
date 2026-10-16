@@ -28,6 +28,16 @@ class DesktopProviderTests(unittest.TestCase):
         self.assertNotIn("shell", run.call_args.kwargs)
         return receipt
 
+    def test_export_is_explicit_and_does_not_leak_environment(self):
+        providers.register(self.root, self.profile)
+        config = providers.export_config(self.root, "sbroenne")
+        self.assertEqual(config["mcpServers"]["sbroenne"]["command"], sys.executable)
+        self.assertNotIn("sdk_python", str(config))
+        for extra in ({"env": {"TOKEN": "secret"}}, {"cwd": str(self.root)}):
+            providers.register(self.root, {**self.profile, **extra})
+            with self.assertRaises(ValueError):
+                providers.export_config(self.root, "sbroenne")
+
     def test_discovery_proves_tools_only_and_plan_needs_exact_binding(self):
         receipt = self.discover()
         self.assertEqual(receipt["status"], "TOOLS_DISCOVERED")
