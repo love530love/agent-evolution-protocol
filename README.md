@@ -57,6 +57,7 @@ multi-agent coordination:
 - [presence and return-to-team notices](docs/coordination/PRESENCE_AND_RETURN.md)
 - [any online agent can request a bounded handoff](docs/coordination/ANY_AGENT_CAN_DISPATCH.md)
 - [human-style desktop fallback](docs/coordination/HUMAN_UI_FALLBACK.md)
+- [Windows desktop MCP provider discovery and fallback planning](docs/coordination/DESKTOP_MCP_PROVIDERS.md)
 - [shared Windows command memory](docs/coordination/COMMAND_MEMORY.md)
 - [Windows build case index](docs/coordination/WINDOWS_BUILD_KNOWLEDGE.md)
 - [browser capability routing](docs/coordination/BROWSER_CAPABILITY_ROUTING.md)

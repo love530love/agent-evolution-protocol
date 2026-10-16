@@ -1,0 +1,19 @@
+{
+  "name": "sbroenne",
+  "command": "C:/Tools/mcp-windows/Sbroenne.WindowsMcp.exe",
+  "args": [],
+  "sdk_python": "C:/Tools/desktop-sdk/Scripts/python.exe",
+  "required_paths": [],
+  "bindings": {
+    "windows": "window_management",
+    "snapshot": "ui_snapshot",
+    "read": "ui_read",
+    "locate": "ui_find",
+    "type": "ui_type",
+    "click": "ui_click",
+    "keys": "keyboard_control",
+    "select": "ui_select",
+    "screenshot": "screenshot_control"
+  },
+  "priority": 10
+}

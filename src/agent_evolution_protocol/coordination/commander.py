@@ -26,6 +26,7 @@ from agent_evolution_protocol.coordination import client_registry as registry
 from agent_evolution_protocol.coordination import transcript_bus as bus
 from agent_evolution_protocol.coordination import transport_cdp as cdp
 from agent_evolution_protocol.coordination import ui_fallback
+from agent_evolution_protocol.coordination import desktop_providers
 
 SAFE_AGENT = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 ACK_TOKEN = "AEP-ACK"
@@ -111,6 +112,14 @@ def _state_path(root: Path, order_id: str) -> Path:
 
 def _record_attempt(root: Path, order: dict, *, state: str, transport: str = "",
                     receipt: dict | None = None, note: str = "") -> dict:
+    if state in {"DEFERRED", "CEASED"} and (Path(root) / "desktop_providers").is_dir():
+        try:
+            alternatives = desktop_providers.plan(root, operation="locate", previous_state=(
+                "PROVEN_NOT_SENT" if state == "DEFERRED" else "UNKNOWN"))
+            receipt = {**(receipt or {}), "desktop_provider_plan": alternatives}
+        except (OSError, ValueError, KeyError, TypeError):
+            # An optional provider registry must not prevent storing the order receipt.
+            pass
     attempt = {"at": now(), "state": state, "transport": transport,
                "receipt": receipt or {}, "note": note}
     order.setdefault("attempts", []).append(attempt)

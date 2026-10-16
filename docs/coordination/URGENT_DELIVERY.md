@@ -23,3 +23,5 @@ python -m agent_evolution_protocol coord-send --from codex --to qoder --topic IN
 2026-10-14 的额度更新广播暴露了另一个问题：六个信箱已写入，但没有任何一个能证明原会话送达/ACK。WorkBuddy 有两个候选窗口；Hermes Desktop、GitHub Copilot、AutoClaw、CodeBuddy 尚无可核验客户端注册；Qoder 适配器失败。现在前两类被保留为 `DEFERRED` 待条件恢复，Qoder 仍保持 `CEASED` 待人工诊断。**本机制不能宣称六人已被唤醒。**归队 Agent 应先读本地信箱并回 ACK；指挥员通过投递审计逐一核验。
 
 每次紧急广播都要给每位队友单独记录：信箱 ID、桌面状态、原会话 ACK、记忆修改证据。任何一项缺失须明确标记为未验证；离线队友归队后仍需补读和回 ACK。
+
+2026-10-16：新增[桌面 MCP 备用能力层](DESKTOP_MCP_PROVIDERS.md)。`DEFERRED` 订单回执可附经过工具发现的备用定位计划；`CEASED` 只附先核验提示。该层目前提供注册、依赖检查、MCP 工具发现和计划，不执行界面输入，也不自动恢复订单。

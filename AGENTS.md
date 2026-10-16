@@ -13,3 +13,4 @@
 - 用户已授权 Agent 在任务需要时主动启动管理员 CMD / PowerShell 7（包括 `Start-Process -Verb RunAs`），不必再为“是否可以发起提权”单独询问。先确认具体命令、目标与副作用，执行后核对进程权限、退出码和业务结果；不得把发起 UAC 当作已提权。此授权不能代替 Windows 的 UAC 批准，也不授权关闭 UAC、绕过安全边界或建立任意命令的无审计管理员后门。无人值守任务优先使用经一次性批准、限定操作和有日志的提升权限入口；入口不存在或 UAC 未批准时如实报告阻塞。
 - WSLC 昆仑镜像已于 2026-10-13 复制到普通用户会话；旧记忆中的“必须管理员/普通会话恒为空”仅是迁移前状态。先读 `docs/coordination/REA_WSLC_BRIEFING_20261013.md` 的最新状态并核对 `images/inspect`；不得因空表盲目 `run/pull`，创建时使用 `--pull never`。物理 XPU 与完整编译门尚未验收。
 - 紧急跨 Agent 指令按 `docs/coordination/URGENT_DELIVERY.md`：信箱投递、原会话消息可见、Agent ACK、记忆修改是不同证据级别。需即时唤醒时用 `coord-send --dispatch`；失败不得盲目重复发送。
+- 本机桌面 MCP 备用能力按 `docs/coordination/DESKTOP_MCP_PROVIDERS.md` 登记与探测，统一入口 `coord-desktop inventory|probe|plan`；工具发现不等于原会话投递。结果不明的输入禁止切换服务重发。
