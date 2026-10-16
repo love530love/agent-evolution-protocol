@@ -1,0 +1,14 @@
+diff --git a/src/addon/virtual.hpp b/src/addon/virtual.hpp
+--- a/src/addon/virtual.hpp
++++ b/src/addon/virtual.hpp
+@@ -22,2 +22,2 @@
+-  Napi::Value Virtual::getLastCoords(const Napi::CallbackInfo &info);
++  Napi::Value getLastCoords(const Napi::CallbackInfo &info);
+   void mbToggler(std::string button, bool isButtonDown);
+diff --git a/src/addon/helper.hpp b/src/addon/helper.hpp
+--- a/src/addon/helper.hpp
++++ b/src/addon/helper.hpp
+@@ -21,2 +21,2 @@
+-  static const std::map<std::string, std::array<UINT, 2>> Helper::mouseEvents;
++  static const std::map<std::string, std::array<UINT, 2>> mouseEvents;
+ };

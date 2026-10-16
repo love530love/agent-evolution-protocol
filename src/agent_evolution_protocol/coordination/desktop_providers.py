@@ -46,7 +46,7 @@ def _digest(profile: dict) -> str:
 
 
 def register(root: Path, profile: dict) -> dict:
-    if not isinstance(profile, dict) or set(profile) - {"name", "command", "args", "cwd", "sdk_python", "required_paths", "bindings", "priority"}:
+    if not isinstance(profile, dict) or set(profile) - {"name", "command", "args", "cwd", "sdk_python", "required_paths", "bindings", "priority", "env"}:
         raise ValueError("unknown or invalid desktop provider fields")
     name = _name(profile.get("name"))
     for field in ("command", "sdk_python"):
@@ -65,6 +65,12 @@ def register(root: Path, profile: dict) -> dict:
         if not Path(dependency).is_absolute():
             raise ValueError("required_paths must be absolute")
     bindings = profile.get("bindings", {})
+    environment = profile.get("env", {})
+    if not isinstance(environment, dict) or any(
+        not isinstance(key, str) or not key or "=" in key or "\0" in key or
+        not isinstance(value, str) or "\0" in value for key, value in environment.items()
+    ):
+        raise ValueError("env must contain valid string environment keys and values")
     if not isinstance(bindings, dict) or set(bindings) - OPERATIONS or any(not isinstance(v, str) or not v.strip() for v in bindings.values()):
         raise ValueError("bindings must map known operations to exact MCP tool names")
     priority = profile.get("priority", CATALOG.get(name, {}).get("priority", 100))
@@ -113,7 +119,15 @@ def probe(root: Path, name: str, *, timeout: int = 30) -> dict:
                              timeout=timeout + 10, check=False,
                              creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
         if run.returncode:
-            result["error"] = run.stderr[-3000:] or "MCP discovery failed"
+            try:
+                failure = json.loads(run.stdout)
+            except (ValueError, TypeError):
+                failure = {}
+            if not isinstance(failure, dict):
+                failure = {}
+            result["error"] = failure.get("error") or run.stderr[:1500] + run.stderr[-1500:] or "MCP discovery failed"
+            if failure.get("server_stderr"):
+                result["server_stderr"] = str(failure["server_stderr"])[:4000]
         else:
             data = json.loads(run.stdout)
             if not isinstance(data.get("tools"), list) or not all(isinstance(t, dict) and isinstance(t.get("name"), str) for t in data["tools"]):

@@ -6,15 +6,15 @@
 
 本机 `.tools/mcp-windows-v1.3.28/bin/Sbroenne.WindowsMcp.exe` 已通过 MCP 初始化和工具发现，共 18 个工具，包含 `window_management`、`ui_snapshot`、`ui_find`、`ui_read`、`ui_type`、`ui_select`、`ui_click`、`keyboard_control` 等。SDK 使用隔离解释器中的 MCP 1.30.0。本轮只初始化并读取工具定义，没有调用桌面输入工具，没有向任何 Agent 发消息。
 
-用户报告的另外四个构建项目尚未定位其源码或产物目录，因此保留待注册状态，不把用户报告的构建成功冒充本轮实机验证。与 2026-10-12 记录一致，工具存在也不证明 WorkBuddy/Qoder 的输入框能被 UIA 读取。旧审计和旧通道决策保留为历史，当前引入可探测的备用能力层。
+后续收到用户提供的 `windows-mcp-projects` 目录后，五个源码项目均已定位并通过实际 MCP 初始化和工具发现。MCPControl 的原生依赖经过本机修复；Mario 使用依赖自带 AutoItX DLL，无需安装完整 AutoIt3 才能完成此次探测；CursorTouch 的 Python 3.14 环境已就绪。与 2026-10-12 记录一致，工具存在也不证明 WorkBuddy/Qoder 的输入框能被 UIA 读取。详见[本机验收记录](DESKTOP_MCP_LOCAL_ACCEPTANCE_20261016.md)。
 
 | Provider ID | 项目 | 接入方式 | 目前状态 |
 | --- | --- | --- | --- |
-| sbroenne | sbroenne/mcp-windows | 直接启动本机 exe，stdio | 本机 18 工具发现通过 |
-| shuyu | shuyu-labs/Windows-MCP.Net | 本机 exe 或 dotnet.exe + DLL | 等待真实目录和工具列表 |
-| mcpcontrol | claude-did-this/MCPControl | node.exe + build/index.js，stdio | 等待真实目录和工具列表 |
-| mario | mcp-windows-desktop-automation | node.exe + dist/index.js；required_paths 登记 AutoIt3 | 用户报告缺 AutoIt3；暂不作为可用通道 |
-| cursortouch | CursorTouch/Windows-MCP | 本机已安装解释器入口或 uv.exe 启动命令 | 依赖同步、入口和运行状态待核验 |
+| sbroenne / sbroenne_build | sbroenne/mcp-windows | 直接启动本机 exe，stdio | 发布版 18 工具，本机构建版 19 工具 |
+| shuyu | shuyu-labs/Windows-MCP.Net | dotnet.exe + DLL | 48 工具发现通过 |
+| mcpcontrol | claude-did-this/MCPControl | node.exe + build/index.js，stdio | 修复 keysender 后 23 工具发现通过 |
+| mario | mcp-windows-desktop-automation | node.exe + dist/index.js；required_paths 登记实际 AutoItX DLL | 50 工具发现通过 |
+| cursortouch | CursorTouch/Windows-MCP | 已安装 venv 的 python.exe -m windows_mcp serve --transport stdio | 20 工具发现通过 |
 
 ## 统一命令
 
@@ -29,7 +29,9 @@ python -m agent_evolution_protocol --coord-root .\coordination coord-desktop pla
 
 先修改示例中的本机路径。`command` 与 `sdk_python` 必须为存在的绝对可执行文件路径，`args` 为参数数组，`cwd` 可选。`sdk_python` 需要安装 MCP Python SDK；核心 AEP 仍不强制依赖 SDK。使用已有隔离环境即可；无需模型 API Key。服务端用 Node 或 .NET 均可，客户端协议统一为 MCP stdio。
 
-`required_paths` 声明 AutoIt3、DLL 或入口 JS 等外部依赖，缺失时阻止启动。依赖齐全仍不等于运行健康。`bindings` 使用实际发现的精确工具名映射操作；可先留空，探测后再绑定并重新探测。示例工具名仅对应本次发现的 sbroenne 版本，不应照搬给其他项目。配置变化和超过 30 分钟的旧探测结果不会被调度计划采纳。
+`required_paths` 声明实际需要的 DLL、原生插件或入口 JS 等依赖，缺失时阻止启动；不要把未经核对的 AutoIt3 主程序当成必需依赖。依赖齐全仍不等于运行健康。`bindings` 使用实际发现的精确工具名映射操作；可先留空，探测后再绑定并重新探测。示例工具名仅对应本次发现的 sbroenne 版本，不应照搬给其他项目。配置变化和超过 30 分钟的旧探测结果不会被调度计划采纳。
+
+`env` 可传字符串环境变量，例如 CursorTouch 使用 `ANONYMIZED_TELEMETRY=false` 和 `PYTHONIOENCODING=utf-8`。启动失败时回执保留服务端 stderr 的开头和简要错误，便于直接定位缺失的原生插件，而不被 MCP 连接关闭的异常堆栈掩盖。每个工具的输入 schema 保留在本地探测回执中；相同操作名也必须根据该工具的参数和实际行为调用。
 
 探测只做 initialize 和 tools/list，支持分页、有限超时、关闭进程和错误回执。注册、工具定义及回执保存在协作根的 `desktop_providers/` 下，本机路径不写入公共仓库。探测会启动第三方服务；只注册用户已选定的本机程序，不从网页或聊天内容自动安装或执行新程序。
 

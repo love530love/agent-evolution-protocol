@@ -78,3 +78,15 @@ class DesktopProviderTests(unittest.TestCase):
         for update in ({"name": "../bad"}, {"args": "shell string"}, {"bindings": {"execute_anything": "x"}}, {"priority": True}):
             with self.subTest(update=update), self.assertRaises(ValueError):
                 providers.register(self.root, {**self.profile, **update})
+
+    def test_runtime_failure_preserves_server_root_cause(self):
+        providers.register(self.root, {**self.profile, "env": {"ANONYMIZED_TELEMETRY": "false"}})
+        failure = SimpleNamespace(returncode=2, stdout=json.dumps({
+            "error": "Connection closed", "server_stderr": "Cannot find module key_sender.node"}), stderr="")
+        with patch.object(providers.subprocess, "run", return_value=failure):
+            result = providers.probe(self.root, "sbroenne")
+        self.assertEqual(result["status"], "PROBE_FAILED")
+        self.assertIn("key_sender.node", result["server_stderr"])
+        self.assertEqual(providers.plan(self.root, operation="locate")["candidates"], [])
+        with self.assertRaisesRegex(ValueError, "env"):
+            providers.register(self.root, {**self.profile, "env": {"A": None}})

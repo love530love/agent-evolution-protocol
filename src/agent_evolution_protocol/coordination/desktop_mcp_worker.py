@@ -4,14 +4,15 @@ import asyncio
 import json
 from pathlib import Path
 import sys
+import tempfile
 
 
-async def discover(profile: dict) -> dict:
+async def discover(profile: dict, errlog=None) -> dict:
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
 
-    server = StdioServerParameters(command=profile["command"], args=profile.get("args", []), cwd=profile.get("cwd"))
-    async with stdio_client(server) as (read, write):
+    server = StdioServerParameters(command=profile["command"], args=profile.get("args", []), cwd=profile.get("cwd"), env=profile.get("env"))
+    async with stdio_client(server, errlog=errlog or sys.stderr) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
             tools = []
@@ -36,7 +37,15 @@ def main() -> None:
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")
     profile = json.loads(args.profile.read_text(encoding="utf-8"))
-    print(json.dumps(asyncio.run(asyncio.wait_for(discover(profile), args.timeout)), ensure_ascii=False))
+    with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as errlog:
+        try:
+            result = asyncio.run(asyncio.wait_for(discover(profile, errlog), args.timeout))
+        except Exception as exc:
+            errlog.seek(0)
+            diagnostic = errlog.read(4000)
+            print(json.dumps({"error": str(exc), "server_stderr": diagnostic}, ensure_ascii=False))
+            raise SystemExit(2) from None
+    print(json.dumps(result, ensure_ascii=False))
 
 
 if __name__ == "__main__":
