@@ -18,6 +18,20 @@
 - `aep coord-desktop export-config --provider sbroenne` 输出标准 `mcpServers` 配置；只适用于无需 cwd/env 的启动配置。不修改任何客户端。含 cwd 或环境变量的配置会明确拒绝，避免丢失启动语义或泄漏密钥。
 - 第三方服务本体仍按各自构建说明安装，当前脚本只安装 AEP 与 SDK，不是五个项目的一键全装器。
 
+### 单服务安装器（开发预览）
+
+`scripts/install-desktop-provider.ps1` 已实现 sbroenne 源码安装路径：预检 Git/.NET 10/AEP SDK，固定 commit 克隆，Release win-x64 自包含发布，生成本机配置，注册到独立的 `sbroenne_portable` 名称，并只做 MCP 工具发现。保存分阶段日志、失败阶段和可执行文件 SHA-256；拒绝覆盖已有目录，不提权、不自动下载 SDK，也不会替换既有生产 provider。
+
+```powershell
+./scripts/install-desktop-provider.ps1 -SdkPython .tools/desktop-sdk/Scripts/python.exe
+# 确认计划后执行；也可先加 -WhatIf
+./scripts/install-desktop-provider.ps1 -SdkPython .tools/desktop-sdk/Scripts/python.exe -Install
+```
+
+可用 `-Dotnet <dotnet.exe绝对路径>` 指定并存 SDK，`-InstallRoot` 隔离构建，`-CoordRoot` 隔离验证状态。脚本从源码仓库执行，不能假设 wheel 包含整套构建工程。
+
+2026-10-17 验收：计划模式和 WhatIf 无安装副作用；实际安装预检正确拒绝本机仅有 .NET 9 的状态，未创建安装目录。固定源码构建与探测路径尚未端到端验收，干净 Windows VM 验收仍未完成。失败目录保持原样供诊断；排除原因后使用新的 InstallRoot 重试，不盲删原目录。安装第三方源码会执行其构建逻辑，应先审阅来源与许可证。
+
 DIY 接口：注册配置声明 command/args/sdk_python/required_paths/bindings/priority，可选 cwd/env；bindings 把语义操作映射到精确工具名。工具 schema 来自实时发现，不假设不同服务器参数兼容。环境配置仅保存在本地，不应提交远程。
 
 ## 排期与验收门

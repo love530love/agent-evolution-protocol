@@ -18,6 +18,8 @@ See the [portable architecture and delivery roadmap](docs/PORTABLE_CAPABILITY_RO
 
 This installs the protocol and optional SDK, not all third-party desktop servers. Provider sources are pinned in [the provenance manifest](examples/desktop-provider-sources.lock.json); offline bundles and clean-machine provider installers remain roadmap items.
 
+A [single-provider installer preview](scripts/install-desktop-provider.ps1) now covers pinned sbroenne source builds, dependency preflight, local registration and tool discovery. Full build acceptance is pending .NET 10 availability; preview and `-WhatIf` do not install anything.
+
 **New here?** Start with the plain-language [Chinese introduction](docs/INTRODUCTION.zh-CN.md), which explains the failure mode, design rationale, roles, one complete round, and a beginner walkthrough.
 
 The design combines three forces:
