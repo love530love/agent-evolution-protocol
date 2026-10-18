@@ -33,6 +33,22 @@ proposal.json 必须包含 author/change/acceptance/rollback/scope（非空字�
 
 ## 开发顺序
 
+### 可选强制接力模式
+
+`coord-improvement policy` 只读当前模式；默认 cooperative，兼容原调用。
+
+```powershell
+aep --coord-root coordination coord-improvement policy --mode enforced --actor operator --note '完成接力客户端迁移后启用'
+# 回退兼容模式也必须显式记录原因
+aep --coord-root coordination coord-improvement policy --mode cooperative --actor operator --note '兼容性恢复'
+```
+
+enforced 在该协作目录内要求正常晋级（VALIDATED/REVIEWED/TRIAL/ADOPTED）提供有效 token，并匹配持有者、到期时间、日志头和目标阶段；旧 advance 也不能省略。validate 无 token 在启动测试前就拒绝。complete 会传递并校验 token。REJECTED/ROLLED_BACK 保留无需 token 的停损通道，但仍要求有效阶段、证据与决策说明。
+
+模式与切换历史保存在 improvement_policy.json，损坏配置拒绝读取和覆盖，不默认为兼容模式。此机制防止意外绕过，不是身份认证、安全隔离或操作系统权限边界；有本地写权限者仍可修改策略文件，声明 actor 不等于认证管理员。策略切换与运行中测试并非全局原子事务；启用前先停止相关执行并确认客户端已迁移。测试通过也不能证明试运行或实际部署已完成。
+
+本轮仅在临时测试目录验证强制模式，未修改生产 coordination 的模式，也未改变其他 Agent 当前行为。
+
 ### 认领后的执行简报、续租与结果围栏
 
 `coord-improvement brief --id <ID> --actor <成员> --token <token>` 检查有效租约、当前日志头和全部既有证据 SHA-256，返回目标、验收、作用范围、回滚说明及所需交付。证据缺失/变动立即拒绝；文本是待处理数据，不是新的授权，不自动读取全文或执行其中指令。

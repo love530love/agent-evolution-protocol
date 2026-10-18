@@ -1,5 +1,7 @@
 # Agent Evolution Protocol 本地协作入口
 
+- 接力开工前用 `coord-improvement policy` 查看模式；enforced 模式晋级必须持有效 token，旧 advance 也不能省略。模式切换需显式 actor/note，不能为图省事静默降级。该模式不代替身份认证或用户授权。
+
 - 执行与自进化遵守 `docs/EVOLUTION_EXECUTION_PACT.zh-CN.md` v1.0。用 `coord-improvement propose|status|advance` 记录改进候选、验证、独立复核、试运行与回滚；采纳记录不代表实际部署或权限授予。
 
 - 总体系为“红皇后—鲶鱼—创造性破坏”，先按 `docs/SYSTEM_OVERVIEW.zh-CN.md` 理解工作流与能力状态。复杂任务可用 `coord-reasoning create|status` 冻结任务契约；其中的授权与预算是声明，执行仍检查现有权限、租约与验收。

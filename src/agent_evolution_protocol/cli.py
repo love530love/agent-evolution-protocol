@@ -33,6 +33,7 @@ from agent_evolution_protocol.coordination import desktop_providers
 from agent_evolution_protocol.coordination import improvement
 from agent_evolution_protocol.coordination import improvement_spool
 from agent_evolution_protocol.coordination import improvement_work
+from agent_evolution_protocol.coordination import improvement_policy
 from agent_evolution_protocol.coordination import improvement_dispatch
 from agent_evolution_protocol.coordination import client_registry
 from agent_evolution_protocol.coordination import transcript_bus
@@ -666,7 +667,10 @@ def coord_governance(args: argparse.Namespace) -> None:
 
 def coord_improvement(args: argparse.Namespace) -> None:
     try:
-        if args.action == "retire":
+        if args.action == "policy":
+            result = (improvement_policy.configure(coord_root(args), mode=args.mode, actor=args.actor, note=args.note)
+                      if args.mode else improvement_policy.read(coord_root(args)))
+        elif args.action == "retire":
             result = improvement_dispatch.retire(coord_root(args), order_id=args.order_id, actor=args.actor, note=args.note)
         elif args.action == "delivery-status":
             result = improvement_dispatch.delivery_status(coord_root(args))
@@ -709,7 +713,7 @@ def coord_improvement(args: argparse.Namespace) -> None:
             result = improvement.propose(coord_root(args), json.loads(args.request_file.read_text(encoding="utf-8")))
         elif args.action == "advance":
             result = improvement.advance(coord_root(args), args.id, state=args.state,
-                                         actor=args.actor, evidence=args.evidence, note=args.note)
+                                         actor=args.actor, evidence=args.evidence, note=args.note, token=args.token)
         else:
             result = improvement.status(coord_root(args), args.id)
     except (OSError, ValueError, KeyError, TypeError) as exc:
@@ -2259,7 +2263,8 @@ def build_parser() -> argparse.ArgumentParser:
     adversarial = commands.add_parser("coord-adversarial"); adversarial.add_argument("action", choices=("review", "status")); adversarial.add_argument("--task", required=True); adversarial.add_argument("--submission", required=True); adversarial.add_argument("--agent"); adversarial.add_argument("--role", choices=("ideator", "falsifier", "replicator", "bias_auditor", "referee")); adversarial.add_argument("--review-file", type=Path); adversarial.set_defaults(func=coord_adversarial)
     governed = commands.add_parser("coord-governance"); governed.add_argument("action", choices=("roles", "intervene", "history")); governed.add_argument("--request-file", type=Path); governed.set_defaults(func=coord_governance)
     changes = commands.add_parser("coord-improvement")
-    changes.add_argument("action", choices=("propose", "status", "advance", "ingest", "validate", "enqueue", "drain", "overview", "pending", "claim", "complete", "release", "schedule", "delivery-status", "retire", "brief", "renew"))
+    changes.add_argument("action", choices=("propose", "status", "advance", "ingest", "validate", "enqueue", "drain", "overview", "pending", "claim", "complete", "release", "schedule", "delivery-status", "retire", "brief", "renew", "policy"))
+    changes.add_argument("--mode", choices=sorted(improvement_policy.MODES))
     changes.add_argument("--order-id")
     changes.add_argument("--apply", action="store_true")
     changes.add_argument("--limit", type=int, default=1)

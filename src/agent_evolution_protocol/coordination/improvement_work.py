@@ -105,7 +105,7 @@ def finish(root, identity, *, actor, token, evidence=None, note=None, release=Fa
             raise ValueError("claim expired or proposal changed; stale worker fenced")
         if not release:
             current = improvement.advance(root, identity, state=row["target"], actor=actor,
-                                          evidence=evidence, note=note)
+                                          evidence=evidence, note=note, token=token)
         _atomic_json(path, {**row, "active": False, "result": "RELEASED" if release else "COMPLETED"})
         return {"id": identity, "state": current["state"], "released": release,
                 "deployment_performed": False}

@@ -73,7 +73,15 @@ def propose(root, request):
     return status(root, identity)
 
 
-def advance(root, identity, *, state, actor, evidence, note):
+def advance(root, identity, *, state, actor, evidence, note, token=None):
+    from . import improvement_policy, improvement_work
+    enforced = improvement_policy.read(root)["mode"] == "enforced"
+    if state in {"VALIDATED", "REVIEWED", "TRIAL", "ADOPTED"} and (enforced or token is not None):
+        if not token:
+            raise ValueError("enforced mode requires an active claim token for promotion")
+        lease = improvement_work.check_claim(root, identity, actor=actor, token=token)
+        if lease["target"] != state:
+            raise ValueError("claim does not authorize this stage transition")
     current = status(root, identity)
     if state not in TRANSITIONS[current["state"]]:
         raise ValueError("illegal improvement transition")
@@ -127,6 +135,9 @@ def validate_tests(root, identity, *, workspace, actor, timeout=120, token=None)
     Tests are arbitrary code: caller must authorize/trust the workspace. This is a
     subprocess with a deadline, NOT a security sandbox or resource isolation.
     """
+    from . import improvement_policy
+    if improvement_policy.read(root)["mode"] == "enforced" and not token:
+        raise ValueError("enforced mode requires claim token before executing tests")
     if isinstance(timeout, bool) or not isinstance(timeout, int) or not 1 <= timeout <= 300:
         raise ValueError("timeout must be 1..300 seconds")
     if not isinstance(actor, str) or not actor.strip():

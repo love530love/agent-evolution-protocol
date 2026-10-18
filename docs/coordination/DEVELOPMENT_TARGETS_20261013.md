@@ -65,6 +65,8 @@ python -m agent_evolution_protocol.coordination.delivery_audit --root coordinati
 
 ## 2026-10-17 补充：可迁移扩展工程
 
+强制门增量：新增按协作目录生效的 cooperative/enforced 策略、模式切换审计和损坏配置拒绝默认降级。enforced 要求旧 advance 正常晋级和 validate 执行前均携带有效租约 token；拒绝/回滚保留停损路径。仅临时目录测试，生产模式未改变；认证管理员、全面事务与宿主端到端验证仍待完成。
+
 执行接力加固：新增 brief 证据校验简报、renew 有界续租，validate 可携带 token 在运行前/提交时检查租约，记录 PROMOTION_BLOCKED 而不改写原始测试证据。已覆盖真实测试运行期间租约失效；旧无 token 入口仍非强制围栏，宿主全流程验收待完成。
 
 路由阻塞修复：新增 RETIRED 终态与显式 retire，仅对已过时且历史证明处于输入前的订单开放；与改进投递共享 OS 锁。未知送达不退役；实际撤回、取消与跨宿主全局事务仍未实现。

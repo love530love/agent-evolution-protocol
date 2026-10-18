@@ -20,6 +20,8 @@
 
 认领后用 `brief --id <ID> --actor <成员> --token <token>` 核对证据；`renew` 可限额续租。`validate --token <token>` 在测试前后检查租约，过期结果不会自动晋级。
 
+`coord-improvement policy --mode enforced --actor <操作者> --note <原因>` 可显式启用强制 token 晋级，覆盖旧 advance/validate 入口；默认仍兼容模式，模式切换留审计记录。
+
 [总体系与能力状态](docs/SYSTEM_OVERVIEW.zh-CN.md) · [协同推理工作流](docs/COLLABORATIVE_REASONING_FRAMEWORK.zh-CN.md) · [v0.3.1 发布说明](docs/releases/v0.3.1.md)
 
 An evidence-driven governance protocol for multi-agent systems that need diversity without coordination collapse.
