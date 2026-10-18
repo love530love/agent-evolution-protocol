@@ -4,6 +4,9 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import subprocess
+import sys
+from uuid import uuid4
 
 TRANSITIONS = {"PROPOSED": {"VALIDATED", "REJECTED"}, "VALIDATED": {"REVIEWED", "REJECTED"},
                "REVIEWED": {"TRIAL", "REJECTED"}, "TRIAL": {"ADOPTED", "ROLLED_BACK"},
@@ -87,3 +90,72 @@ def advance(root, identity, *, state, actor, evidence, note):
     _save(_folder(root, identity), len(events), {"state": state, "actor": actor, "note": note,
           "evidence": _evidence(evidence), "previous": events[-1]["sha256"]})
     return status(root, identity)
+
+
+def ingest(root, event_file):
+    """Explicit completion-event ingestion; no watcher or implicit commands."""
+    event = json.loads(Path(event_file).read_text(encoding="utf-8"))
+    if not isinstance(event, dict) or set(event) != {"event_id", "kind", "improvement"}:
+        raise ValueError("event requires event_id/kind/improvement")
+    if event["kind"] not in {"TASK_COMPLETED", "TASK_FAILED"}:
+        raise ValueError("unsupported completion event")
+    if not isinstance(event["event_id"], str) or not event["event_id"].strip():
+        raise ValueError("event_id required")
+    request = event["improvement"]
+    if not isinstance(request, dict):
+        raise ValueError("improvement request required")
+    request = {**request, "evidence": list(request.get("evidence", [])) + [str(Path(event_file).resolve())]}
+    # Stable event ID reservation prevents changed payloads being replayed as new work.
+    folder = Path(root) / "improvement_events"
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / (_hash(event["event_id"]) + ".json")
+    digest = _hash(event)
+    if path.exists():
+        prior = json.loads(path.read_text(encoding="utf-8"))
+        if prior["digest"] != digest:
+            raise ValueError("event id reused with changed payload")
+        return status(root, prior["id"])
+    result = propose(root, request)
+    with path.open("x", encoding="utf-8") as stream:
+        json.dump({"digest": digest, "id": result["id"]}, stream)
+    return result
+
+
+def validate_tests(root, identity, *, workspace, actor, timeout=120):
+    """Run only repository unittest discovery, never execute commands from events.
+
+    Tests are arbitrary code: caller must authorize/trust the workspace. This is a
+    subprocess with a deadline, NOT a security sandbox or resource isolation.
+    """
+    if isinstance(timeout, bool) or not isinstance(timeout, int) or not 1 <= timeout <= 300:
+        raise ValueError("timeout must be 1..300 seconds")
+    if not isinstance(actor, str) or not actor.strip():
+        raise ValueError("actor required before executing tests")
+    if status(root, identity)["state"] != "PROPOSED":
+        raise ValueError("validation requires PROPOSED")
+    workspace = Path(workspace).resolve()
+    if not (workspace / "tests").is_dir():
+        raise ValueError("workspace needs tests directory")
+    folder = _folder(root, identity) / "runs" / uuid4().hex
+    folder.mkdir(parents=True)
+    report = {"command": [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v"],
+              "workspace": str(workspace), "security_sandbox": False, "status": "FAILED"}
+    try:
+        with (folder / "output.txt").open("w", encoding="utf-8") as output:
+            run = subprocess.run(report["command"], cwd=workspace, stdout=output, stderr=subprocess.STDOUT,
+                                 timeout=timeout, check=False)
+        report["exit_code"] = run.returncode
+        # unittest returns success for zero discovered tests: do not accept that.
+        text = (folder / "output.txt").read_text(encoding="utf-8", errors="replace")
+        count = re.search(r"Ran (\d+) tests? in", text)
+        report["tests_run"] = int(count[1]) if count else 0
+        if run.returncode == 0 and report["tests_run"] > 0:
+            report["status"] = "PASSED"
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        report["error"] = str(exc)
+    path = folder / "report.json"
+    path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    if report["status"] == "PASSED":
+        advance(root, identity, state="VALIDATED", actor=actor,
+                evidence=[str(path), str(folder / "output.txt")], note="Executed unittest discovery passed")
+    return {**report, "report": str(path), "proposal": status(root, identity)}

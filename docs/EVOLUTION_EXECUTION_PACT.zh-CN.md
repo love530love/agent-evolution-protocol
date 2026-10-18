@@ -33,6 +33,14 @@ proposal.json 必须包含 author/change/acceptance/rollback/scope（非空字�
 
 ## 开发顺序
 
+### 已落地的事件接入与真实验证
+
+`coord-improvement ingest --request-file event.json` 接收显式事件，字段为 event_id、kind（TASK_COMPLETED/TASK_FAILED）、improvement（上述提案对象）。同一 event_id 相同内容复用提案，内容改变拒绝重放；不会从日志文字推断要执行的命令。
+
+`coord-improvement validate --id <ID> --workspace <可信项目目录> --actor tester --timeout 120` 实际执行当前 Python 的 `unittest discover -s tests -v`，记录输出、退出码、测试数量和报告。成功且至少执行一个测试才进入 VALIDATED；失败保留 PROPOSED，CLI 返回 2。不自动复核、采纳或部署。
+
+重要：这是有时限的子进程，不是安全沙箱。运行测试本身会执行项目代码，必须信任并授权目标目录。超时终止直接子进程，不保证回收其创建的全部后代；网络、文件写入和 CPU/内存隔离尚未实现。事件投递仍须调用 ingest，未安装常驻监听器，不产生静默模型轮询。
+
 - 本轮：正式契约、CLI 状态门、证据冻结、独立身份约束和回滚记录。
 - 下一步：任务完成事件生成去重改进候选；沙箱自动测试与证据生产。
 - 后续：认证评审、局部试运行指标、实际部署/回滚适配器及 ACK；干净机器验证。

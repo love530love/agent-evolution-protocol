@@ -67,6 +67,8 @@ python -m agent_evolution_protocol.coordination.delivery_audit --root coordinati
 
 2026-10-18 执行契约进度：新增 `docs/EVOLUTION_EXECUTION_PACT.zh-CN.md` v1.0 和 `coord-improvement` 生命周期。已实现提案去重、证据哈希、禁止跳级、声明身份独立复核、试运行/采纳/回滚记录。待开发：完成事件自动生成候选、实际沙箱验证、身份认证、部署回滚与 ACK。已有任务契约负责目标/主责/预算/停损，本轮不重复构建第二套任务管理。
 
+后续落地：`ingest` 已支持显式完成/失败事件生成去重提案并拒绝事件 ID 内容替换；`validate` 已真实执行 unittest、输出证据和失败退出码，空测试不晋级。常驻事件订阅、安全沙箱、认证评审与实际部署仍未实现；不要把命令入口当作已运行的后台服务。
+
 新增 [架构、理念与开发路线图](../PORTABLE_CAPABILITY_ROADMAP.zh-CN.md)：本轮实现隔离 SDK 安装、provider 来源版本清单和受限客户端配置导出。下一优先级是干净 Windows 验证的单 provider 安装器、原会话执行与 ACK 闭环；完整离线包和任意客户端兼容尚未完成。
 
 后续进度：sbroenne 固定源码安装器已编码，计划/WhatIf 无副作用；实际预检发现本机缺 .NET 10，安装在创建目录前停止。完整构建与干净机器验收仍未通过，不升级为生产安装配方。
