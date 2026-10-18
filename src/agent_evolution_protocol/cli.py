@@ -666,7 +666,9 @@ def coord_governance(args: argparse.Namespace) -> None:
 
 def coord_improvement(args: argparse.Namespace) -> None:
     try:
-        if args.action == "delivery-status":
+        if args.action == "retire":
+            result = improvement_dispatch.retire(coord_root(args), order_id=args.order_id, actor=args.actor, note=args.note)
+        elif args.action == "delivery-status":
             result = improvement_dispatch.delivery_status(coord_root(args))
         elif args.action == "schedule":
             if not args.request_file:
@@ -2253,7 +2255,8 @@ def build_parser() -> argparse.ArgumentParser:
     adversarial = commands.add_parser("coord-adversarial"); adversarial.add_argument("action", choices=("review", "status")); adversarial.add_argument("--task", required=True); adversarial.add_argument("--submission", required=True); adversarial.add_argument("--agent"); adversarial.add_argument("--role", choices=("ideator", "falsifier", "replicator", "bias_auditor", "referee")); adversarial.add_argument("--review-file", type=Path); adversarial.set_defaults(func=coord_adversarial)
     governed = commands.add_parser("coord-governance"); governed.add_argument("action", choices=("roles", "intervene", "history")); governed.add_argument("--request-file", type=Path); governed.set_defaults(func=coord_governance)
     changes = commands.add_parser("coord-improvement")
-    changes.add_argument("action", choices=("propose", "status", "advance", "ingest", "validate", "enqueue", "drain", "overview", "pending", "claim", "complete", "release", "schedule", "delivery-status"))
+    changes.add_argument("action", choices=("propose", "status", "advance", "ingest", "validate", "enqueue", "drain", "overview", "pending", "claim", "complete", "release", "schedule", "delivery-status", "retire"))
+    changes.add_argument("--order-id")
     changes.add_argument("--apply", action="store_true")
     changes.add_argument("--limit", type=int, default=1)
     changes.add_argument("--ttl", type=int, default=300)

@@ -34,7 +34,7 @@ CEASE_AFTER_FAILURES = 3
 REINFORCE_AFTER_MINUTES = 20  # 主订单停火或久未ACK后，允许候选agent补位
 
 # DEPOSITED -> WINDOW_FOUND -> INPUT_SUBMITTED -> MESSAGE_VISIBLE -> AGENT_ACK
-ORDER_STATES = ("DEPOSITED", "DEFERRED", "WINDOW_FOUND", "INPUT_SUBMITTED", "MESSAGE_VISIBLE", "AGENT_ACK", "CEASED", "FAILED")
+ORDER_STATES = ("DEPOSITED", "DEFERRED", "WINDOW_FOUND", "INPUT_SUBMITTED", "MESSAGE_VISIBLE", "AGENT_ACK", "CEASED", "FAILED", "RETIRED")
 
 
 def _root(base: Path) -> Path:
@@ -313,6 +313,20 @@ def _cdp_port_owned_by_anchor(port: int, anchor_pid: int) -> bool:
 
 
 def dispatch(root: Path, *, order: dict) -> dict:
+    if str(order.get("task", "")).startswith("improvement:"):
+        from .battle_orders import _task_writer_lock
+        with _task_writer_lock(Path(root), "improvement-dispatch"):
+            return _dispatch(root, order=order)
+    return _dispatch(root, order=order)
+
+
+def _dispatch(root: Path, *, order: dict) -> dict:
+    retired = next((row for row in _orders(root) if row.get("id") == order.get("id")
+                    and row.get("state") == "RETIRED"), None)
+    if retired:
+        return retired
+    if order.get("state") == "RETIRED":
+        return order
     # Revalidate improvement stage immediately before any client discovery/input.
     if str(order.get("task", "")).startswith("improvement:"):
         from . import improvement
@@ -392,7 +406,7 @@ def check_acks(root: Path) -> dict:
     """Accept only a role-attributed reply event, never a raw screen snapshot."""
     acked = []
     for order in _orders(root):
-        if order.get("state") in ("AGENT_ACK", "CEASED", "FAILED"):
+        if order.get("state") in ("AGENT_ACK", "CEASED", "FAILED", "RETIRED"):
             continue
         token = f"{ACK_TOKEN}:{order['event_id']}"
         for event in bus.read_events(root, agent=order["target"], limit=500):
@@ -446,7 +460,7 @@ def reinforce(root: Path, order_id: str) -> dict | None:
     or None.
     """
     order = next((o for o in _orders(root) if o.get("id") == order_id), None)
-    if not order or order.get("state") == "AGENT_ACK":
+    if not order or order.get("state") in ("AGENT_ACK", "RETIRED"):
         return None
     candidate = _pick_reinforcement_candidate(order, _orders(root))
     if not candidate:
@@ -487,7 +501,7 @@ def tick(root: Path, *, perceive_first: bool = True) -> dict:
     acks = check_acks(root)
     dispatched = []
     for order in _orders(root):
-        if order.get("state") in ("AGENT_ACK", "CEASED"):
+        if order.get("state") in ("AGENT_ACK", "CEASED", "RETIRED"):
             continue
         try:
             expiry = datetime.fromisoformat(order["expires_at"])
@@ -507,7 +521,7 @@ def tick(root: Path, *, perceive_first: bool = True) -> dict:
         dispatched.append({"order": order["id"], "target": order["target"], "state": dispatch(root, order=order)["state"]})
     reinforced = []
     for order in _orders(root):
-        if order.get("state") == "AGENT_ACK":
+        if order.get("state") in ("AGENT_ACK", "RETIRED"):
             continue
         child = reinforce(root, order["id"])
         if child:

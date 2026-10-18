@@ -16,6 +16,8 @@
 
 `coord-improvement delivery-status` 关联订单、ACK、认领和提案阶段；过时改进订单会在 commander 实际投递前被阻止，不把 ACK 当完成。
 
+`coord-improvement retire` 可审计地退役“已过时且从未开始输入”的订单，释放路由名额；未知送达拒绝退役，不会自动换人重发。
+
 [总体系与能力状态](docs/SYSTEM_OVERVIEW.zh-CN.md) · [协同推理工作流](docs/COLLABORATIVE_REASONING_FRAMEWORK.zh-CN.md) · [v0.3.1 发布说明](docs/releases/v0.3.1.md)
 
 An evidence-driven governance protocol for multi-agent systems that need diversity without coordination collapse.

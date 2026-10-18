@@ -33,6 +33,14 @@ proposal.json 必须包含 author/change/acceptance/rollback/scope（非空字�
 
 ## 开发顺序
 
+### 过时订单的受控退役
+
+`coord-improvement retire --order-id <订单ID> --actor operator --note '阶段已推进，未开始输入'` 将已过时且当前状态及全部历史均为 DEPOSITED/DEFERRED 的订单标记 RETIRED，保留订单与审计回执并释放路由名额。当前阶段订单不允许退役；只要历史出现 WINDOW_FOUND、INPUT_SUBMITTED、MESSAGE_VISIBLE、CEASED 等状态就拒绝，未知送达必须另行核查。
+
+RETIRED 订单不会被 tick、ACK 扫描、reinforce 或直接 dispatch 再启动；dispatch 会重新读取持久退役状态，旧内存副本也不能重发。改进订单投递与退役使用同一 OS 写锁串行，避免退役同时输入；锁冲突明确报错，不自动重试。
+
+这不是消息撤回或全局执行取消。提案状态推进仍有自身的并发边界，其他未使用该锁的旧写入接口不构成完全事务。退役为显式操作，不自动批量清理生产订单。
+
 ### 送达、ACK、认领与阶段变化的关联
 
 `coord-improvement delivery-status` 只读关联 commander 订单、改进日志和有效认领，区分 AWAITING_ACK、ACK_WITHOUT_CLAIM、CLAIMED、STAGE_CHANGED、DELIVERY_BLOCKED 与 DAMAGED，并给出下一步。它不读取屏幕，不采集新的 ACK；ack_recorded 只是既有指挥记录。STAGE_CHANGED 可能是完成、拒绝或回滚，不能一概当成功。

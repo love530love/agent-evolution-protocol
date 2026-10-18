@@ -35,7 +35,7 @@ def _schedule(root, roster, *, apply, limit):
     orders = commander._orders(root)
     # Existing uncertain/failed deliveries must be inspected, not silently reassigned.
     busy = {order.get("target") for order in orders if order.get("task", "").startswith("improvement:")
-            and order.get("state") != "AGENT_ACK"}
+            and order.get("state") not in {"AGENT_ACK", "RETIRED"}}
     work = improvement_work.pending(root)["work"]
     busy.update(item.get("owner") for item in work if not item["available"] and item.get("owner"))
     results = []
@@ -103,7 +103,9 @@ def delivery_status(root):
                           lease.get("expires", 0) > improvement_work._now())
             row.update(proposal_state=proposal["state"], obsolete=stale,
                        claim_owner=lease.get("actor") if active else None)
-            if stale:
+            if order.get("state") == "RETIRED":
+                row.update(progress="RETIRED", next_action="inspect_current_stage")
+            elif stale:
                 row.update(progress="STAGE_CHANGED", next_action="inspect_current_stage")
             elif active:
                 row.update(progress="CLAIMED", next_action="await_evidence_or_lease_expiry")
@@ -118,3 +120,28 @@ def delivery_status(root):
         rows.append(row)
     return {"orders": rows, "ui_read_performed": False, "delivery_attempted": False,
             "note": "ACK is a persisted commander observation, not a fresh authentication or completion proof."}
+
+
+def retire(root, *, order_id, actor, note):
+    """Retire obsolete, proven pre-input orders only. Never cancel uncertain sends."""
+    if not isinstance(actor, str) or not commander.SAFE_AGENT.fullmatch(actor) or not isinstance(note, str) or not note.strip():
+        raise ValueError("valid actor and nonempty retirement note required")
+    with _task_writer_lock(Path(root), "improvement-dispatch"):
+        order = next((o for o in commander._orders(root) if o.get("id") == order_id), None)
+        if not order or not order.get("task", "").startswith("improvement:"):
+            raise ValueError("unknown improvement order")
+        if order.get("state") == "RETIRED":
+            return {"order_id": order_id, "state": "RETIRED", "already_retired": True}
+        if order.get("state") not in {"DEPOSITED", "DEFERRED"} or any(
+                a.get("state") not in {"DEPOSITED", "DEFERRED"} for a in order.get("attempts", [])):
+            raise ValueError("delivery may have started; retirement requires proven pre-input history")
+        identity = order["task"].split(":", 1)[1]
+        proposal = improvement.status(root, identity)
+        current_event = "EVT-IMPROVE-" + proposal["events"][-1]["sha256"][:24].upper()
+        if order.get("event_id") == current_event:
+            raise ValueError("current-stage order is not obsolete")
+        result = commander._record_attempt(root, order, state="RETIRED",
+            receipt={"actor": actor, "reason": note, "current_head": proposal["events"][-1]["sha256"],
+                     "desktop_input_performed": False}, note="OBSOLETE_PREINPUT_ORDER_RETIRED")
+        return {"order_id": order_id, "state": result["state"], "delivery_cancelled": False,
+                "note": "Removed from future routing only; no sent message was recalled."}

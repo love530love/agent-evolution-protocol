@@ -6,6 +6,40 @@ from agent_evolution_protocol.coordination import improvement, improvement_dispa
 
 
 class DispatchTests(unittest.TestCase):
+    def test_obsolete_preinput_retirement_frees_route_and_fences_stale_copy(self):
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            proof = root / "proof"
+            proof.write_text("ok")
+            identity = improvement.propose(root, dict(author="a", change="b", acceptance="c",
+                rollback="d", scope="e", evidence=[str(proof)]))["id"]
+            head = improvement.status(root, identity)["events"][-1]["sha256"]
+            order = commander.submit_order(root, target="worker", task="improvement:" + identity,
+                text="verify", sender="router", event_id="EVT-IMPROVE-" + head[:24].upper())
+            with self.assertRaises(ValueError):
+                router.retire(root, order_id=order["id"], actor="operator", note="not old yet")
+            improvement.advance(root, identity, state="VALIDATED", actor="tester",
+                                evidence=[str(proof)], note="tested")
+            self.assertEqual(router.retire(root, order_id=order["id"], actor="operator", note="old stage")["state"], "RETIRED")
+            with patch.object(commander.registry, "profile") as profile:
+                self.assertEqual(commander.dispatch(root, order=order)["state"], "RETIRED")
+                profile.assert_not_called()
+            self.assertIsNone(commander.reinforce(root, order["id"]))
+            self.assertEqual(router.delivery_status(root)["orders"][0]["progress"], "RETIRED")
+            roster = {"agents": [{"agent": "worker", "actions": ["review"]}]}
+            with patch.object(router.presence, "snapshot", return_value={"agents": [
+                {"agent": "worker", "state": "online", "active_assignments": []}]}):
+                self.assertEqual(router.schedule(root, roster, apply=True)["orders_queued"], 1)
+
+    def test_uncertain_delivery_cannot_retire(self):
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            order = commander.submit_order(root, target="worker", task="improvement:" + "a" * 24,
+                                            text="verify", sender="router")
+            commander._record_attempt(root, order, state="WINDOW_FOUND")
+            with self.assertRaises(ValueError):
+                router.retire(root, order_id=order["id"], actor="operator", note="do not retry")
+
     def test_ack_claim_and_stale_dispatch_are_distinct(self):
         with TemporaryDirectory() as temp:
             root = Path(temp)
