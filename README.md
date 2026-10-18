@@ -10,6 +10,8 @@
 
 `coord-improvement overview` 汇总积压、错误与待复核事项；监听器支持独占单实例及 `-Stop` 控制，停止后不会自行重启。
 
+`coord-improvement pending|claim|complete|release` 提供接力工作项、限时认领与过期补位；token 和日志头检查拒绝陈旧完成，不代表 Agent 已被唤醒。
+
 [总体系与能力状态](docs/SYSTEM_OVERVIEW.zh-CN.md) · [协同推理工作流](docs/COLLABORATIVE_REASONING_FRAMEWORK.zh-CN.md) · [v0.3.1 发布说明](docs/releases/v0.3.1.md)
 
 An evidence-driven governance protocol for multi-agent systems that need diversity without coordination collapse.

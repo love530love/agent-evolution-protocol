@@ -33,6 +33,23 @@ proposal.json 必须包含 author/change/acceptance/rollback/scope（非空字�
 
 ## 开发顺序
 
+### 接力工作项与租约
+
+`coord-improvement pending` 从提案状态派生待验证、待独立复核、待试运行和待评估工作，无须重复创建任务。`claim --id <ID> --actor <成员> --ttl 300` 认领返回 token；同阶段有效租约拒绝第二次认领，过期后允许补位。
+
+```powershell
+aep --coord-root coordination coord-improvement pending
+aep --coord-root coordination coord-improvement claim --id <ID> --actor reviewer --ttl 300
+aep --coord-root coordination coord-improvement complete --id <ID> --actor reviewer --token <返回token> --note '独立复核结论' --evidence review.txt
+# 主动让出，不推进状态：complete 改为 release，无需 note/evidence
+```
+
+完成时检查 token、声明身份、到期时间与认领时日志头；过期工作者或状态已变化的工作者不得推进。复核者不能是作者或已有验证者。租约仅协调这套接力入口，不代表身份认证，也不是进程执行权限或跨机器分布式锁。
+
+使用 `validate` 执行实际测试时，它会自行推进状态；原验证租约随日志头变化失效，不要再 complete。下一名队友可直接认领 review。手工 complete 属于有证据的结果声明，不替代 validate 的真实执行，不校验证据内容真伪。旧 advance 接口仍保留，并不强制要求接力租约；当前用于合作式调度，不可宣称已全局强制围栏。每个 claim 的当前记录保留上一个 token，尚无完整租约事件审计或自动续租。
+
+未安装 Agent 自动接单器；pending/claim 是已在线队友可调用的接口，不表示已唤醒或消息已达。自主分发、实际 ACK 和认证能力匹配仍待接入。
+
 ### 持久信箱与事件监听器
 
 生产者用 `aep --coord-root coordination coord-improvement enqueue --request-file event.json` 写入持久信箱。使用原子文件替换及单写锁；同一事件 ID 内容变化拒绝覆盖。生产者负责把证据写入稳定位置，再投递事件。
