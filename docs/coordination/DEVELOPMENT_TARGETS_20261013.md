@@ -65,6 +65,8 @@ python -m agent_evolution_protocol.coordination.delivery_audit --root coordinati
 
 ## 2026-10-17 补充：可迁移扩展工程
 
+事件运行层新增：持久 enqueue/drain 信箱、处理回执、原子投递、单写锁和 PowerShell 7 文件监听器（显式启动）。包括启动恢复和 60 秒纯本地补偿扫描；不进行模型轮询。尚未自动订阅所有宿主 Agent 的内部完成事件，需生产者调用 enqueue；唤醒、自动执行、部署门继续单独验收。
+
 2026-10-18 执行契约进度：新增 `docs/EVOLUTION_EXECUTION_PACT.zh-CN.md` v1.0 和 `coord-improvement` 生命周期。已实现提案去重、证据哈希、禁止跳级、声明身份独立复核、试运行/采纳/回滚记录。待开发：完成事件自动生成候选、实际沙箱验证、身份认证、部署回滚与 ACK。已有任务契约负责目标/主责/预算/停损，本轮不重复构建第二套任务管理。
 
 后续落地：`ingest` 已支持显式完成/失败事件生成去重提案并拒绝事件 ID 内容替换；`validate` 已真实执行 unittest、输出证据和失败退出码，空测试不晋级。常驻事件订阅、安全沙箱、认证评审与实际部署仍未实现；不要把命令入口当作已运行的后台服务。

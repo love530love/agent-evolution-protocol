@@ -33,6 +33,21 @@ proposal.json 必须包含 author/change/acceptance/rollback/scope（非空字�
 
 ## 开发顺序
 
+### 持久信箱与事件监听器
+
+生产者用 `aep --coord-root coordination coord-improvement enqueue --request-file event.json` 写入持久信箱。使用原子文件替换及单写锁；同一事件 ID 内容变化拒绝覆盖。生产者负责把证据写入稳定位置，再投递事件。
+
+消费者运行：
+
+```powershell
+./scripts/watch-improvements.ps1 -Python <已安装当前AEP的python.exe> -CoordRoot coordination
+# 一次性恢复积压，不常驻：加 -Once
+```
+
+Windows 文件事件触发 `drain`；启动时及每 60 秒本地恢复扫描补偿丢失通知，不调用模型或网络 API，未变化不输出。处理回执在 improvement_spool/receipts，原事件保留供证据引用；错误事件记录 REJECTED，不自动重试、不阻塞其他事件。修正后需新事件 ID；人工确认恢复时可处理对应回执。不要改写已被提案引用的证据文件。
+
+回执丢失后重启会重放，已有事件去重避免重复提案。单写锁避免多个消费者同时处理；锁冲突会明确失败，监听器停止，不产生隐藏重试风暴。当前是显式启动的本机进程，不自动安装开机服务；未运行时信箱持久积压，下次启动恢复。该监听器仅创建提案，不执行测试、不发聊天消息、不部署。CLI ingest/drain 仍有原接口，供其他 Agent 或编排器主动调用。
+
 ### 已落地的事件接入与真实验证
 
 `coord-improvement ingest --request-file event.json` 接收显式事件，字段为 event_id、kind（TASK_COMPLETED/TASK_FAILED）、improvement（上述提案对象）。同一 event_id 相同内容复用提案，内容改变拒绝重放；不会从日志文字推断要执行的命令。
