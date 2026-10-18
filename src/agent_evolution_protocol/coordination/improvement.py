@@ -121,7 +121,7 @@ def ingest(root, event_file):
     return result
 
 
-def validate_tests(root, identity, *, workspace, actor, timeout=120):
+def validate_tests(root, identity, *, workspace, actor, timeout=120, token=None):
     """Run only repository unittest discovery, never execute commands from events.
 
     Tests are arbitrary code: caller must authorize/trust the workspace. This is a
@@ -133,6 +133,9 @@ def validate_tests(root, identity, *, workspace, actor, timeout=120):
         raise ValueError("actor required before executing tests")
     if status(root, identity)["state"] != "PROPOSED":
         raise ValueError("validation requires PROPOSED")
+    if token is not None:
+        from . import improvement_work
+        improvement_work.brief(root, identity, actor=actor, token=token)
     workspace = Path(workspace).resolve()
     if not (workspace / "tests").is_dir():
         raise ValueError("workspace needs tests directory")
@@ -156,6 +159,18 @@ def validate_tests(root, identity, *, workspace, actor, timeout=120):
     path = folder / "report.json"
     path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     if report["status"] == "PASSED":
-        advance(root, identity, state="VALIDATED", actor=actor,
-                evidence=[str(path), str(folder / "output.txt")], note="Executed unittest discovery passed")
+        proofs = [str(path), str(folder / "output.txt")]
+        if token is not None:
+            try:
+                improvement_work.finish(root, identity, actor=actor, token=token,
+                                        evidence=proofs, note="Executed unittest discovery passed")
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                report.update(status="PROMOTION_BLOCKED", promotion_error=str(exc))
+                # Never rewrite a test report that a partially committed journal may reference.
+                (folder / "promotion.json").write_text(json.dumps({
+                    "status": "PROMOTION_BLOCKED", "error": str(exc),
+                    "note": "Inspect current proposal before retrying; test success is not promotion."}, indent=2), encoding="utf-8")
+        else:
+            advance(root, identity, state="VALIDATED", actor=actor,
+                    evidence=proofs, note="Executed unittest discovery passed")
     return {**report, "report": str(path), "proposal": status(root, identity)}

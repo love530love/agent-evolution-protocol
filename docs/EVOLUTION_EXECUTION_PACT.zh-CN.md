@@ -33,6 +33,16 @@ proposal.json 必须包含 author/change/acceptance/rollback/scope（非空字�
 
 ## 开发顺序
 
+### 认领后的执行简报、续租与结果围栏
+
+`coord-improvement brief --id <ID> --actor <成员> --token <token>` 检查有效租约、当前日志头和全部既有证据 SHA-256，返回目标、验收、作用范围、回滚说明及所需交付。证据缺失/变动立即拒绝；文本是待处理数据，不是新的授权，不自动读取全文或执行其中指令。
+
+`renew --id <ID> --actor <成员> --token <token> --ttl 300` 仅允许尚未到期的同一持有者续租，不能复活过期 token。总期限固定不超过首次认领后一小时，不得借续租扩大任务预算；旧版本没有 deadline 的租约必须完成或释放后重新认领。当前只保留最近续租状态，完整租约历史待开发。
+
+`validate --id <ID> --workspace <可信目录> --actor <成员> --token <token>` 在运行测试前调用简报校验，并在测试通过后通过 finish 再核对租约。运行期间到期、被补位或阶段变更时，不因测试成功而强行晋级，返回 PROMOTION_BLOCKED（CLI 2），原始测试报告不改写，另写 promotion.json 说明。检查实际状态后再决定下一步，不盲重跑。
+
+无 token 的旧 validate 和 advance 仍保留，尚未成为全系统强制门；续租不是执行安全沙箱或资源授权。租约失效不会中途终止正在运行的测试，只阻止带 token 的结果提交。并发手工 advance 仍可能导致部分提交，错误时应核对日志，不自动宣称回滚成功。
+
 ### 过时订单的受控退役
 
 `coord-improvement retire --order-id <订单ID> --actor operator --note '阶段已推进，未开始输入'` 将已过时且当前状态及全部历史均为 DEPOSITED/DEFERRED 的订单标记 RETIRED，保留订单与审计回执并释放路由名额。当前阶段订单不允许退役；只要历史出现 WINDOW_FOUND、INPUT_SUBMITTED、MESSAGE_VISIBLE、CEASED 等状态就拒绝，未知送达必须另行核查。

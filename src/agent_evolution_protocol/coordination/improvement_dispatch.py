@@ -60,7 +60,7 @@ def _schedule(root, roster, *, apply, limit):
             text = (f"改进接力：{item['id']}，阶段 {item['action']}。保持原会话与模型，不新建会话。\n"
                     f"协作根目录：{Path(root).resolve()}\n"
                     "先读取 docs/EVOLUTION_EXECUTION_PACT.zh-CN.md，使用 coord-improvement status 核对当前状态，"
-                    "claim 成功后按证据与预算执行。领取失败则停止，不重复操作。"
+                    "claim 成功后，用返回 token 调用 brief 检查证据与阶段，再按预算执行；validate 时带同一 --token。领取失败则停止，不重复操作。"
                     "ACK 只表示接到消息，不代表认领或完成。若缺能力请明确报告，不自行扩权。")
             order = commander.submit_order(root, target=target, task=f"improvement:{item['id']}",
                                            text=text, sender="improvement-router", event_id=event_id,

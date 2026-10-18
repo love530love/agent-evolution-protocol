@@ -65,6 +65,8 @@ python -m agent_evolution_protocol.coordination.delivery_audit --root coordinati
 
 ## 2026-10-17 补充：可迁移扩展工程
 
+执行接力加固：新增 brief 证据校验简报、renew 有界续租，validate 可携带 token 在运行前/提交时检查租约，记录 PROMOTION_BLOCKED 而不改写原始测试证据。已覆盖真实测试运行期间租约失效；旧无 token 入口仍非强制围栏，宿主全流程验收待完成。
+
 路由阻塞修复：新增 RETIRED 终态与显式 retire，仅对已过时且历史证明处于输入前的订单开放；与改进投递共享 OS 锁。未知送达不退役；实际撤回、取消与跨宿主全局事务仍未实现。
 
 投递闭环增量：delivery-status 关联订单/ACK/有效租约/阶段变化；commander.dispatch 对过期阶段与缺失提案在桌面发现前停火。真实宿主 ACK 验收、发送期间并发变更围栏和撤回/取消仍未完成。

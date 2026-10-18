@@ -677,6 +677,10 @@ def coord_improvement(args: argparse.Namespace) -> None:
                                                    apply=args.apply, limit=args.limit)
         elif args.action == "pending":
             result = improvement_work.pending(coord_root(args))
+        elif args.action == "brief":
+            result = improvement_work.brief(coord_root(args), args.id, actor=args.actor, token=args.token)
+        elif args.action == "renew":
+            result = improvement_work.renew(coord_root(args), args.id, actor=args.actor, token=args.token, ttl=args.ttl)
         elif args.action == "claim":
             result = improvement_work.claim(coord_root(args), args.id, actor=args.actor, ttl=args.ttl)
         elif args.action in {"complete", "release"}:
@@ -694,7 +698,7 @@ def coord_improvement(args: argparse.Namespace) -> None:
             if not args.workspace or not args.actor:
                 raise ValueError("validate requires --workspace and --actor")
             result = improvement.validate_tests(coord_root(args), args.id, workspace=args.workspace,
-                                                actor=args.actor, timeout=args.timeout)
+                                                actor=args.actor, timeout=args.timeout, token=args.token)
         elif args.action == "ingest":
             if not args.request_file:
                 raise ValueError("ingest requires --request-file")
@@ -2255,7 +2259,7 @@ def build_parser() -> argparse.ArgumentParser:
     adversarial = commands.add_parser("coord-adversarial"); adversarial.add_argument("action", choices=("review", "status")); adversarial.add_argument("--task", required=True); adversarial.add_argument("--submission", required=True); adversarial.add_argument("--agent"); adversarial.add_argument("--role", choices=("ideator", "falsifier", "replicator", "bias_auditor", "referee")); adversarial.add_argument("--review-file", type=Path); adversarial.set_defaults(func=coord_adversarial)
     governed = commands.add_parser("coord-governance"); governed.add_argument("action", choices=("roles", "intervene", "history")); governed.add_argument("--request-file", type=Path); governed.set_defaults(func=coord_governance)
     changes = commands.add_parser("coord-improvement")
-    changes.add_argument("action", choices=("propose", "status", "advance", "ingest", "validate", "enqueue", "drain", "overview", "pending", "claim", "complete", "release", "schedule", "delivery-status", "retire"))
+    changes.add_argument("action", choices=("propose", "status", "advance", "ingest", "validate", "enqueue", "drain", "overview", "pending", "claim", "complete", "release", "schedule", "delivery-status", "retire", "brief", "renew"))
     changes.add_argument("--order-id")
     changes.add_argument("--apply", action="store_true")
     changes.add_argument("--limit", type=int, default=1)

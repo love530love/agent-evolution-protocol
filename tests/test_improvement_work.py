@@ -6,6 +6,26 @@ from agent_evolution_protocol.coordination import improvement, improvement_work 
 
 
 class WorkTests(unittest.TestCase):
+    def test_brief_and_bounded_renewal(self):
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            proof = root / "proof"
+            proof.write_text("ok")
+            identity = improvement.propose(root, dict(author="a", change="b", acceptance="c",
+                rollback="d", scope="e", evidence=[str(proof)]))["id"]
+            lease = work.claim(root, identity, actor="tester", ttl=30)
+            packet = work.brief(root, identity, actor="tester", token=lease["token"])
+            self.assertEqual(packet["action"], "validate")
+            self.assertFalse(packet["authorization_verified"])
+            extended = work.renew(root, identity, actor="tester", token=lease["token"], ttl=300)
+            self.assertGreater(extended["expires"], lease["expires"])
+            self.assertLessEqual(extended["expires"], lease["deadline"])
+            with patch.object(work, "_now", return_value=extended["expires"] + 1):
+                with self.assertRaises(ValueError):
+                    work.renew(root, identity, actor="tester", token=lease["token"])
+            proof.write_text("changed")
+            with self.assertRaises(ValueError):
+                work.brief(root, identity, actor="tester", token=lease["token"])
     def test_claim_expiry_fencing_review_and_release(self):
         with TemporaryDirectory() as temp:
             root = Path(temp)
