@@ -14,6 +14,8 @@
 
 `coord-improvement schedule --request-file <成员能力名单>` 默认预览在线成员匹配；加 `--apply` 接入现有 commander 队列，按提案阶段去重。不直接发消息、不自动创建会话；监听器可选 `-RosterFile` 启用排队。
 
+`coord-improvement delivery-status` 关联订单、ACK、认领和提案阶段；过时改进订单会在 commander 实际投递前被阻止，不把 ACK 当完成。
+
 [总体系与能力状态](docs/SYSTEM_OVERVIEW.zh-CN.md) · [协同推理工作流](docs/COLLABORATIVE_REASONING_FRAMEWORK.zh-CN.md) · [v0.3.1 发布说明](docs/releases/v0.3.1.md)
 
 An evidence-driven governance protocol for multi-agent systems that need diversity without coordination collapse.

@@ -65,6 +65,8 @@ python -m agent_evolution_protocol.coordination.delivery_audit --root coordinati
 
 ## 2026-10-17 补充：可迁移扩展工程
 
+投递闭环增量：delivery-status 关联订单/ACK/有效租约/阶段变化；commander.dispatch 对过期阶段与缺失提案在桌面发现前停火。真实宿主 ACK 验收、发送期间并发变更围栏和撤回/取消仍未完成。
+
 调度接入增量：新增 schedule 预览/显式应用，按 roster 能力声明、presence 在线记录、活跃任务及复核独立性匹配成员，稳定事件 ID 接入既有 commander。监听器可选自动排队。仅排队，不直接发送、不证明 ACK；端到端宿主投递、忙碌状态认证和过期订单撤销仍待验收。
 
 接力增量：从提案状态派生 pending 工作，新增 claim/complete/release、限时租约与过期补位、独立评审身份约束及日志头围栏。仅对接力入口生效；旧 advance 仍可直接推进。待补宿主自动接单/ACK、认证、统一执行围栏与完整租约审计。

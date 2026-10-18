@@ -33,6 +33,12 @@ proposal.json 必须包含 author/change/acceptance/rollback/scope（非空字�
 
 ## 开发顺序
 
+### 送达、ACK、认领与阶段变化的关联
+
+`coord-improvement delivery-status` 只读关联 commander 订单、改进日志和有效认领，区分 AWAITING_ACK、ACK_WITHOUT_CLAIM、CLAIMED、STAGE_CHANGED、DELIVERY_BLOCKED 与 DAMAGED，并给出下一步。它不读取屏幕，不采集新的 ACK；ack_recorded 只是既有指挥记录。STAGE_CHANGED 可能是完成、拒绝或回滚，不能一概当成功。
+
+commander.dispatch 在发现窗口或输入之前重新核对 improvement 订单所绑定的阶段日志头：过时或不存在的提案转为 CEASED，禁止输入旧指令。此门仅用于 improvement: 订单，不改变普通任务语义；不是已发送消息的撤回，也不能消除检查后状态变化的全部并发竞态。执行者仍须在 claim/complete 时再次核验。跨进程阶段变更与桌面副作用的统一围栏仍待开发。
+
 ### 能力路由接入既有指挥队列
 
 `coord-improvement schedule --request-file roster.json` 默认只生成匹配计划；加 `--apply --limit 1` 才写入既有 commander 指令信箱。roster 格式见 examples/improvement-roster.json，必须替换为真实成员与已核实能力；动作支持 validate/review/trial/assess。读取 presence 的新鲜 online 状态，排除已有 campaign 活跃任务、当前认领中的工作以及非独立复核者。能力名单仍是声明，不是能力认证。

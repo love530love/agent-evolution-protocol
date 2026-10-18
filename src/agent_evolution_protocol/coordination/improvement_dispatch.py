@@ -3,6 +3,7 @@
 No desktop input, model calls, new conversations, or automatic test execution.
 """
 from pathlib import Path
+import json
 
 from . import commander, improvement, improvement_work, presence
 from .battle_orders import _task_writer_lock
@@ -80,3 +81,40 @@ def schedule(root, roster, *, apply=False, limit=1):
         return _schedule(root, roster, apply=False, limit=limit)
     with _task_writer_lock(root, "improvement-dispatch"):
         return _schedule(root, roster, apply=True, limit=limit)
+
+
+def delivery_status(root):
+    """Join persisted commander receipts with proposal progress; never capture UI."""
+    rows = []
+    for order in commander._orders(root):
+        task = order.get("task", "")
+        if not task.startswith("improvement:"):
+            continue
+        identity = task.removeprefix("improvement:")
+        row = {"order_id": order["id"], "id": identity, "target": order.get("target"),
+               "transport_state": order.get("state"), "ack_recorded": order.get("state") == "AGENT_ACK"}
+        try:
+            proposal = improvement.status(root, identity)
+            head = proposal["events"][-1]["sha256"]
+            stale = order.get("event_id") != "EVT-IMPROVE-" + head[:24].upper()
+            path = improvement_work._path(root, identity)
+            lease = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+            active = bool(lease.get("active") and lease.get("head") == head and
+                          lease.get("expires", 0) > improvement_work._now())
+            row.update(proposal_state=proposal["state"], obsolete=stale,
+                       claim_owner=lease.get("actor") if active else None)
+            if stale:
+                row.update(progress="STAGE_CHANGED", next_action="inspect_current_stage")
+            elif active:
+                row.update(progress="CLAIMED", next_action="await_evidence_or_lease_expiry")
+            elif row["ack_recorded"]:
+                row.update(progress="ACK_WITHOUT_CLAIM", next_action="check_acceptance_not_completion")
+            elif order.get("state") in {"CEASED", "FAILED"}:
+                row.update(progress="DELIVERY_BLOCKED", next_action="inspect_before_retry")
+            else:
+                row.update(progress="AWAITING_ACK", next_action="inspect_delivery_receipt")
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            row.update(progress="DAMAGED", error=str(exc), next_action="inspect")
+        rows.append(row)
+    return {"orders": rows, "ui_read_performed": False, "delivery_attempted": False,
+            "note": "ACK is a persisted commander observation, not a fresh authentication or completion proof."}

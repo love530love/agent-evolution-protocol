@@ -313,6 +313,18 @@ def _cdp_port_owned_by_anchor(port: int, anchor_pid: int) -> bool:
 
 
 def dispatch(root: Path, *, order: dict) -> dict:
+    # Revalidate improvement stage immediately before any client discovery/input.
+    if str(order.get("task", "")).startswith("improvement:"):
+        from . import improvement
+        try:
+            proposal = improvement.status(root, order["task"].split(":", 1)[1])
+            expected = "EVT-IMPROVE-" + proposal["events"][-1]["sha256"][:24].upper()
+            if order.get("event_id") != expected:
+                return _record_attempt(root, order, state="CEASED",
+                                       note="STALE_IMPROVEMENT_STAGE: no desktop input attempted")
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            return _record_attempt(root, order, state="CEASED",
+                                   note=f"INVALID_IMPROVEMENT: {exc}; no desktop input attempted")
     target = order["target"]
     try:
         registry.profile(root, target)

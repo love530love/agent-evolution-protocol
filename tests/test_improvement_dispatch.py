@@ -2,10 +2,43 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
-from agent_evolution_protocol.coordination import improvement, improvement_dispatch as router, commander
+from agent_evolution_protocol.coordination import improvement, improvement_dispatch as router, commander, improvement_work
 
 
 class DispatchTests(unittest.TestCase):
+    def test_ack_claim_and_stale_dispatch_are_distinct(self):
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            proof = root / "proof"
+            proof.write_text("ok")
+            identity = improvement.propose(root, dict(author="a", change="b", acceptance="c",
+                rollback="d", scope="e", evidence=[str(proof)]))["id"]
+            head = improvement.status(root, identity)["events"][-1]["sha256"]
+            order = commander.submit_order(root, target="worker", task="improvement:" + identity,
+                text="verify", sender="router", event_id="EVT-IMPROVE-" + head[:24].upper())
+            self.assertEqual(router.delivery_status(root)["orders"][0]["progress"], "AWAITING_ACK")
+            commander._record_attempt(root, order, state="AGENT_ACK", note="fixture only")
+            self.assertEqual(router.delivery_status(root)["orders"][0]["progress"], "ACK_WITHOUT_CLAIM")
+            improvement_work.claim(root, identity, actor="worker")
+            self.assertEqual(router.delivery_status(root)["orders"][0]["progress"], "CLAIMED")
+            improvement.advance(root, identity, state="VALIDATED", actor="worker",
+                                evidence=[str(proof)], note="tested")
+            self.assertEqual(router.delivery_status(root)["orders"][0]["progress"], "STAGE_CHANGED")
+            with patch.object(commander.registry, "profile") as profile:
+                result = commander.dispatch(root, order=order)
+                profile.assert_not_called()
+            self.assertEqual(result["state"], "CEASED")
+            self.assertIn("STALE_IMPROVEMENT_STAGE", result["attempts"][-1]["note"])
+
+    def test_missing_proposal_blocks_before_desktop_discovery(self):
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            order = commander.submit_order(root, target="worker", task="improvement:" + "a" * 24,
+                                            text="verify", sender="router")
+            with patch.object(commander.registry, "profile") as profile:
+                self.assertEqual(commander.dispatch(root, order=order)["state"], "CEASED")
+                profile.assert_not_called()
+
     def test_preview_queue_dedup_and_review_independence(self):
         with TemporaryDirectory() as temp:
             root = Path(temp)
