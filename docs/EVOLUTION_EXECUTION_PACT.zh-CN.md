@@ -33,6 +33,16 @@ proposal.json 必须包含 author/change/acceptance/rollback/scope（非空字�
 
 ## 开发顺序
 
+### 能力路由接入既有指挥队列
+
+`coord-improvement schedule --request-file roster.json` 默认只生成匹配计划；加 `--apply --limit 1` 才写入既有 commander 指令信箱。roster 格式见 examples/improvement-roster.json，必须替换为真实成员与已核实能力；动作支持 validate/review/trial/assess。读取 presence 的新鲜 online 状态，排除已有 campaign 活跃任务、当前认领中的工作以及非独立复核者。能力名单仍是声明，不是能力认证。
+
+同一提案日志头产生稳定事件 ID，队列已有此 ID 就不重复生成，包括未知送达、失败和已 ACK 情况。只生成原会话指令，allow_launch=false，无备份自动转投，不直接调用桌面或模型。既有 commander 的投递与 ACK 流程负责后续验证；必须在真实目标会话验收后才可声称送达。
+
+监听器可显式加 `-RosterFile <名单绝对路径>`，每次接入/本地恢复扫描后最多排队一项，静默时不输出重复计划。默认不调度。未安装 commander 自动投递服务，排队不等于已发送。接力消息要求收件人自行检查契约、认领和回复 ACK，不把在线或收到消息当作完成。
+
+保守停损：尚未 ACK 的改进订单会占用对应队友路由名额，即使订单失败也不会偷偷换人重发。需要人工或已有指挥流程核实旧订单；本轮未实现过期订单自动撤销和下游执行取消。ACK 后也不证明空闲，可能缺少真实忙碌状态；当前路由仅是低并发预览，不是完备全局调度器。
+
 ### 接力工作项与租约
 
 `coord-improvement pending` 从提案状态派生待验证、待独立复核、待试运行和待评估工作，无须重复创建任务。`claim --id <ID> --actor <成员> --ttl 300` 认领返回 token；同阶段有效租约拒绝第二次认领，过期后允许补位。

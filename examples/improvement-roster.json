@@ -1,0 +1,6 @@
+{
+  "agents": [
+    {"agent": "example-validator", "actions": ["validate"]},
+    {"agent": "example-reviewer", "actions": ["review"]}
+  ]
+}

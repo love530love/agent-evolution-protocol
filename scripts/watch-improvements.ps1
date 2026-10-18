@@ -3,7 +3,8 @@ param(
     [Parameter(Mandatory)][string]$Python,
     [string]$CoordRoot = 'coordination',
     [switch]$Once,
-    [switch]$Stop
+    [switch]$Stop,
+    [string]$RosterFile
 )
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
@@ -36,6 +37,12 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Drain failed; preserve inbox and inspect receipts before restarting.' }
         $result = ($output -join "`n") | ConvertFrom-Json
         if ($result.processed -gt 0) { $result | ConvertTo-Json -Depth 12 }
+        if ($RosterFile) {
+            $scheduled = & $pythonPath -m agent_evolution_protocol --coord-root $root coord-improvement schedule --request-file $RosterFile --apply --limit 1
+            if ($LASTEXITCODE -ne 0) { throw 'Scheduling failed; inspect roster and existing orders before restarting.' }
+            $plan = ($scheduled -join "`n") | ConvertFrom-Json
+            if ($plan.orders_queued -gt 0) { $plan | ConvertTo-Json -Depth 12 }
+        }
         if ($Once) { break }
         # Bounded reconciliation recovers lost filesystem events; no model/API polling.
         $notice = Wait-Event -Timeout 60 | Where-Object SourceIdentifier -In $sources
