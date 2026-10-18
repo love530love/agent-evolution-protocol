@@ -30,6 +30,7 @@ from agent_evolution_protocol.coordination.legion_ledger import record as record
 from agent_evolution_protocol.coordination import governance
 from agent_evolution_protocol.coordination import reasoning_contract
 from agent_evolution_protocol.coordination import desktop_providers
+from agent_evolution_protocol.coordination import improvement
 from agent_evolution_protocol.coordination import client_registry
 from agent_evolution_protocol.coordination import transcript_bus
 from agent_evolution_protocol.coordination import transport_cdp
@@ -656,6 +657,22 @@ def coord_governance(args: argparse.Namespace) -> None:
             request = json.loads(args.request_file.read_text(encoding="utf-8"))
             result = governance.submit_intervention(coord_root(args), request)
     except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
+        raise ProtocolError(str(exc)) from exc
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+def coord_improvement(args: argparse.Namespace) -> None:
+    try:
+        if args.action == "propose":
+            if not args.request_file:
+                raise ValueError("propose requires --request-file")
+            result = improvement.propose(coord_root(args), json.loads(args.request_file.read_text(encoding="utf-8")))
+        elif args.action == "advance":
+            result = improvement.advance(coord_root(args), args.id, state=args.state,
+                                         actor=args.actor, evidence=args.evidence, note=args.note)
+        else:
+            result = improvement.status(coord_root(args), args.id)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
         raise ProtocolError(str(exc)) from exc
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
@@ -2199,6 +2216,15 @@ def build_parser() -> argparse.ArgumentParser:
     joint = commands.add_parser("coord-joint-case"); joint.add_argument("action", choices=("open", "review", "status")); joint.add_argument("--task", required=True); joint.add_argument("--submission", required=True); joint.add_argument("--lead"); joint.add_argument("--deputy"); joint.add_argument("--artifact-sha256"); joint.add_argument("--result-file", type=Path); joint.add_argument("--agent"); joint.add_argument("--role", choices=("lead", "deputy", "cross_platform", "catfish", "package_reviewer")); joint.add_argument("--review-file", type=Path); joint.set_defaults(func=coord_joint_case)
     adversarial = commands.add_parser("coord-adversarial"); adversarial.add_argument("action", choices=("review", "status")); adversarial.add_argument("--task", required=True); adversarial.add_argument("--submission", required=True); adversarial.add_argument("--agent"); adversarial.add_argument("--role", choices=("ideator", "falsifier", "replicator", "bias_auditor", "referee")); adversarial.add_argument("--review-file", type=Path); adversarial.set_defaults(func=coord_adversarial)
     governed = commands.add_parser("coord-governance"); governed.add_argument("action", choices=("roles", "intervene", "history")); governed.add_argument("--request-file", type=Path); governed.set_defaults(func=coord_governance)
+    changes = commands.add_parser("coord-improvement")
+    changes.add_argument("action", choices=("propose", "status", "advance"))
+    changes.add_argument("--request-file", type=Path)
+    changes.add_argument("--id")
+    changes.add_argument("--state", choices=sorted(improvement.TRANSITIONS))
+    changes.add_argument("--actor")
+    changes.add_argument("--note")
+    changes.add_argument("--evidence", nargs="+", default=[])
+    changes.set_defaults(func=coord_improvement)
     reasoning = commands.add_parser("coord-reasoning"); reasoning.add_argument("action", choices=("create", "status")); reasoning.add_argument("--request-file", type=Path); reasoning.add_argument("--task"); reasoning.set_defaults(func=coord_reasoning)
     desktop = commands.add_parser("coord-desktop"); desktop.add_argument("action", choices=("register", "inventory", "probe", "plan", "export-config")); desktop.add_argument("--profile-file", type=Path); desktop.add_argument("--provider"); desktop.add_argument("--operation", choices=sorted(desktop_providers.OPERATIONS)); desktop.add_argument("--previous-state", default="NOT_STARTED"); desktop.add_argument("--timeout", type=int, default=30); desktop.add_argument("--details", action="store_true"); desktop.set_defaults(func=coord_desktop)
     capability = commands.add_parser("coord-capabilities"); capability.add_argument("action", choices=("declare", "match")); capability.add_argument("--agent"); capability.add_argument("--chips", nargs="*", default=[]); capability.add_argument("--compilers", nargs="*", default=[]); capability.add_argument("--strengths", nargs="*", default=[]); capability.add_argument("--evidence", nargs="*", default=[]); capability.add_argument("--ttl-minutes", type=int, default=30); capability.add_argument("--chip"); capability.add_argument("--compiler"); capability.add_argument("--strength"); capability.set_defaults(func=coord_capabilities)

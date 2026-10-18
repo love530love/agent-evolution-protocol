@@ -1,5 +1,7 @@
 # Agent Evolution Protocol 本地协作入口
 
+- 执行与自进化遵守 `docs/EVOLUTION_EXECUTION_PACT.zh-CN.md` v1.0。用 `coord-improvement propose|status|advance` 记录改进候选、验证、独立复核、试运行与回滚；采纳记录不代表实际部署或权限授予。
+
 - 总体系为“红皇后—鲶鱼—创造性破坏”，先按 `docs/SYSTEM_OVERVIEW.zh-CN.md` 理解工作流与能力状态。复杂任务可用 `coord-reasoning create|status` 冻结任务契约；其中的授权与预算是声明，执行仍检查现有权限、租约与验收。
 
 - 自治角色、干预及积分从 `docs/coordination/EXPERT_EVOLUTION_REVIEW_20261015.md` 接入：先发现角色契约，贡献须独立裁定后计入 AP/RP；身份声明不是认证，评审完成不直接授权上传。

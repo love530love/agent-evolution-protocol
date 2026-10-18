@@ -2,6 +2,8 @@
 
 红皇后—鲶鱼—创造性破坏：多 Agent 自治协作与进化体系。
 
+[团队执行与自进化契约 v1.0](docs/EVOLUTION_EXECUTION_PACT.zh-CN.md)：新增 `coord-improvement` 证据绑定的改进生命周期；不自动部署、不自行扩权。
+
 [总体系与能力状态](docs/SYSTEM_OVERVIEW.zh-CN.md) · [协同推理工作流](docs/COLLABORATIVE_REASONING_FRAMEWORK.zh-CN.md) · [v0.3.1 发布说明](docs/releases/v0.3.1.md)
 
 An evidence-driven governance protocol for multi-agent systems that need diversity without coordination collapse.
