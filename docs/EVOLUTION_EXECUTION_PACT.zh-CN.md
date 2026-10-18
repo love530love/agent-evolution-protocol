@@ -48,6 +48,14 @@ Windows 文件事件触发 `drain`；启动时及每 60 秒本地恢复扫描补
 
 回执丢失后重启会重放，已有事件去重避免重复提案。单写锁避免多个消费者同时处理；锁冲突会明确失败，监听器停止，不产生隐藏重试风暴。当前是显式启动的本机进程，不自动安装开机服务；未运行时信箱持久积压，下次启动恢复。该监听器仅创建提案，不执行测试、不发聊天消息、不部署。CLI ingest/drain 仍有原接口，供其他 Agent 或编排器主动调用。
 
+### 状态与停止（2026-10-18 加固）
+
+`aep --coord-root coordination coord-improvement overview` 只读列出 pending/processed/rejected/damaged 队列数量、提案状态和下一动作。处理回执不是对方 Agent ACK，状态入口不会声称监听器在线。
+
+监听器现在持有独占 OS 文件锁，同一协作目录不允许两个监听器并行常驻，异常退出由 OS 释放。运行 `./scripts/watch-improvements.ps1 -Python <python.exe> -CoordRoot coordination -Stop` 写入停止标记；当前 drain 完成后退出，通知丢失时最迟下一次 60 秒扫描识别。标记保留，禁止自动重启；检查状态后显式移除 `improvement_spool/inbox/.stop` 才能重新启动。仅停止监听，不撤回已创建提案，也不终止其他 Agent。
+
+损坏回执保存到 damaged_receipts 后重新接入，单条错误不阻塞其他事件。回执、原始事件和证据均应按本地敏感资料管理；这仍不提供跨用户身份认证或防恶意篡改。
+
 ### 已落地的事件接入与真实验证
 
 `coord-improvement ingest --request-file event.json` 接收显式事件，字段为 event_id、kind（TASK_COMPLETED/TASK_FAILED）、improvement（上述提案对象）。同一 event_id 相同内容复用提案，内容改变拒绝重放；不会从日志文字推断要执行的命令。

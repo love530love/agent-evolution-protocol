@@ -8,6 +8,8 @@
 
 `coord-improvement enqueue` 配合 `scripts/watch-improvements.ps1` 提供持久事件信箱与本地文件事件监听；离线积压可恢复，不消耗模型轮询额度，不自动执行事件中的命令。
 
+`coord-improvement overview` 汇总积压、错误与待复核事项；监听器支持独占单实例及 `-Stop` 控制，停止后不会自行重启。
+
 [总体系与能力状态](docs/SYSTEM_OVERVIEW.zh-CN.md) · [协同推理工作流](docs/COLLABORATIVE_REASONING_FRAMEWORK.zh-CN.md) · [v0.3.1 发布说明](docs/releases/v0.3.1.md)
 
 An evidence-driven governance protocol for multi-agent systems that need diversity without coordination collapse.
