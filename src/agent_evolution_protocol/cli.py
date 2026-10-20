@@ -34,6 +34,7 @@ from agent_evolution_protocol.coordination import improvement
 from agent_evolution_protocol.coordination import improvement_spool
 from agent_evolution_protocol.coordination import improvement_work
 from agent_evolution_protocol.coordination import improvement_policy
+from agent_evolution_protocol.coordination import improvement_acceptance
 from agent_evolution_protocol.coordination import improvement_dispatch
 from agent_evolution_protocol.coordination import client_registry
 from agent_evolution_protocol.coordination import transcript_bus
@@ -667,7 +668,9 @@ def coord_governance(args: argparse.Namespace) -> None:
 
 def coord_improvement(args: argparse.Namespace) -> None:
     try:
-        if args.action == "policy":
+        if args.action == "self-test":
+            result = improvement_acceptance.run(coord_root(args))
+        elif args.action == "policy":
             result = (improvement_policy.configure(coord_root(args), mode=args.mode, actor=args.actor, note=args.note)
                       if args.mode else improvement_policy.read(coord_root(args)))
         elif args.action == "retire":
@@ -719,7 +722,7 @@ def coord_improvement(args: argparse.Namespace) -> None:
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise ProtocolError(str(exc)) from exc
     print(json.dumps(result, ensure_ascii=False, indent=2))
-    if args.action == "validate" and result["status"] != "PASSED":
+    if args.action in {"validate", "self-test"} and result["status"] != "PASSED":
         raise SystemExit(2)
 
 
@@ -1794,7 +1797,9 @@ def workspace_init(args: argparse.Namespace) -> None:
         existing = agents_path.read_text(encoding="utf-8") if agents_path.exists() else ""
         if "<!-- AEP JOIN START -->" not in existing:
             atomic_write(agents_path, (existing.rstrip() + "\n" + block).lstrip().encode("utf-8"))
-    print(json.dumps(config, ensure_ascii=False, indent=2))
+    # This handler is also called directly by integrations, bypassing main()'s
+    # UTF-8 stream setup. Preserve JSON under legacy Windows stdout encodings.
+    print(json.dumps(config, ensure_ascii=True, indent=2))
 
 
 def kernel_status(args: argparse.Namespace) -> None:
@@ -2263,7 +2268,7 @@ def build_parser() -> argparse.ArgumentParser:
     adversarial = commands.add_parser("coord-adversarial"); adversarial.add_argument("action", choices=("review", "status")); adversarial.add_argument("--task", required=True); adversarial.add_argument("--submission", required=True); adversarial.add_argument("--agent"); adversarial.add_argument("--role", choices=("ideator", "falsifier", "replicator", "bias_auditor", "referee")); adversarial.add_argument("--review-file", type=Path); adversarial.set_defaults(func=coord_adversarial)
     governed = commands.add_parser("coord-governance"); governed.add_argument("action", choices=("roles", "intervene", "history")); governed.add_argument("--request-file", type=Path); governed.set_defaults(func=coord_governance)
     changes = commands.add_parser("coord-improvement")
-    changes.add_argument("action", choices=("propose", "status", "advance", "ingest", "validate", "enqueue", "drain", "overview", "pending", "claim", "complete", "release", "schedule", "delivery-status", "retire", "brief", "renew", "policy"))
+    changes.add_argument("action", choices=("propose", "status", "advance", "ingest", "validate", "enqueue", "drain", "overview", "pending", "claim", "complete", "release", "schedule", "delivery-status", "retire", "brief", "renew", "policy", "self-test"))
     changes.add_argument("--mode", choices=sorted(improvement_policy.MODES))
     changes.add_argument("--order-id")
     changes.add_argument("--apply", action="store_true")

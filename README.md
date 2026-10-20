@@ -22,6 +22,15 @@
 
 `coord-improvement policy --mode enforced --actor <操作者> --note <原因>` 可显式启用强制 token 晋级，覆盖旧 advance/validate 入口；默认仍兼容模式，模式切换留审计记录。
 
+提案日志和事件去重索引采用完整写入后原子发布，避免半截正式记录；需要支持硬链接的文件系统，并发冲突不会覆盖已有证据。
+
+```powershell
+# Isolated workflow acceptance: real test subprocess, scripted review roles, no desktop messages
+aep --coord-root .tools/acceptance coord-improvement self-test
+```
+
+This preserves a machine-readable report and evidence under a unique run directory. It does not change production policy or certify real Agent delivery/ACK. CI covers Ubuntu/Windows and Python 3.10/3.12.
+
 [总体系与能力状态](docs/SYSTEM_OVERVIEW.zh-CN.md) · [协同推理工作流](docs/COLLABORATIVE_REASONING_FRAMEWORK.zh-CN.md) · [v0.3.1 发布说明](docs/releases/v0.3.1.md)
 
 An evidence-driven governance protocol for multi-agent systems that need diversity without coordination collapse.

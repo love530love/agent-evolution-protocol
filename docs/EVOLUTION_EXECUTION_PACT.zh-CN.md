@@ -33,6 +33,22 @@ proposal.json 必须包含 author/change/acceptance/rollback/scope（非空字�
 
 ## 开发顺序
 
+### 一键集成验收（不是多 Agent 实测）
+
+`aep --coord-root <验收产物父目录> coord-improvement self-test` 在 acceptance_runs/唯一ID 下创建全新工作区和协作区，不改变父目录的生产策略或订单。串联事件排队/去重、强制策略、认领与简报、真实 unittest 子进程、独立身份约束、脚本角色推进及回滚记录，保存 acceptance-report.json、测试输出与完整阶段日志。失败返回 CLI 2，不自动清理证据或重试。
+
+报告的 actual_test_process 表示确实运行测试；scripted_roles=true 明确说明复核/试运行/采纳是脚本 API 演练，不是真实独立 Agent 作出技术判断。desktop_delivery_verified、agent_ack_verified、deployment_performed 均为 false。此验收不等于原会话双向投递、全局取消、真实部署或无人值守作战验收。
+
+CI 扩展至 Ubuntu/Windows × Python 3.10/3.12，分别跑单测、pytest 和上述集成验收；fail-fast=false 保留各平台失败证据。工作流已配置不代表远程结果已通过，发布时必须再核对。
+
+### 日志原子发布与崩溃恢复加固
+
+提案阶段日志和事件去重索引改为同目录临时文件完整写入、flush/fsync，然后以不覆盖目标的硬链接原子发布。并发相同提案只有一个首事件，其他调用读取并验证已发布结果；推进冲突明确失败，不覆盖胜出者。事件 ingest 使用独占 OS 锁串行，避免同一事件 ID 并发写入产生不同结果。
+
+发布前写入或刷新失败不产生正式 JSON；遗留空提案目录可在下次 propose 恢复。异常退出遗留的 .tmp 不参与读取，不自动删除人工资料。既有损坏正式日志仍拒绝执行，不能凭空修复或覆盖证据。
+
+要求支持同卷硬链接的文件系统（Windows 默认 NTFS）；不支持时明确失败，不偷偷改用覆盖写。此机制降低半写文件风险，不代表断电持久性、跨机器事务、恶意篡改防护或全局回滚保证。故障注入测试是模拟系统调用失败，不应宣称已进行真实断电测试。
+
 ### 可选强制接力模式
 
 `coord-improvement policy` 只读当前模式；默认 cooperative，兼容原调用。

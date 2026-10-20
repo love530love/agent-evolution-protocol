@@ -2,9 +2,11 @@
 
 from datetime import timedelta
 import os
+import json
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 from tempfile import TemporaryDirectory
 import time
 import unittest
@@ -26,13 +28,21 @@ class CampaignWatcherIntegrationTests(unittest.TestCase):
             environment = dict(os.environ)
             environment["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
             flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            ready = Path(folder) / 'ready.json'
             watcher = subprocess.Popen(
                 [shutil.which("pwsh.exe"), "-NoProfile", "-File", str(script),
-                 "-CoordRoot", str(root), "-BridgeRoot", str(bridge), "-MailboxOnly"],
+                 "-CoordRoot", str(root), "-BridgeRoot", str(bridge), "-MailboxOnly",
+                 "-Python", sys.executable, "-ReadyFile", str(ready)],
                 stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
                 env=environment, creationflags=flags)
             try:
-                time.sleep(2)
+                start_deadline = time.monotonic() + 30
+                while not ready.exists() and time.monotonic() < start_deadline:
+                    if watcher.poll() is not None:
+                        self.fail("watcher startup failed: " + watcher.communicate()[1])
+                    time.sleep(0.1)
+                self.assertTrue(ready.exists(), "watcher did not report readiness within 30 seconds")
+                self.assertEqual(json.loads(ready.read_text())["pid"], watcher.pid)
                 self.assertIsNone(watcher.poll(), "watcher exited before the event test")
                 state = cycle.status(root, "T999")["missions"][0]
                 current = next(item for item in state["assignments"] if item["id"] == lead["id"])

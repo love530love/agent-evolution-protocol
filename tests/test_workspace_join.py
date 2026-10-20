@@ -1,4 +1,6 @@
 import json
+import io
+from contextlib import redirect_stdout
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,6 +10,16 @@ from agent_evolution_protocol import cli
 
 
 class WorkspaceJoinTest(unittest.TestCase):
+    def test_direct_workspace_init_supports_legacy_redirected_stdout(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = io.BytesIO()
+            stream = io.TextIOWrapper(output, encoding="cp1252")
+            with redirect_stdout(stream):
+                cli.workspace_init(SimpleNamespace(workspace=temporary, coord_dir=None,
+                    kernel_dir=None, default_task="", agents_md=False))
+            stream.flush()
+            self.assertEqual(json.loads(output.getvalue().decode("ascii"))["natural_trigger"], "请加入这个工作区协作")
+            stream.detach()
     def test_workspace_init_writes_natural_language_join_files(self):
         with tempfile.TemporaryDirectory() as temporary:
             workspace = Path(temporary)

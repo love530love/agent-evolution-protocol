@@ -1,7 +1,10 @@
+#Requires -Version 7.0
 param(
   [string]$CoordRoot = '',
   [string]$BridgeRoot = '',
-  [switch]$MailboxOnly
+  [switch]$MailboxOnly,
+  [string]$Python = 'python.exe',
+  [string]$ReadyFile = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -10,7 +13,7 @@ if (-not $CoordRoot) { $CoordRoot = Join-Path $repoRoot 'coordination' }
 if (-not $BridgeRoot) { $BridgeRoot = Join-Path $repoRoot 'src\agent_evolution_protocol\coordination' }
 $CoordRoot = [IO.Path]::GetFullPath($CoordRoot)
 $BridgeRoot = [IO.Path]::GetFullPath($BridgeRoot)
-$python = (Get-Command python -ErrorAction Stop).Source
+$python = (Get-Command $Python -ErrorAction Stop).Source
 $env:PYTHONPATH = (Join-Path $repoRoot 'src') + [IO.Path]::PathSeparator + $env:PYTHONPATH
 
 $campaignEvents = Join-Path $CoordRoot 'campaign\events'
@@ -45,16 +48,10 @@ foreach ($row in @(@{ Path = $campaignEvents; Id = 'AepCampaignEvent' },
 }
 
 function Invoke-CampaignTick {
-  & $python -m agent_evolution_protocol.coordination.presence reconcile --root $CoordRoot | Out-Null
-  if ($LASTEXITCODE -ne 0) { throw 'presence reconcile failed' }
-  & $python -m agent_evolution_protocol.coordination.team_dispatch process --root $CoordRoot --bridge-root $BridgeRoot | Out-Null
-  if ($LASTEXITCODE -ne 0) { Write-Warning 'Delegation processor failed; inbox remains durable for retry.' }
-  & $python -m agent_evolution_protocol.coordination.command_memory ingest-journal --root $CoordRoot | Out-Null
-  if ($LASTEXITCODE -ne 0) { Write-Warning 'Command memory ingestion failed; journal remains durable for retry.' }
-  & $python -m agent_evolution_protocol.coordination.command_memory ingest-journal --root $CoordRoot --journal-root $BridgeRoot | Out-Null
-  if ($LASTEXITCODE -ne 0) { Write-Warning 'Bridge journal ingestion failed; journal remains durable for retry.' }
-  & $python -m agent_evolution_protocol.coordination.campaign_cycle reconcile --root $CoordRoot --bridge-root $BridgeRoot | Out-Null
-  if ($LASTEXITCODE -ne 0) { throw 'campaign reconcile failed' }
+  $tickRaw = & $python -m agent_evolution_protocol.coordination.campaign_tick tick --root $CoordRoot --bridge-root $BridgeRoot
+  if ($LASTEXITCODE -ne 0) { throw 'campaign maintenance failed; inspect durable inboxes and logs' }
+  $tick = ($tickRaw | Out-String | ConvertFrom-Json)
+  foreach ($warning in $tick.warnings) { Write-Warning ($warning.stage + ': ' + $warning.error) }
   if (-not $MailboxOnly) {
     & $python -m agent_evolution_protocol.coordination.wake_daemon --once | Out-Null
     if ($LASTEXITCODE -ne 0) { Write-Warning 'One or more wake adapters failed; mailbox remains the durable source.' }
@@ -63,16 +60,14 @@ function Invoke-CampaignTick {
 
 try {
   Invoke-CampaignTick
+  if ($ReadyFile) {
+    if (Test-Path -LiteralPath $ReadyFile) { throw 'ReadyFile already exists; use a fresh readiness path.' }
+    [IO.File]::WriteAllText([IO.Path]::GetFullPath($ReadyFile), (@{pid=$PID; status='READY'; mailbox_only=[bool]$MailboxOnly} | ConvertTo-Json))
+  }
   while ($true) {
-    $raw = & $python -m agent_evolution_protocol.coordination.campaign_cycle next-due --root $CoordRoot --bridge-root $BridgeRoot
+    $raw = & $python -m agent_evolution_protocol.coordination.campaign_tick next-due --root $CoordRoot --bridge-root $BridgeRoot
     if ($LASTEXITCODE -ne 0) { throw 'cannot calculate next deadline' }
-    $next = ($raw | Out-String | ConvertFrom-Json -DateKind String).next_due_at
-    $presenceRaw = & $python -m agent_evolution_protocol.coordination.presence next-due --root $CoordRoot
-    if ($LASTEXITCODE -ne 0) { throw 'cannot calculate presence deadline' }
-    $presenceDue = ($presenceRaw | Out-String | ConvertFrom-Json -DateKind String).next_due_at
-    if ($presenceDue -and (-not $next -or [DateTimeOffset]::Parse($presenceDue) -lt [DateTimeOffset]::Parse($next))) {
-      $next = $presenceDue
-    }
+    $next = ($raw | Out-String | ConvertFrom-Json).next_due_at
     if ($next) {
       $due = [DateTimeOffset]::Parse($next)
       $seconds = [Math]::Max(1, [Math]::Ceiling(($due - [DateTimeOffset]::UtcNow).TotalSeconds))

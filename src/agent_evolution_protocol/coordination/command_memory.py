@@ -309,8 +309,12 @@ def main() -> int:
     parser.add_argument("--reviewer", default="")
     parser.add_argument("--category", default="")
     parser.add_argument("--timeout", type=int, default=120)
-    parser.add_argument("argv", nargs=argparse.REMAINDER)
-    args = parser.parse_args()
+    # REMAINDER swallowed --root/--agent after the action for every operation.
+    # Only run accepts an arbitrary command tail; other actions reject unknowns.
+    args, remainder = parser.parse_known_args()
+    if args.action != "run" and remainder:
+        parser.error("unrecognized arguments: " + " ".join(remainder))
+    args.argv = remainder
     try:
         if args.action == "record":
             result = record(args.root, agent=args.agent, command=args.command,
@@ -338,7 +342,9 @@ def main() -> int:
             result = {"observations": len(observations),
                       "reported": sum(row.get("outcome") == "reported" for row in observations),
                       "recipes": len(list((root_dir(args.root) / "recipes").glob("*.json")))}
-        print(json.dumps(result, ensure_ascii=False, indent=2))
+        # JSON remains Unicode after decoding, but ASCII transport is safe under
+        # Windows legacy redirected stdout encodings as well as UTF-8 clients.
+        print(json.dumps(result, ensure_ascii=True, indent=2))
         return 0
     except (ValueError, OSError) as exc:
         parser.error(str(exc))

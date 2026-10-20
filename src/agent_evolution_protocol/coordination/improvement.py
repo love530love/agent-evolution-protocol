@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -33,13 +34,29 @@ def _evidence(paths):
     return rows
 
 
+def _publish_new(path, value):
+    """Publish a complete JSON file without overwriting a concurrent winner.
+
+    Requires same-volume hard links (NTFS on Windows). Unsupported filesystems
+    fail explicitly rather than falling back to an overwrite-prone rename.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + "." + uuid4().hex + ".tmp")
+    try:
+        with temporary.open("x", encoding="utf-8") as stream:
+            json.dump(value, stream, ensure_ascii=False, indent=2)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.link(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def _save(folder, index, row):
     row = {**row, "at": datetime.now(timezone.utc).isoformat()}
     row["sha256"] = _hash(row)
     folder.mkdir(parents=True, exist_ok=True)
-    # Exclusive sequence files arbitrate concurrent writers. No lost-update overwrite.
-    with (folder / f"{index:06d}.json").open("x", encoding="utf-8") as stream:
-        json.dump(row, stream, ensure_ascii=False, indent=2)
+    _publish_new(folder / f"{index:06d}.json", row)
     return row
 
 
@@ -68,8 +85,11 @@ def propose(root, request):
     frozen = {**request, "evidence": _evidence(request["evidence"])}
     identity = _hash(frozen)[:24]
     folder = _folder(root, identity)
-    if not folder.exists():
-        _save(folder, 0, {"state": "PROPOSED", "actor": request["author"], "proposal": frozen, "previous": None})
+    if not (folder / "000000.json").exists():
+        try:
+            _save(folder, 0, {"state": "PROPOSED", "actor": request["author"], "proposal": frozen, "previous": None})
+        except FileExistsError:
+            pass  # Concurrent identical proposal published first; verify it below.
     return status(root, identity)
 
 
@@ -101,6 +121,12 @@ def advance(root, identity, *, state, actor, evidence, note, token=None):
 
 
 def ingest(root, event_file):
+    from .battle_orders import _task_writer_lock
+    with _task_writer_lock(Path(root), "improvement-ingest"):
+        return _ingest(root, event_file)
+
+
+def _ingest(root, event_file):
     """Explicit completion-event ingestion; no watcher or implicit commands."""
     event = json.loads(Path(event_file).read_text(encoding="utf-8"))
     if not isinstance(event, dict) or set(event) != {"event_id", "kind", "improvement"}:
@@ -124,8 +150,7 @@ def ingest(root, event_file):
             raise ValueError("event id reused with changed payload")
         return status(root, prior["id"])
     result = propose(root, request)
-    with path.open("x", encoding="utf-8") as stream:
-        json.dump({"digest": digest, "id": result["id"]}, stream)
+    _publish_new(path, {"digest": digest, "id": result["id"]})
     return result
 
 

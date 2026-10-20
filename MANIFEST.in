@@ -5,3 +5,4 @@ recursive-include patches *.patch
 include scripts/bootstrap-desktop.ps1
 include scripts/install-desktop-provider.ps1
 include scripts/watch-improvements.ps1
+include scripts/campaign-watch.ps1
