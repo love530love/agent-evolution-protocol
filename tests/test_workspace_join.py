@@ -40,7 +40,7 @@ class WorkspaceJoinTest(unittest.TestCase):
             self.assertTrue(agents_path.exists())
 
             config = json.loads(config_path.read_text(encoding="utf-8"))
-            self.assertEqual(str(workspace), config["workspace"])
+            self.assertEqual(str(workspace.resolve()), config["workspace"])
             self.assertEqual("T125", config["default_task"])
             self.assertIn("请加入这个工作区协作", join_path.read_text(encoding="utf-8"))
             self.assertIn("AEP_JOIN.md", agents_path.read_text(encoding="utf-8"))
@@ -58,7 +58,7 @@ class WorkspaceJoinTest(unittest.TestCase):
                 agents_md=False,
             ))
             config = cli.discover_workspace_config(child)
-            self.assertEqual(str(workspace), config["workspace"])
+            self.assertEqual(str(workspace.resolve()), config["workspace"])
             self.assertTrue(config["coord_root"].endswith("coordination"))
 
 

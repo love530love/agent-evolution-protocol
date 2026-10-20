@@ -33,7 +33,7 @@ class RouteCliTest(unittest.TestCase):
             with redirect_stdout(StringIO()) as output:
                 args.func(args)
             packet = json.loads(output.getvalue())
-            self.assertEqual(str(root / "shared coord"), packet["coord_root"])
+            self.assertEqual(str((root / "shared coord").resolve()), packet["coord_root"])
             self.assertEqual("WEB-FIX", packet["task"])
             self.assertEqual("takeover", packet["scenario"])
             self.assertIn("接棒", packet["matched_rules"]["takeover"])

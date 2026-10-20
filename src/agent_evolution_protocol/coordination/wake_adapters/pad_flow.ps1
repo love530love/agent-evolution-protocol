@@ -14,9 +14,6 @@ if ($event.type -ne 'wake_request' -or $event.to -ne $Agent -or -not $event.id) 
 if ($WorkflowId -notmatch '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$') {
   throw 'PAD_FLOW_ID_INVALID: use the workflow ID from PAD flow Properties'
 }
-if (-not (Get-ItemProperty -Path 'Registry::HKEY_CLASSES_ROOT\ms-powerautomate' -ErrorAction SilentlyContinue)) {
-  throw 'PAD_PROTOCOL_MISSING: ms-powerautomate URL handler is not registered'
-}
 
 $receiptDir = Join-Path (Split-Path -Parent $WakeFile) '..\pad_receipts'
 $receiptDir = [IO.Path]::GetFullPath($receiptDir)
@@ -35,6 +32,10 @@ $uri = 'ms-powerautomate:/console/flow/run?workflowId={0}&inputArguments={1}' -f
 if ($BuildOnly) {
   [pscustomobject]@{ status = 'pad-url-built-not-run'; agent = $Agent; event_id = $event.id; receipt_file = $receiptPath; task_delivered = $false; agent_accepted = $false } | ConvertTo-Json -Compress
   return
+}
+
+if (-not (Get-ItemProperty -Path 'Registry::HKEY_CLASSES_ROOT\ms-powerautomate' -ErrorAction SilentlyContinue)) {
+  throw 'PAD_PROTOCOL_MISSING: ms-powerautomate URL handler is not registered'
 }
 
 New-Item -ItemType Directory -Force -Path $receiptDir | Out-Null
