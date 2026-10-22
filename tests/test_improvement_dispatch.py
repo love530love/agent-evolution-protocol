@@ -6,6 +6,41 @@ from agent_evolution_protocol.coordination import improvement, improvement_dispa
 
 
 class DispatchTests(unittest.TestCase):
+    def test_direct_dispatch_does_not_replay_stale_or_uncertain_orders(self):
+        from copy import deepcopy
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            proof = root / "proof"
+            proof.write_text("ok")
+            identity = improvement.propose(root, dict(author="a", change="b", acceptance="c",
+                rollback="d", scope="e", evidence=[str(proof)]))["id"]
+            head = improvement.status(root, identity)["events"][-1]["sha256"]
+            for state in ("WINDOW_FOUND", "INPUT_SUBMITTED", "MESSAGE_VISIBLE", "AGENT_ACK", "FAILED", "CEASED"):
+                with self.subTest(state=state):
+                    order = commander.submit_order(root, target="worker", task="improvement:" + identity,
+                        text="verify", sender="router", event_id="EVT-IMPROVE-" + head[:24].upper())
+                    stale = deepcopy(order)
+                    commander._record_attempt(root, order, state=state)
+                    with patch.object(commander.registry, "profile") as profile:
+                        self.assertEqual(commander.dispatch(root, order=stale)["state"], state)
+                        self.assertEqual(commander.dispatch(root, order=order)["state"], state)
+                        profile.assert_not_called()
+                    commander._record_attempt(root, order, state="DEFERRED")
+                    with patch.object(commander.registry, "profile") as profile:
+                        self.assertEqual(commander.dispatch(root, order=order)["state"], "DEFERRED")
+                        profile.assert_not_called()
+            fresh = commander.submit_order(root, target="worker", task="improvement:" + identity,
+                text="verify", sender="router", event_id="EVT-IMPROVE-" + head[:24].upper())
+            with patch.object(commander.registry, "profile", side_effect=ValueError("fixture unregistered")) as profile:
+                self.assertEqual(commander.dispatch(root, order=fresh)["state"], "DEFERRED")
+                self.assertEqual(commander.dispatch(root, order=fresh)["state"], "DEFERRED")
+                self.assertEqual(profile.call_count, 2)  # Proven pre-input retries still work.
+            (commander._root(root) / "inbox" / f"{fresh['id']}.json").write_text("{}", encoding="utf-8")
+            with patch.object(commander.registry, "profile") as profile:
+                with self.assertRaisesRegex(ValueError, "missing or unreadable"):
+                    commander.dispatch(root, order=fresh)
+                profile.assert_not_called()
+
     def test_reroute_preserves_order_and_fences_stale_dispatch(self):
         with TemporaryDirectory() as temp:
             root = Path(temp)

@@ -317,8 +317,11 @@ def dispatch(root: Path, *, order: dict) -> dict:
         from .battle_orders import _task_writer_lock
         with _task_writer_lock(Path(root), "improvement-dispatch"):
             current = next((row for row in _orders(root) if row.get("id") == order.get("id")), None)
-            if current and current.get("target") != order.get("target"):
-                # A queued tick may still hold the pre-reroute recipient. Do not send it.
+            if current is None:
+                raise ValueError("persisted improvement order missing or unreadable; no input attempted")
+            if current and current != order:
+                # A queued/direct caller may hold any stale receipt, not just an
+                # old recipient. Return durable progress without replaying input.
                 return current
             return _dispatch(root, order=order)
     return _dispatch(root, order=order)
@@ -343,6 +346,11 @@ def _dispatch(root: Path, *, order: dict) -> dict:
         except (OSError, ValueError, KeyError, TypeError) as exc:
             return _record_attempt(root, order, state="CEASED",
                                    note=f"INVALID_IMPROVEMENT: {exc}; no desktop input attempted")
+        if order.get("state") not in {"DEPOSITED", "DEFERRED"} or any(
+                attempt.get("state") not in {"DEPOSITED", "DEFERRED"}
+                for attempt in order.get("attempts", [])):
+            # Even direct API calls cannot replay an uncertain/completed send.
+            return order
     target = order["target"]
     try:
         registry.profile(root, target)
