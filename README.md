@@ -10,6 +10,8 @@
 
 [依赖已知漏洞查询](docs/DEPENDENCY_VULNERABILITY_AUDIT.zh-CN.md)：`coord-dependency-audit` 显式开启 OSV 查询并保存逐包覆盖证据；未知、失败、分页及已知通报均返回非零，不把空结果当安全认证。
 
+[SDK 实物对账](docs/SDK_ENVIRONMENT_INVENTORY.zh-CN.md)：`coord-dependency-inventory` 不启动目标解释器，比对锁与安装元数据，可核验 RECORD 文件哈希；引导包和未验证范围单独报告。
+
 [Orca 可选运行时适配器](docs/coordination/ORCA_RUNTIME_ADAPTER.zh-CN.md)：新增 `coord-orca` 原终端探测/绑定/读写预览，显式发送去重并拒绝未知结果重试；尚未真实宿主验收。
 
 [团队执行与自进化契约 v1.0](docs/EVOLUTION_EXECUTION_PACT.zh-CN.md)：新增 `coord-improvement` 证据绑定的改进生命周期；不自动部署、不自行扩权。

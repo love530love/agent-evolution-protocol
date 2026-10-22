@@ -21,6 +21,11 @@ jobs:
       - name: Install SDK without package index
         shell: pwsh
         run: ./scripts/bootstrap-desktop.ps1 -Python (Get-Command python.exe).Source -Wheelhouse .tools/desktop-wheelhouse -Install
+      - name: Inspect SDK files without starting its interpreter
+        shell: pwsh
+        run: |
+          python -I -S -B -c 'import sys,runpy; sys.path.insert(0,"src"); runpy.run_module("agent_evolution_protocol",run_name="__main__")' coord-dependency-inventory --lock runtime/desktop-win-cp313.lock.json --environment .tools/desktop-sdk --output .tools/ci-sdk-inventory --apply --verify-records
+          if ($LASTEXITCODE -ne 0) { throw 'Installed SDK inventory differs from lock or RECORD' }
       - name: Verify unaudited dependencies cannot silently pass
         shell: pwsh
         run: |

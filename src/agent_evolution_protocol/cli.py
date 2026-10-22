@@ -44,6 +44,7 @@ from agent_evolution_protocol.coordination import commander
 from agent_evolution_protocol.coordination import orca_adapter
 from agent_evolution_protocol.coordination import dependency_candidate
 from agent_evolution_protocol.coordination import dependency_audit
+from agent_evolution_protocol.coordination import dependency_inventory
 from agent_evolution_protocol.routing import classify_intent, load_route_config
 from agent_evolution_protocol.route_state import analyze_route_state, continuation_from_events, select_resource_type
 
@@ -668,6 +669,17 @@ def coord_governance(args: argparse.Namespace) -> None:
     except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
         raise ProtocolError(str(exc)) from exc
     print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+def coord_dependency_inventory(args: argparse.Namespace) -> None:
+    try:
+        result = dependency_inventory.inspect(lock=args.lock, environment=args.environment,
+            output=args.output, apply=args.apply, verify_records=args.verify_records)
+    except (OSError, ValueError, TypeError) as exc:
+        raise ProtocolError(str(exc)) from exc
+    print(json.dumps(result, ensure_ascii=True, indent=2))
+    if result["status"] not in {"PLAN_ONLY", *dependency_inventory.PASS_STATUSES}:
+        raise SystemExit(2)
 
 
 def coord_dependency_audit(args: argparse.Namespace) -> None:
@@ -2324,6 +2336,13 @@ def build_parser() -> argparse.ArgumentParser:
     joint = commands.add_parser("coord-joint-case"); joint.add_argument("action", choices=("open", "review", "status")); joint.add_argument("--task", required=True); joint.add_argument("--submission", required=True); joint.add_argument("--lead"); joint.add_argument("--deputy"); joint.add_argument("--artifact-sha256"); joint.add_argument("--result-file", type=Path); joint.add_argument("--agent"); joint.add_argument("--role", choices=("lead", "deputy", "cross_platform", "catfish", "package_reviewer")); joint.add_argument("--review-file", type=Path); joint.set_defaults(func=coord_joint_case)
     adversarial = commands.add_parser("coord-adversarial"); adversarial.add_argument("action", choices=("review", "status")); adversarial.add_argument("--task", required=True); adversarial.add_argument("--submission", required=True); adversarial.add_argument("--agent"); adversarial.add_argument("--role", choices=("ideator", "falsifier", "replicator", "bias_auditor", "referee")); adversarial.add_argument("--review-file", type=Path); adversarial.set_defaults(func=coord_adversarial)
     governed = commands.add_parser("coord-governance"); governed.add_argument("action", choices=("roles", "intervene", "history")); governed.add_argument("--request-file", type=Path); governed.set_defaults(func=coord_governance)
+    installed_dependencies = commands.add_parser("coord-dependency-inventory")
+    installed_dependencies.add_argument("--lock", type=Path, required=True)
+    installed_dependencies.add_argument("--environment", type=Path, required=True)
+    installed_dependencies.add_argument("--output", type=Path, required=True)
+    installed_dependencies.add_argument("--apply", action="store_true")
+    installed_dependencies.add_argument("--verify-records", action="store_true")
+    installed_dependencies.set_defaults(func=coord_dependency_inventory)
     audit_dependencies = commands.add_parser("coord-dependency-audit")
     audit_dependencies.add_argument("--lock", type=Path, required=True)
     audit_dependencies.add_argument("--output", type=Path, required=True)

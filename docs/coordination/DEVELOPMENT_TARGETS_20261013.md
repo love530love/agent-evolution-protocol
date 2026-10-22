@@ -1,5 +1,7 @@
 # 多 Agent 协作机制：待开发目标与验收表（2026-10-13）
 
+2026-10-22 SDK 实物核验：新增 coord-dependency-inventory，不启动目标解释器，核对版本、重复/额外包与 RECORD 哈希；本机 30 包、1580 文件匹配，pip 单独列为锁外引导包。原始 wheel 字节对照、未登记文件扫描、引导包审计和解释器来源仍待完成，见 `docs/SDK_ENVIRONMENT_INVENTORY.zh-CN.md`。
+
 2026-10-22 漏洞信息接入：新增 coord-dependency-audit，只对明确指定锁执行显式 OSV 查询，保存逐包完整性、通报 ID、时间与哈希；未知/失败/分页/风险非零退出。真实 30 包快照查询本次无已知通报，不构成安全认证。实际安装对账、详情处置、过期策略和许可证审查仍待开发，见 `docs/DEPENDENCY_VULNERABILITY_AUDIT.zh-CN.md`。
 
 2026-10-22 依赖进化：新增 coord-dependencies，wheel 只读检查、显式 PyPI 哈希核验、候选锁及差异/许可证声明；准备和安装器支持显式 -LockFile，在新目录验证候选，不自动采纳。真实 30 wheel 基线再现已执行；新版本对照、漏洞与许可证审查仍待独立证据，见 `docs/DEPENDENCY_CANDIDATES.zh-CN.md`。
