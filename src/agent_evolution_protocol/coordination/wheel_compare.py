@@ -118,7 +118,8 @@ def compare(*, lock, wheelhouse, environment, output, apply=False):
     manifest = json.loads(body)
     # Reuse the metadata-only preflight, preserving its separate, explicitly scoped evidence.
     preflight = inventory.inspect(lock=lock, environment=environment, output=output / "inventory", apply=True)
-    preflight_report = json.loads((output / "inventory/inventory.json").read_bytes())
+    preflight_bytes = (output / "inventory/inventory.json").read_bytes()
+    preflight_report = json.loads(preflight_bytes)
     if preflight_report["lock_sha256"] != hashlib.sha256(body).hexdigest():
         raise ValueError("lock changed during preflight; partial evidence retained")
     environment, wheelhouse = environment.resolve(), wheelhouse.resolve()
@@ -135,6 +136,7 @@ def compare(*, lock, wheelhouse, environment, output, apply=False):
     status = ("ENVIRONMENT_MISMATCH" if not preflight["lock_versions_match"] else "WHEEL_COMPARISON_FAILED" if failed else
               "INCOMPLETE_MAPPING" if incomplete else "WHEEL_PAYLOADS_MATCH")
     report = {"schema": 1, "status": status, "at": datetime.now(timezone.utc).isoformat(),
+        "environment": str(environment), "inventory_sha256": hashlib.sha256(preflight_bytes).hexdigest(),
         "lock_sha256": hashlib.sha256(body).hexdigest(), "packages": rows,
         "wheel_payloads_match": matched, "checked_files": sum(row["checked_files"] for row in rows),
         "bootstrap_packages_outside_lock": preflight["bootstrap_packages_outside_lock"],

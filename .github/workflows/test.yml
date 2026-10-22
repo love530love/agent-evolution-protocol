@@ -35,6 +35,10 @@ jobs:
           if ($LASTEXITCODE -ne 2) { throw 'Unaudited dependencies must return 2' }
           $report = Get-Content .tools/ci-unaudited/audit.json -Raw | ConvertFrom-Json
           if ($report.status -ne 'NOT_QUERIED' -or $report.security_verified -ne $false) { throw 'Invalid unaudited status' }
+          ./aep-desktop.ps1 coord-dependency-gate --lock runtime/desktop-win-cp313.lock.json --audit-dir .tools/ci-unaudited --inventory-dir .tools/ci-sdk-inventory --wheel-dir .tools/ci-wheel-comparison --output .tools/ci-blocked-gate --apply
+          if ($LASTEXITCODE -ne 2) { throw 'Incomplete evidence must not pass the consistency gate' }
+          $gate = Get-Content .tools/ci-blocked-gate/gate.json -Raw | ConvertFrom-Json
+          if ($gate.status -ne 'EVIDENCE_BLOCKED' -or $gate.deployment_authorized -ne $false) { throw 'Invalid evidence gate status' }
           $global:LASTEXITCODE = 0
       - name: Verify explicit SDK entry point
         shell: pwsh

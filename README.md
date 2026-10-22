@@ -14,6 +14,8 @@
 
 [原始 wheel 载荷对照](docs/WHEEL_PAYLOAD_COMPARISON.zh-CN.md)：`coord-wheel-compare` 用锁定归档的实际字节对照安装文件，不信任可一同改写的本地 RECORD；未知映射不静默放行。
 
+[依赖证据一致性门](docs/DEPENDENCY_EVIDENCE_GATE.zh-CN.md)：`coord-dependency-gate` 核对漏洞、安装和 wheel 快照的锁哈希、环境、原始数据及有效期，防止误拼接旧报告；不授权部署。
+
 [Orca 可选运行时适配器](docs/coordination/ORCA_RUNTIME_ADAPTER.zh-CN.md)：新增 `coord-orca` 原终端探测/绑定/读写预览，显式发送去重并拒绝未知结果重试；尚未真实宿主验收。
 
 [团队执行与自进化契约 v1.0](docs/EVOLUTION_EXECUTION_PACT.zh-CN.md)：新增 `coord-improvement` 证据绑定的改进生命周期；不自动部署、不自行扩权。

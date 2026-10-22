@@ -33,6 +33,8 @@
 
 输出 wheel-comparison.json、checksums.json 和 inventory 子目录的独立预检证据。多文件输出不是事务；写盘失败可能留下部分报告，不能当完整采纳凭证。
 
+为供 [证据一致性门](DEPENDENCY_EVIDENCE_GATE.zh-CN.md) 关联，新报告同时记录 SDK 路径及内嵌 inventory 原始字节 SHA256。旧报告缺绑定时需重新生成，不原地补写。
+
 ## 明确排除和信任边界
 
 - 安装后的 .dist-info/RECORD 合法地被安装器重写，单独列为 installer_mutable，不做原始字节相等判断；不能利用它掩盖其他成员的差异。
