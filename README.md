@@ -8,6 +8,8 @@
 
 `coord-improvement checkpoint` 保存绑定有效租约的中途成果说明和文件哈希；接替者的 `brief` 自动校验、获取同阶段检查点，减少上下文交接损失。检查点不等于执行停止确认。
 
+`coord-improvement inspect-handoff --id <ID>` 按需只读诊断交接阻塞：汇总证据、检查点和租约问题及恢复步骤；不自动认领、不泄露租约 token。
+
 [Windows 便携 Python 核心](docs/PORTABLE_PYTHON.zh-CN.md)：无需系统 Python，支持固定哈希在线/离线安装及 `./aep.ps1` 统一入口；核心不捆绑可选 MCP/浏览器/WSL。
 
 [可选 MCP SDK 离线安装](docs/OFFLINE_DESKTOP_SDK.zh-CN.md)：固定 Windows CPython 3.13 的 30 个 wheel 与哈希，预下载后断开索引安装，独立入口 `./aep-desktop.ps1`；仍需完整 Python 创建 venv。

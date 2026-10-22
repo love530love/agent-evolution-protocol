@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 from pathlib import Path
 from uuid import uuid4
 
@@ -165,6 +166,62 @@ def finish(root, identity, *, actor, token, evidence=None, note=None, release=Fa
         _atomic_json(path, {**row, "active": False, "result": "RELEASED" if release else "COMPLETED"})
         return {"id": identity, "state": current["state"], "released": release,
                 "deployment_performed": False}
+
+
+def inspect_handoff(root, identity):
+    """On-demand, read-only recovery diagnostics. Never returns lease secrets."""
+    result = {"id": identity, "issues": [], "lease_state": "NONE", "claim_owner": None,
+              "execution_stopped_verified": False, "automatic_reclaim_allowed": False,
+              "delivery_attempted": False, "authorization_verified": False}
+    def issue(code, action):
+        result["issues"].append({"code": code, "next_action": action})
+    try:
+        current = improvement.status(root, identity)
+        head = current["events"][-1]["sha256"]
+        result["proposal_state"] = current["state"]
+    except (OSError, ValueError, KeyError, TypeError):
+        issue("PROPOSAL_UNREADABLE", "inspect_proposal_journal_do_not_overwrite")
+        return {**result, "status": "BLOCKED"}
+    for event in current["events"]:
+        for record in event.get("evidence", event.get("proposal", {}).get("evidence", [])):
+            try:
+                actual = hashlib.sha256(Path(record["path"]).read_bytes()).hexdigest()
+                if actual != record["sha256"]:
+                    issue("PROPOSAL_EVIDENCE_CHANGED", "restore_exact_frozen_artifact_or_create_new_proposal")
+            except (OSError, ValueError, KeyError, TypeError):
+                issue("PROPOSAL_EVIDENCE_UNREADABLE", "restore_frozen_artifact_from_trusted_backup")
+    try:
+        packet = checkpoints(root, identity)
+        result["checkpoint_count"] = len(packet["checkpoints"])
+    except (OSError, ValueError, KeyError, TypeError):
+        issue("CHECKPOINT_UNUSABLE", "inspect_checkpoint_chain_and_artifacts_do_not_delete_to_bypass")
+    try:
+        path = _path(root, identity)
+        if path.exists():
+            lease = json.loads(path.read_text(encoding="utf-8"))
+            if (not isinstance(lease, dict) or type(lease.get("active")) is not bool
+                    or not isinstance(lease.get("actor"), str) or not lease["actor"].strip()
+                    or not isinstance(lease.get("head"), str)
+                    or type(lease.get("expires")) not in {int, float}
+                    or not math.isfinite(lease["expires"])):
+                raise ValueError("invalid lease")
+            result["claim_owner"] = lease["actor"]
+            result["lease_state"] = ("STALE_STAGE" if lease["head"] != head else
+                "INACTIVE" if not lease["active"] else "EXPIRED" if lease["expires"] <= _now() else "ACTIVE")
+    except (OSError, ValueError, KeyError, TypeError):
+        result["lease_state"] = "DAMAGED"
+        issue("LEASE_UNREADABLE", "inspect_lease_record_do_not_assume_idle")
+    try:
+        if improvement.status(root, identity)["events"][-1]["sha256"] != head:
+            issue("STAGE_CHANGED_DURING_INSPECTION", "reread_before_deciding")
+    except (OSError, ValueError, KeyError, TypeError):
+        issue("PROPOSAL_UNREADABLE", "inspect_proposal_journal_do_not_overwrite")
+    result["status"] = ("BLOCKED" if result["issues"] else "TERMINAL_STAGE" if current["state"] not in NEXT
+                        else "WAIT_FOR_OWNER" if result["lease_state"] == "ACTIVE" else "REQUIRES_RECOVERY_REVIEW")
+    result["recovery_steps"] = ["inspect_delivery_status_for_uncertain_messages",
+        "confirm_previous_execution_and_external_side_effects", "review_frozen_artifacts_and_remaining_work",
+        "claim_and_read_brief_before_authorized_execution"]
+    return result
 
 
 def pending(root):
