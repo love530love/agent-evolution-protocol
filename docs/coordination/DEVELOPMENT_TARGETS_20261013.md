@@ -1,5 +1,7 @@
 # 多 Agent 协作机制：待开发目标与验收表（2026-10-13）
 
+2026-10-23 接力归属修复：delivery-status 保留历史 ACK，区分 CLAIMED_ELSEWHERE、CLAIM_EXPIRED、CLAIM_RELEASED，并保留当前投递阻塞提示。只读，不自动重发或改派；真实双 Agent 原会话接单与产物回传仍待验收。详见 `docs/HANDOFF_OWNERSHIP.zh-CN.md`。
+
 2026-10-23 证据关联：新增 coord-dependency-gate，对四份源报告校验哈希、锁、环境、时间与原始 OSV 响应；wheel 报告新增环境/预检绑定。本机真实证据一致性已验证，不授权部署、不改全局策略。动态漂移检测、身份签名和发布策略集成仍待开发，见 `docs/DEPENDENCY_EVIDENCE_GATE.zh-CN.md`。上一轮 8ee1f10 的五组 CI 已确认通过。
 
 2026-10-23 原始载荷对照：新增 coord-wheel-compare，锁定 SHA256 的 wheel 载荷对照安装文件，不依赖安装后 RECORD。本机 30 wheel/1511 文件匹配；生成的包装器、缓存、未知映射、未登记文件与锁外包不冒充已认证，见 `docs/WHEEL_PAYLOAD_COMPARISON.zh-CN.md`。上一轮提交 012af4e 的五组 CI 已确认通过。

@@ -2,6 +2,8 @@
 
 红皇后—鲶鱼—创造性破坏：多 Agent 自治协作与进化体系。
 
+[接力归属与历史回执](docs/HANDOFF_OWNERSHIP.zh-CN.md)：区分目标认领、他人认领、过期和释放；保留历史 ACK，但不以此冒充完成或触发重发。
+
 [Windows 便携 Python 核心](docs/PORTABLE_PYTHON.zh-CN.md)：无需系统 Python，支持固定哈希在线/离线安装及 `./aep.ps1` 统一入口；核心不捆绑可选 MCP/浏览器/WSL。
 
 [可选 MCP SDK 离线安装](docs/OFFLINE_DESKTOP_SDK.zh-CN.md)：固定 Windows CPython 3.13 的 30 个 wheel 与哈希，预下载后断开索引安装，独立入口 `./aep-desktop.ps1`；仍需完整 Python 创建 venv。

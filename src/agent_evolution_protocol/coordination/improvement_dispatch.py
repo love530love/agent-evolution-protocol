@@ -91,8 +91,10 @@ def delivery_status(root):
         if not task.startswith("improvement:"):
             continue
         identity = task.removeprefix("improvement:")
+        ack_recorded = bool(order.get("ack")) or order.get("state") == "AGENT_ACK" or any(
+            attempt.get("state") == "AGENT_ACK" for attempt in order.get("attempts", []))
         row = {"order_id": order["id"], "id": identity, "target": order.get("target"),
-               "transport_state": order.get("state"), "ack_recorded": order.get("state") == "AGENT_ACK"}
+               "transport_state": order.get("state"), "ack_recorded": ack_recorded}
         try:
             proposal = improvement.status(root, identity)
             head = proposal["events"][-1]["sha256"]
@@ -102,17 +104,25 @@ def delivery_status(root):
             active = bool(lease.get("active") and lease.get("head") == head and
                           lease.get("expires", 0) > improvement_work._now())
             row.update(proposal_state=proposal["state"], obsolete=stale,
-                       claim_owner=lease.get("actor") if active else None)
+                       claim_owner=lease.get("actor") if active else None,
+                       target_claimed=active and lease.get("actor") == order.get("target"),
+                       claim_expires_at=lease.get("expires") if active else None)
             if order.get("state") == "RETIRED":
                 row.update(progress="RETIRED", next_action="inspect_current_stage")
             elif stale:
                 row.update(progress="STAGE_CHANGED", next_action="inspect_current_stage")
+            elif active and lease.get("actor") != order.get("target"):
+                row.update(progress="CLAIMED_ELSEWHERE", next_action="coordinate_with_claim_owner_do_not_duplicate")
             elif active:
                 row.update(progress="CLAIMED", next_action="await_evidence_or_lease_expiry")
-            elif row["ack_recorded"]:
-                row.update(progress="ACK_WITHOUT_CLAIM", next_action="check_acceptance_not_completion")
+            elif lease.get("head") == head and lease.get("active") and lease.get("expires", 0) <= improvement_work._now():
+                row.update(progress="CLAIM_EXPIRED", next_action="inspect_evidence_before_reclaim")
+            elif lease.get("head") == head and lease.get("result") == "RELEASED":
+                row.update(progress="CLAIM_RELEASED", next_action="inspect_release_before_reclaim")
             elif order.get("state") in {"CEASED", "FAILED"}:
                 row.update(progress="DELIVERY_BLOCKED", next_action="inspect_before_retry")
+            elif row["ack_recorded"]:
+                row.update(progress="ACK_WITHOUT_CLAIM", next_action="check_acceptance_not_completion")
             else:
                 row.update(progress="AWAITING_ACK", next_action="inspect_delivery_receipt")
         except (OSError, ValueError, KeyError, TypeError) as exc:

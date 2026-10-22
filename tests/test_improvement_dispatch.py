@@ -6,6 +6,34 @@ from agent_evolution_protocol.coordination import improvement, improvement_dispa
 
 
 class DispatchTests(unittest.TestCase):
+    def test_owner_expiry_release_and_historical_ack_are_distinct(self):
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            proof = root / "proof"
+            proof.write_text("ok")
+            identity = improvement.propose(root, dict(author="a", change="b", acceptance="c",
+                rollback="d", scope="e", evidence=[str(proof)]))["id"]
+            head = improvement.status(root, identity)["events"][-1]["sha256"]
+            order = commander.submit_order(root, target="worker", task="improvement:" + identity,
+                text="verify", sender="router", event_id="EVT-IMPROVE-" + head[:24].upper())
+            commander._record_attempt(root, order, state="AGENT_ACK", note="fixture, not live ACK")
+            commander._record_attempt(root, order, state="FAILED")
+            row = router.delivery_status(root)["orders"][0]
+            self.assertTrue(row["ack_recorded"])
+            self.assertEqual(row["progress"], "DELIVERY_BLOCKED")
+            lease = improvement_work.claim(root, identity, actor="other")
+            row = router.delivery_status(root)["orders"][0]
+            self.assertEqual(row["progress"], "CLAIMED_ELSEWHERE")
+            self.assertEqual(row["claim_owner"], "other")
+            self.assertFalse(row["target_claimed"])
+            with patch.object(improvement_work, "_now", return_value=lease["expires"]):
+                self.assertEqual(router.delivery_status(root)["orders"][0]["progress"], "CLAIM_EXPIRED")
+            improvement_work.finish(root, identity, actor="other", token=lease["token"], release=True)
+            result = router.delivery_status(root)
+            self.assertEqual(result["orders"][0]["progress"], "CLAIM_RELEASED")
+            self.assertFalse(result["delivery_attempted"])
+            self.assertFalse(result["ui_read_performed"])
+
     def test_obsolete_preinput_retirement_frees_route_and_fences_stale_copy(self):
         with TemporaryDirectory() as temp:
             root = Path(temp)
