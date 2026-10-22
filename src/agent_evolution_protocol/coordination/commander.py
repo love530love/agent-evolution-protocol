@@ -316,6 +316,10 @@ def dispatch(root: Path, *, order: dict) -> dict:
     if str(order.get("task", "")).startswith("improvement:"):
         from .battle_orders import _task_writer_lock
         with _task_writer_lock(Path(root), "improvement-dispatch"):
+            current = next((row for row in _orders(root) if row.get("id") == order.get("id")), None)
+            if current and current.get("target") != order.get("target"):
+                # A queued tick may still hold the pre-reroute recipient. Do not send it.
+                return current
             return _dispatch(root, order=order)
     return _dispatch(root, order=order)
 

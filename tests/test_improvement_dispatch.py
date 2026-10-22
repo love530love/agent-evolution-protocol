@@ -6,6 +6,56 @@ from agent_evolution_protocol.coordination import improvement, improvement_dispa
 
 
 class DispatchTests(unittest.TestCase):
+    def test_reroute_preserves_order_and_fences_stale_dispatch(self):
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            proof = root / "proof"
+            proof.write_text("ok")
+            identity = improvement.propose(root, dict(author="a", change="b", acceptance="c",
+                rollback="d", scope="e", evidence=[str(proof)]))["id"]
+            head = improvement.status(root, identity)["events"][-1]["sha256"]
+            order = commander.submit_order(root, target="old", task="improvement:" + identity,
+                text="verify", sender="router", event_id="EVT-IMPROVE-" + head[:24].upper())
+            roster = {"agents": [{"agent": "new", "actions": ["validate"]}]}
+            args = dict(order_id=order["id"], target="new", actor="operator", note="old offline", roster=roster)
+            online = {"agents": [{"agent": "new", "state": "online", "active_assignments": []}]}
+            with patch.object(router.presence, "snapshot", return_value=online):
+                self.assertEqual(router.reroute(root, **args)["status"], "PLAN_ONLY")
+                self.assertEqual(commander._orders(root)[0]["target"], "old")
+                self.assertEqual(router.reroute(root, **args, apply=True)["status"], "REROUTED")
+            persisted = commander._orders(root)
+            self.assertEqual(len(persisted), 1)
+            self.assertEqual(persisted[0]["event_id"], order["event_id"])
+            self.assertEqual(persisted[0]["attempts"][-1]["receipt"]["previous_target"], "old")
+            with patch.object(commander.registry, "profile") as profile:
+                self.assertEqual(commander.dispatch(root, order=order)["target"], "new")
+                profile.assert_not_called()
+
+    def test_reroute_rejects_claimed_offline_or_input_history(self):
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            proof = root / "proof"
+            proof.write_text("ok")
+            identity = improvement.propose(root, dict(author="a", change="b", acceptance="c",
+                rollback="d", scope="e", evidence=[str(proof)]))["id"]
+            head = improvement.status(root, identity)["events"][-1]["sha256"]
+            order = commander.submit_order(root, target="old", task="improvement:" + identity,
+                text="verify", sender="router", event_id="EVT-IMPROVE-" + head[:24].upper())
+            args = dict(order_id=order["id"], target="new", actor="operator", note="handoff",
+                        roster={"agents": [{"agent": "new", "actions": ["validate"]}]}, apply=True)
+            with patch.object(router.presence, "snapshot", return_value={"agents": []}):
+                with self.assertRaisesRegex(ValueError, "online"):
+                    router.reroute(root, **args)
+            lease = improvement_work.claim(root, identity, actor="old")
+            with self.assertRaisesRegex(ValueError, "claimed"):
+                router.reroute(root, **args)
+            improvement_work.finish(root, identity, actor="old", token=lease["token"], release=True)
+            commander._record_attempt(root, order, state="INPUT_SUBMITTED")
+            commander._record_attempt(root, order, state="DEFERRED")
+            with self.assertRaisesRegex(ValueError, "started"):
+                router.reroute(root, **args)
+            self.assertEqual(commander._orders(root)[0]["target"], "old")
+
     def test_ack_without_claim_keeps_slot_until_stage_changes(self):
         with TemporaryDirectory() as temp:
             root = Path(temp)

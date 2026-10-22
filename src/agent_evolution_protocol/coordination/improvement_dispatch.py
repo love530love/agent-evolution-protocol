@@ -145,6 +145,55 @@ def delivery_status(root):
             "note": "ACK is a persisted commander observation, not a fresh authentication or completion proof."}
 
 
+def reroute(root, *, order_id, target, actor, note, roster, apply=False):
+    """Reassign a proven pre-input order, never cancel a possibly running task."""
+    members = _roster(roster)
+    if (not isinstance(actor, str) or not commander.SAFE_AGENT.fullmatch(actor)
+            or not isinstance(target, str) or not commander.SAFE_AGENT.fullmatch(target)
+            or not isinstance(note, str) or not note.strip()):
+        raise ValueError("valid actor, target and nonempty note required")
+    root = Path(root)
+    # Match dispatch's lock and prevent a claim from appearing during reassignment.
+    with _task_writer_lock(root, "improvement-dispatch"):
+        with _task_writer_lock(root, "improvement-handoff"):
+            orders = commander._orders(root)
+            order = next((o for o in orders if o.get("id") == order_id), None)
+            if not order or not order.get("task", "").startswith("improvement:"):
+                raise ValueError("unknown improvement order")
+            if target == order.get("target"):
+                raise ValueError("target is unchanged")
+            if order.get("state") not in {"DEPOSITED", "DEFERRED"} or any(
+                    a.get("state") not in {"DEPOSITED", "DEFERRED"} for a in order.get("attempts", [])):
+                raise ValueError("delivery may have started; cannot reroute")
+            identity = order["task"].split(":", 1)[1]
+            proposal = improvement.status(root, identity)
+            head = proposal["events"][-1]["sha256"]
+            if order.get("event_id") != "EVT-IMPROVE-" + head[:24].upper():
+                raise ValueError("obsolete order; inspect current stage")
+            work = improvement_work.pending(root)["work"]
+            item = next((w for w in work if w["id"] == identity), None)
+            if not item or not item["available"]:
+                raise ValueError("work unavailable or already claimed")
+            eligible = any(m["agent"] == target and item["action"] in m["actions"] for m in members)
+            online = any(p["agent"] == target and p["state"] == "online" and not p["active_assignments"]
+                         for p in presence.snapshot(root)["agents"])
+            busy = any(o.get("target") == target and _occupies_slot(root, o) for o in orders)
+            busy = busy or any(w.get("owner") == target and not w["available"] for w in work)
+            excluded = item["action"] == "review" and target in {e["actor"] for e in proposal["events"]}
+            if not eligible or not online or busy or excluded:
+                raise ValueError("target must be online, capable, available and independent")
+            previous = order["target"]
+            if apply:
+                commander._record_attempt(root, {**order, "target": target}, state="DEPOSITED",
+                    receipt={"actor": actor, "reason": note, "previous_target": previous,
+                             "target": target, "head": head, "desktop_input_performed": False},
+                    note="PREINPUT_ORDER_REROUTED")
+            return {"order_id": order_id, "event_id": order["event_id"], "previous_target": previous,
+                    "target": target, "status": "REROUTED" if apply else "PLAN_ONLY",
+                    "delivery_attempted": False, "execution_cancelled": False,
+                    "note": "Only a queue target changed; presence and capability are declarations, not authentication."}
+
+
 def retire(root, *, order_id, actor, note):
     """Retire obsolete, proven pre-input orders only. Never cancel uncertain sends."""
     if not isinstance(actor, str) or not commander.SAFE_AGENT.fullmatch(actor) or not isinstance(note, str) or not note.strip():

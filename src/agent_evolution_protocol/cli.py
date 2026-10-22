@@ -769,6 +769,12 @@ def coord_improvement(args: argparse.Namespace) -> None:
                       if args.mode else improvement_policy.read(coord_root(args)))
         elif args.action == "retire":
             result = improvement_dispatch.retire(coord_root(args), order_id=args.order_id, actor=args.actor, note=args.note)
+        elif args.action == "reroute":
+            if not args.request_file:
+                raise ValueError("reroute requires roster --request-file")
+            result = improvement_dispatch.reroute(coord_root(args), order_id=args.order_id, target=args.target,
+                actor=args.actor, note=args.note, roster=json.loads(args.request_file.read_text(encoding="utf-8")),
+                apply=args.apply)
         elif args.action == "delivery-status":
             result = improvement_dispatch.delivery_status(coord_root(args))
         elif args.action == "schedule":
@@ -2409,7 +2415,8 @@ def build_parser() -> argparse.ArgumentParser:
     orca.add_argument("--apply", action="store_true")
     orca.set_defaults(func=coord_orca)
     changes = commands.add_parser("coord-improvement")
-    changes.add_argument("action", choices=("propose", "status", "advance", "ingest", "validate", "enqueue", "drain", "overview", "pending", "claim", "complete", "release", "schedule", "delivery-status", "retire", "brief", "renew", "policy", "self-test"))
+    changes.add_argument("action", choices=("propose", "status", "advance", "ingest", "validate", "enqueue", "drain", "overview", "pending", "claim", "complete", "release", "schedule", "delivery-status", "retire", "reroute", "brief", "renew", "policy", "self-test"))
+    changes.add_argument("--target")
     changes.add_argument("--mode", choices=sorted(improvement_policy.MODES))
     changes.add_argument("--order-id")
     changes.add_argument("--apply", action="store_true")
