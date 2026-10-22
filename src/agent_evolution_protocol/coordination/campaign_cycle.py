@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import re
+import time
 from uuid import uuid4
 
 from agent_evolution_protocol.coordination import bridge
@@ -63,7 +64,16 @@ def _atomic(path: Path, data: dict) -> None:
             stream.write("\n")
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, path)
+        for attempt in range(4):
+            try:
+                os.replace(temporary, path)
+                break
+            except PermissionError as exc:
+                # Windows readers/AV may briefly deny replacement. Retry only the
+                # same completed local snapshot; never replay a business action.
+                if getattr(exc, "winerror", None) not in {5, 32, 33} or attempt == 3:
+                    raise
+                time.sleep(0.02 * (attempt + 1))
     finally:
         temporary.unlink(missing_ok=True)
 

@@ -784,6 +784,11 @@ def coord_improvement(args: argparse.Namespace) -> None:
                                                    apply=args.apply, limit=args.limit)
         elif args.action == "pending":
             result = improvement_work.pending(coord_root(args))
+        elif args.action == "checkpoints":
+            result = improvement_work.checkpoints(coord_root(args), args.id)
+        elif args.action == "checkpoint":
+            result = improvement_work.checkpoint(coord_root(args), args.id, actor=args.actor, token=args.token,
+                                                 evidence=args.evidence, note=args.note)
         elif args.action == "brief":
             result = improvement_work.brief(coord_root(args), args.id, actor=args.actor, token=args.token)
         elif args.action == "renew":
@@ -2415,7 +2420,7 @@ def build_parser() -> argparse.ArgumentParser:
     orca.add_argument("--apply", action="store_true")
     orca.set_defaults(func=coord_orca)
     changes = commands.add_parser("coord-improvement")
-    changes.add_argument("action", choices=("propose", "status", "advance", "ingest", "validate", "enqueue", "drain", "overview", "pending", "claim", "complete", "release", "schedule", "delivery-status", "retire", "reroute", "brief", "renew", "policy", "self-test"))
+    changes.add_argument("action", choices=("propose", "status", "advance", "ingest", "validate", "enqueue", "drain", "overview", "pending", "claim", "complete", "release", "schedule", "delivery-status", "retire", "reroute", "checkpoint", "checkpoints", "brief", "renew", "policy", "self-test"))
     changes.add_argument("--target")
     changes.add_argument("--mode", choices=sorted(improvement_policy.MODES))
     changes.add_argument("--order-id")

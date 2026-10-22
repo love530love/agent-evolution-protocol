@@ -6,6 +6,54 @@ from agent_evolution_protocol.coordination import improvement, improvement_work 
 
 
 class WorkTests(unittest.TestCase):
+    def test_checkpoint_survives_reclaim_and_detects_changed_artifacts(self):
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            proof = root / "proof"
+            proof.write_text("baseline")
+            output = root / "experiment.txt"
+            output.write_text("partial result")
+            identity = improvement.propose(root, dict(author="a", change="b", acceptance="c",
+                rollback="d", scope="e", evidence=[str(proof)]))["id"]
+            first = work.claim(root, identity, actor="first", ttl=1)
+            saved = work.checkpoint(root, identity, actor="first", token=first["token"],
+                                    evidence=[str(output)], note="Attempt A failed; try B")
+            self.assertNotIn(first["token"], str(saved))
+            self.assertFalse(saved["execution_stopped_verified"])
+            with patch.object(work, "_now", return_value=first["expires"] + 1):
+                with self.assertRaises(ValueError):
+                    work.checkpoint(root, identity, actor="first", token=first["token"],
+                                    evidence=[str(output)], note="stale write")
+                second = work.claim(root, identity, actor="second")
+                packet = work.brief(root, identity, actor="second", token=second["token"])
+                self.assertEqual(packet["checkpoints"][0]["actor"], "first")
+                work.checkpoint(root, identity, actor="second", token=second["token"],
+                                evidence=[str(output)], note="B ready for review")
+                self.assertEqual(len(work.checkpoints(root, identity)["checkpoints"]), 2)
+                output.write_text("changed")
+                with self.assertRaisesRegex(ValueError, "evidence changed"):
+                    work.brief(root, identity, actor="second", token=second["token"])
+
+    def test_checkpoint_integrity_and_stage_scope(self):
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            proof = root / "proof"
+            proof.write_text("ok")
+            identity = improvement.propose(root, dict(author="a", change="b", acceptance="c",
+                rollback="d", scope="e", evidence=[str(proof)]))["id"]
+            lease = work.claim(root, identity, actor="tester")
+            work.checkpoint(root, identity, actor="tester", token=lease["token"],
+                            evidence=[str(proof)], note="saved")
+            improvement.advance(root, identity, state="VALIDATED", actor="tester",
+                                evidence=[str(proof)], note="passed")
+            status = work.checkpoints(root, identity)
+            self.assertEqual(status["checkpoints"], [])
+            self.assertEqual(status["historical_count"], 1)
+            path = root / "improvement_checkpoints" / identity / "000000.json"
+            path.write_text(path.read_text(encoding="utf-8").replace('"saved"', '"forged"'), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "integrity"):
+                work.checkpoints(root, identity)
+
     def test_brief_and_bounded_renewal(self):
         with TemporaryDirectory() as temp:
             root = Path(temp)
