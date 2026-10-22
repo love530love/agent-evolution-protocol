@@ -79,3 +79,9 @@
 schedule 会核对待办阶段与重新读取的提案阶段/动作，并在选人后再次核对阶段头。检测到变化就报告 STAGE_CHANGED，本轮不排队，下一次调用重新匹配；某项读取损坏则报告 WORK_DAMAGED，不阻塞其他正常提案。blocked_count 汇总损坏、阶段变化与无人可选项；未计入已认领或去重项，不是全部积压数量。
 
 只有读取异常在单项范围隔离；订单写入故障仍向调用者报错，不假装未写入，也不自动重试。检查之后仍存在并发变化窗口，后续 dispatch、claim 和结果提交的阶段围栏继续生效，尚非跨文件全局事务。
+
+### 无人可派的原因
+
+NO_ELIGIBLE_MEMBER 附带所需 action 和逐成员 candidates，eligible=false 的 reasons 可同时列出多项：CAPABILITY_NOT_DECLARED、NO_FRESH_ONLINE_DECLARATION、KNOWN_ASSIGNMENT_OR_ORDER、REVIEW_NOT_INDEPENDENT。对应检查能力名单、新鲜在线声明、既有任务/订单和独立复核成员。
+
+缺少声明不代表真实无能力或已离线；忙碌记录也不授权强制释放。诊断不更改原有名单顺序选人策略，不自动启动客户端、转移任务、绕过评审或新增模型调用。名单为空时 candidates 为空，须先配置真实成员。presence、名单和本次调度均非跨宿主原子快照。

@@ -6,6 +6,32 @@ from agent_evolution_protocol.coordination import improvement, improvement_dispa
 
 
 class DispatchTests(unittest.TestCase):
+    def test_unavailable_members_have_specific_non_authorizing_reasons(self):
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            proof = root / "proof"
+            proof.write_text("ok")
+            identity = improvement.propose(root, dict(author="author", change="b", acceptance="c",
+                rollback="d", scope="e", evidence=[str(proof)]))["id"]
+            improvement.advance(root, identity, state="VALIDATED", actor="tester",
+                                evidence=[str(proof)], note="fixture")
+            roster = {"agents": [{"agent": name, "actions": actions} for name, actions in (
+                ("author", ["review"]), ("occupied", ["review"]), ("absent", ["review"]),
+                ("coder", ["validate"]))]}
+            observed = {"agents": [{"agent": name, "state": "online", "active_assignments": tasks}
+                for name, tasks in (("author", []), ("occupied", ["other-task"]), ("coder", []))]}
+            with patch.object(router.presence, "snapshot", return_value=observed):
+                result = router.schedule(root, roster, apply=True)
+            row = result["assignments"][0]
+            reasons = {r["agent"]: r["reasons"] for r in row["candidates"]}
+            self.assertEqual(reasons["author"], ["REVIEW_NOT_INDEPENDENT"])
+            self.assertEqual(reasons["occupied"], ["KNOWN_ASSIGNMENT_OR_ORDER"])
+            self.assertEqual(reasons["absent"], ["NO_FRESH_ONLINE_DECLARATION"])
+            self.assertEqual(reasons["coder"], ["CAPABILITY_NOT_DECLARED"])
+            self.assertEqual(row["status"], "NO_ELIGIBLE_MEMBER")
+            self.assertEqual(commander._orders(root), [])
+            self.assertFalse(result["delivery_attempted"])
+
     def test_stage_changes_before_and_after_selection_do_not_queue_old_action(self):
         for change_on in (1, 2):
             with self.subTest(change_on=change_on), TemporaryDirectory() as temp:

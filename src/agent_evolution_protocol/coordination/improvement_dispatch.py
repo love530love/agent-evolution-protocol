@@ -39,15 +39,33 @@ def _occupies_slot(root, order):
         return True  # Missing/damaged progress is not completion evidence.
 
 
+def _candidate_decisions(members, action, online, busy, excluded):
+    decisions = []
+    for member in members:
+        name = member["agent"]
+        reasons = []
+        if action not in member["actions"]:
+            reasons.append("CAPABILITY_NOT_DECLARED")
+        if name not in online:
+            reasons.append("NO_FRESH_ONLINE_DECLARATION")
+        if name in busy:
+            reasons.append("KNOWN_ASSIGNMENT_OR_ORDER")
+        if name in excluded:
+            reasons.append("REVIEW_NOT_INDEPENDENT")
+        decisions.append({"agent": name, "eligible": not reasons, "reasons": reasons})
+    return decisions
+
+
 def _schedule(root, roster, *, apply, limit):
     members = _roster(roster)
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 20:
         raise ValueError("limit must be 1..20")
-    online = {row["agent"] for row in presence.snapshot(root)["agents"]
-              if row["state"] == "online" and not row["active_assignments"]}
+    observed = presence.snapshot(root)["agents"]
+    online = {row["agent"] for row in observed if row["state"] == "online"}
     orders = commander._orders(root)
     # Existing uncertain/failed deliveries must be inspected, not silently reassigned.
     busy = {order.get("target") for order in orders if _occupies_slot(root, order)}
+    busy.update(row["agent"] for row in observed if row["active_assignments"])
     work = improvement_work.pending(root)["work"]
     busy.update(item.get("owner") for item in work if not item["available"] and item.get("owner"))
     results = []
@@ -71,10 +89,12 @@ def _schedule(root, roster, *, apply, limit):
             results.append({"id": item["id"], "status": "ALREADY_QUEUED", "order_id": existing[0]["id"]})
             continue
         excluded = {e["actor"] for e in proposal["events"]} if item["action"] == "review" else set()
-        target = next((row["agent"] for row in members if item["action"] in row["actions"]
-                       and row["agent"] in online - busy - excluded), None)
+        decisions = _candidate_decisions(members, item["action"], online, busy, excluded)
+        target = next((row["agent"] for row in decisions if row["eligible"]), None)
         if not target:
-            results.append({"id": item["id"], "status": "NO_ELIGIBLE_MEMBER"})
+            results.append({"id": item["id"], "status": "NO_ELIGIBLE_MEMBER", "action": item["action"],
+                            "candidates": decisions,
+                            "next_action": "review_declared_capacity_do_not_force_release_or_bypass_independence"})
             continue
         try:
             latest = improvement.status(root, item["id"])
