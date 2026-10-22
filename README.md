@@ -12,6 +12,8 @@
 
 [SDK 实物对账](docs/SDK_ENVIRONMENT_INVENTORY.zh-CN.md)：`coord-dependency-inventory` 不启动目标解释器，比对锁与安装元数据，可核验 RECORD 文件哈希；引导包和未验证范围单独报告。
 
+[原始 wheel 载荷对照](docs/WHEEL_PAYLOAD_COMPARISON.zh-CN.md)：`coord-wheel-compare` 用锁定归档的实际字节对照安装文件，不信任可一同改写的本地 RECORD；未知映射不静默放行。
+
 [Orca 可选运行时适配器](docs/coordination/ORCA_RUNTIME_ADAPTER.zh-CN.md)：新增 `coord-orca` 原终端探测/绑定/读写预览，显式发送去重并拒绝未知结果重试；尚未真实宿主验收。
 
 [团队执行与自进化契约 v1.0](docs/EVOLUTION_EXECUTION_PACT.zh-CN.md)：新增 `coord-improvement` 证据绑定的改进生命周期；不自动部署、不自行扩权。

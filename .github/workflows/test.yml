@@ -26,6 +26,8 @@ jobs:
         run: |
           python -I -S -B -c 'import sys,runpy; sys.path.insert(0,"src"); runpy.run_module("agent_evolution_protocol",run_name="__main__")' coord-dependency-inventory --lock runtime/desktop-win-cp313.lock.json --environment .tools/desktop-sdk --output .tools/ci-sdk-inventory --apply --verify-records
           if ($LASTEXITCODE -ne 0) { throw 'Installed SDK inventory differs from lock or RECORD' }
+          python -I -S -B -c 'import sys,runpy; sys.path.insert(0,"src"); runpy.run_module("agent_evolution_protocol",run_name="__main__")' coord-wheel-compare --lock runtime/desktop-win-cp313.lock.json --wheelhouse .tools/desktop-wheelhouse --environment .tools/desktop-sdk --output .tools/ci-wheel-comparison --apply
+          if ($LASTEXITCODE -ne 0) { throw 'Installed SDK payload differs from locked wheels' }
       - name: Verify unaudited dependencies cannot silently pass
         shell: pwsh
         run: |

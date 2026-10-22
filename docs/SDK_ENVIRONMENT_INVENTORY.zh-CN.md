@@ -33,7 +33,7 @@
 
 ## 不能据此宣称的能力
 
-RECORD 是本地安装器声明，攻击者可以连同文件一起改它；本轮没有将已安装文件逐一与已验收 wheel 的原始字节对比。也没有扫描所有未登记文件、启动路径覆盖、系统 DLL、源码、解释器或内核。报告始终 artifact_integrity_verified_against_wheels=false、untracked_files_checked=false、security_verified=false。
+RECORD 是本地安装器声明，攻击者可以连同文件一起改它；本命令没有将已安装文件逐一与已验收 wheel 的原始字节对比。独立新增的 [coord-wheel-compare](WHEEL_PAYLOAD_COMPARISON.zh-CN.md) 可做有范围的原始载荷对照，不改写本报告的结论。两者均没有扫描所有未登记文件、启动路径覆盖、系统 DLL、源码、解释器或内核。本报告始终 artifact_integrity_verified_against_wheels=false、untracked_files_checked=false、security_verified=false。
 
 因此匹配状态不是部署授权或安全认证，更不能替代已有版本锁、OSV 快照、业务验收、独立评审。将锁、安装报告、漏洞报告一起作为 coord-improvement evidence；差异先调查，不能自动重装、删包或替换生产配置。
 

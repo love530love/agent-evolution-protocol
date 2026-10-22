@@ -1,5 +1,7 @@
 # 多 Agent 协作机制：待开发目标与验收表（2026-10-13）
 
+2026-10-23 原始载荷对照：新增 coord-wheel-compare，锁定 SHA256 的 wheel 载荷对照安装文件，不依赖安装后 RECORD。本机 30 wheel/1511 文件匹配；生成的包装器、缓存、未知映射、未登记文件与锁外包不冒充已认证，见 `docs/WHEEL_PAYLOAD_COMPARISON.zh-CN.md`。上一轮提交 012af4e 的五组 CI 已确认通过。
+
 2026-10-22 SDK 实物核验：新增 coord-dependency-inventory，不启动目标解释器，核对版本、重复/额外包与 RECORD 哈希；本机 30 包、1580 文件匹配，pip 单独列为锁外引导包。原始 wheel 字节对照、未登记文件扫描、引导包审计和解释器来源仍待完成，见 `docs/SDK_ENVIRONMENT_INVENTORY.zh-CN.md`。
 
 2026-10-22 漏洞信息接入：新增 coord-dependency-audit，只对明确指定锁执行显式 OSV 查询，保存逐包完整性、通报 ID、时间与哈希；未知/失败/分页/风险非零退出。真实 30 包快照查询本次无已知通报，不构成安全认证。实际安装对账、详情处置、过期策略和许可证审查仍待开发，见 `docs/DEPENDENCY_VULNERABILITY_AUDIT.zh-CN.md`。
