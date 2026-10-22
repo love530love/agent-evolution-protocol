@@ -38,6 +38,12 @@ class OrcaAdapterTests(unittest.TestCase):
     def bind(self):
         adapter.bind(self.root, agent="codex", terminal="terminal:one")
 
+    def test_configuration_cannot_be_silently_replaced(self):
+        original = (self.root / "orca" / "config.json").read_bytes()
+        with self.assertRaises(ValueError):
+            adapter.configure(self.root, sys.executable)
+        self.assertEqual((self.root / "orca" / "config.json").read_bytes(), original)
+
     def test_explicit_target_dedup_and_no_ack_from_echo(self):
         with patch.object(adapter, "_call", side_effect=self.call):
             self.bind()

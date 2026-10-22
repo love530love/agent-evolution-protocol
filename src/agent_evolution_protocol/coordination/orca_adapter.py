@@ -24,9 +24,10 @@ def configure(root, command):
     if not Path(command).is_absolute() or not path.is_file() or path.suffix.lower() in {".cmd", ".bat", ".ps1"}:
         raise ValueError("use an existing absolute CLI executable, not a shell script")
     destination = Path(root) / "orca" / "config.json"
-    if destination.exists():
-        raise ValueError("Orca already configured; inspect configuration before replacing it")
-    _atomic_json(destination, {"command": str(path), "upstream_contract": UPSTREAM})
+    with _task_writer_lock(Path(root), "orca-adapter"):
+        if destination.exists():
+            raise ValueError("Orca already configured; inspect configuration before replacing it")
+        _atomic_json(destination, {"command": str(path), "upstream_contract": UPSTREAM})
     return {"configured": True, "execution_started": False}
 
 
