@@ -38,6 +38,11 @@ def claim(root, identity, *, actor, ttl=300):
         now = _now()
         if old.get("active") and old.get("head") == head and old["expires"] > now:
             raise ValueError("work already claimed; wait for release or expiry")
+        # Do not replace the previous lease before discovering an unusable handoff.
+        checkpoints(root, identity)
+        if improvement.status(root, identity)["events"][-1]["sha256"] != head:
+            raise ValueError("proposal changed during claim preflight")
+        now = _now()  # Artifact checks must not consume the new worker's TTL.
         row = {"id": identity, "actor": actor, "token": uuid4().hex, "head": head,
                "action": NEXT[current["state"]][0], "target": NEXT[current["state"]][1],
                "expires": now + ttl, "claimed_at": now, "deadline": now + 3600,
@@ -133,6 +138,8 @@ def brief(root, identity, *, actor, token):
                 evidence.append(record)
         proposal = current["events"][0]["proposal"]
         handoff = checkpoints(root, identity)
+        # Artifact hashing can outlive a short lease or overlap an old advance call.
+        lease = check_claim(root, identity, actor=actor, token=token)
         return {"id": identity, "state": current["state"], "action": lease["action"],
                 "acceptance": proposal["acceptance"], "change": proposal["change"],
                 "scope": proposal["scope"], "rollback": proposal["rollback"],

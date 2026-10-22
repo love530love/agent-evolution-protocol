@@ -6,6 +6,44 @@ from agent_evolution_protocol.coordination import improvement, improvement_work 
 
 
 class WorkTests(unittest.TestCase):
+    def test_damaged_checkpoint_blocks_reclaim_without_replacing_lease(self):
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            proof = root / "proof"
+            proof.write_text("ok")
+            artifact = root / "artifact"
+            artifact.write_text("frozen")
+            identity = improvement.propose(root, dict(author="a", change="b", acceptance="c",
+                rollback="d", scope="e", evidence=[str(proof)]))["id"]
+            lease = work.claim(root, identity, actor="first", ttl=1)
+            work.checkpoint(root, identity, actor="first", token=lease["token"],
+                            evidence=[str(artifact)], note="handoff")
+            previous = work._path(root, identity).read_bytes()
+            artifact.write_text("mutated")
+            with patch.object(work, "_now", return_value=lease["expires"] + 1):
+                with self.assertRaisesRegex(ValueError, "checkpoint evidence changed"):
+                    work.claim(root, identity, actor="next")
+            self.assertEqual(work._path(root, identity).read_bytes(), previous)
+
+    def test_brief_rechecks_lease_after_checkpoint_hashing(self):
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            proof = root / "proof"
+            proof.write_text("ok")
+            identity = improvement.propose(root, dict(author="a", change="b", acceptance="c",
+                rollback="d", scope="e", evidence=[str(proof)]))["id"]
+            lease = work.claim(root, identity, actor="worker", ttl=10)
+            original = work.checkpoints
+            clock = [lease["claimed_at"]]
+            def slow_check(*args):
+                result = original(*args)
+                clock[0] = lease["expires"]
+                return result
+            with patch.object(work, "_now", side_effect=lambda: clock[0]):
+                with patch.object(work, "checkpoints", side_effect=slow_check):
+                    with self.assertRaisesRegex(ValueError, "expired"):
+                        work.brief(root, identity, actor="worker", token=lease["token"])
+
     def test_checkpoint_survives_reclaim_and_detects_changed_artifacts(self):
         with TemporaryDirectory() as temp:
             root = Path(temp)
