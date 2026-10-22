@@ -8,6 +8,26 @@ permissions:
   contents: read
 
 jobs:
+  offline-desktop-sdk:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Download and verify frozen wheels
+        shell: pwsh
+        run: ./scripts/prepare-desktop-wheelhouse.ps1 -Action Download
+      - name: Install SDK without package index
+        shell: pwsh
+        run: ./scripts/bootstrap-desktop.ps1 -Python (Get-Command python.exe).Source -Wheelhouse .tools/desktop-wheelhouse -Install
+      - name: Verify explicit SDK entry point
+        shell: pwsh
+        run: |
+          ./aep-desktop.ps1 --help
+          if ($LASTEXITCODE -ne 0) { throw 'SDK launcher failed' }
+          ./aep-desktop.ps1 --coord-root .tools/sdk-acceptance coord-improvement self-test
+          if ($LASTEXITCODE -ne 0) { throw 'SDK workflow failed' }
   test:
     strategy:
       fail-fast: false

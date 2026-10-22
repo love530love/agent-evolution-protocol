@@ -4,6 +4,8 @@
 
 [Windows 便携 Python 核心](docs/PORTABLE_PYTHON.zh-CN.md)：无需系统 Python，支持固定哈希在线/离线安装及 `./aep.ps1` 统一入口；核心不捆绑可选 MCP/浏览器/WSL。
 
+[可选 MCP SDK 离线安装](docs/OFFLINE_DESKTOP_SDK.zh-CN.md)：固定 Windows CPython 3.13 的 30 个 wheel 与哈希，预下载后断开索引安装，独立入口 `./aep-desktop.ps1`；仍需完整 Python 创建 venv。
+
 [Orca 可选运行时适配器](docs/coordination/ORCA_RUNTIME_ADAPTER.zh-CN.md)：新增 `coord-orca` 原终端探测/绑定/读写预览，显式发送去重并拒绝未知结果重试；尚未真实宿主验收。
 
 [团队执行与自进化契约 v1.0](docs/EVOLUTION_EXECUTION_PACT.zh-CN.md)：新增 `coord-improvement` 证据绑定的改进生命周期；不自动部署、不自行扩权。
