@@ -11,7 +11,7 @@
 ## 当前可用：第一阶段
 
 - 五个桌面项目的源码版本记录在 `examples/desktop-provider-sources.lock.json`。这是来源清单，不是完整供应链锁；第三方许可证与再分发权仍需逐项审核。
-- `pip install ".[desktop]"` 安装可选 MCP SDK（固定 1.30.0）；不强迫协议核心安装桌面依赖。SDK 的间接依赖尚未完整锁定。
+- `pip install ".[desktop]"` 安装可选 MCP SDK（固定 1.30.0）；不强迫协议核心安装桌面依赖。此在线入口仍未锁定间接依赖；新增 [Windows CPython 3.13 离线 SDK](OFFLINE_DESKTOP_SDK.zh-CN.md) 固定全部 30 个 wheel、哈希和下载来源，安装禁用索引；不是跨平台通用锁。
 - PowerShell 7 隔离安装：`./scripts/bootstrap-desktop.ps1 -Python python.exe` 先输出计划；加 `-Install` 才安装。已有目录拒绝覆盖，支持 `-WhatIf`。无需管理员权限，不安装 Docker，不修改全局模型或 API Key。
 - `aep coord-desktop register --profile-file <本机配置.json>` 注册；配置字段说明见 [桌面接入文档](coordination/DESKTOP_MCP_PROVIDERS.md)。必须使用当前机器的绝对可执行文件路径。
 - `aep coord-desktop probe --provider sbroenne` 验证初始化与工具列表；不输入桌面、不发送聊天消息。

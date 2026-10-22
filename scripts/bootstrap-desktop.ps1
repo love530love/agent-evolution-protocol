@@ -38,7 +38,13 @@ if ($PSCmdlet.ShouldProcess($target, 'Create isolated AEP desktop SDK environmen
     if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed; preserve directory for diagnosis' }
     & $sdk -I -m pip --isolated --disable-pip-version-check check
     if ($LASTEXITCODE -ne 0) { throw 'Dependency validation failed' }
-    & $sdk -I -c 'import sys,runpy; sys.path.insert(0,sys.argv.pop(1)); import mcp; runpy.run_module("agent_evolution_protocol",run_name="__main__")' (Join-Path $repo 'src') coord-desktop inventory
+    if ($Wheelhouse) {
+        # Preserve compatibility with existing tools invoking SDK Python -m AEP.
+        # This is an explicit repository source link inside this new venv only.
+        [IO.File]::WriteAllText((Join-Path $target 'Lib/site-packages/aep-repository.pth'),
+            ((Join-Path $repo 'src') + "`n"), [Text.UTF8Encoding]::new($false))
+    }
+    & $sdk -I -m agent_evolution_protocol coord-desktop inventory
     if ($LASTEXITCODE -ne 0) { throw 'AEP smoke test failed' }
     if ($Wheelhouse) {
         @{ profile = $lock.profile; lock_sha256 = (Get-FileHash -LiteralPath (Join-Path $repo 'runtime/desktop-win-cp313.lock.json') -Algorithm SHA256).Hash;

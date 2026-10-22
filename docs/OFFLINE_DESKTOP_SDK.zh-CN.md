@@ -33,7 +33,7 @@ Download 只访问锁定的 pythonhosted.org HTTPS 文件，不实时解析“�
 
 ## 启动和迁移边界
 
-`aep-desktop.ps1` 固定使用 `.tools/desktop-sdk/Scripts/python.exe`，加载当前仓库 src，并显式导入 MCP；不自动安装、不回退便携核心或系统解释器。离线模式只安装 SDK，AEP 从当前源码运行，不另装一个可能过期的 AEP wheel。自定义 EnvironmentPath 时应明确使用对应解释器，不冒充默认环境已安装。
+`aep-desktop.ps1` 固定使用 `.tools/desktop-sdk/Scripts/python.exe`，加载当前仓库 src，并显式导入 MCP；不自动安装、不回退便携核心或系统解释器。离线模式只安装 SDK，AEP 从当前源码运行，不另装一个可能过期的 AEP wheel；新 venv 内写入明确的 aep-repository.pth 源码路径，使旧工具的 `SDK-python -I -m agent_evolution_protocol` 入口仍可使用。源码链接只作用于该 venv，不修改系统 site。自定义 EnvironmentPath 时应明确使用对应解释器，不冒充默认环境已安装。
 
 完整 Python 和 venv 尚未成为可搬迁便携发行物；迁移到新机器应复制锁、wheelhouse、源码并重新创建 venv，不直接复制旧 venv。浏览器、桌面 MCP 服务、.NET、WSL 仍需各自安装验收。SDK inventory 只是能力登记，不证明工具发现、原窗口投递或 ACK。
 

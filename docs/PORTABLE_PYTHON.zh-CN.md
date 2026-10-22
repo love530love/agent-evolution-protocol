@@ -38,6 +38,6 @@
 
 另已复制源码、脚本、清单和运行时至带空格的新目录，重新执行完整性诊断及改进流水线自验收通过；这是同机路径迁移，不替代干净 Windows 机器验收。Windows Python 3.12 CI 作业增加实际下载固定 ZIP、便携诊断及工作流验收，远程运行结果须另核对。
 
-下一阶段：干净机器搬迁验收、可选依赖的完整传递锁与离线 wheelhouse、带许可证及校验清单的发布包、运行时安全更新策略、ARM64/Linux 配置。当前不提供“全组件离线一键可用”的承诺。
+可选 MCP 的 Windows CPython 3.13 完整依赖锁与离线 wheelhouse 已加入，见 [离线 SDK](OFFLINE_DESKTOP_SDK.zh-CN.md)，不污染便携核心。下一阶段：干净机器搬迁验收、带许可证及校验清单的发布包、完整 Python 离线引导、运行时安全更新策略、ARM64/Linux 配置。当前不提供“全组件离线一键可用”的承诺。
 
 参考：[Python 官方 Windows 嵌入式说明](https://docs.python.org/3.13/using/windows.html#windows-embeddable)、[固定 ZIP 来源](https://www.python.org/ftp/python/3.13.12/)、[固定摘要来源](https://www.python.org/ftp/python/3.13.12/python-3.13.12-embed-amd64.zip.sigstore)。

@@ -24,6 +24,8 @@ jobs:
       - name: Verify explicit SDK entry point
         shell: pwsh
         run: |
+          & .tools/desktop-sdk/Scripts/python.exe -I -m agent_evolution_protocol --help
+          if ($LASTEXITCODE -ne 0) { throw 'SDK module entry failed' }
           ./aep-desktop.ps1 --help
           if ($LASTEXITCODE -ne 0) { throw 'SDK launcher failed' }
           ./aep-desktop.ps1 --coord-root .tools/sdk-acceptance coord-improvement self-test
