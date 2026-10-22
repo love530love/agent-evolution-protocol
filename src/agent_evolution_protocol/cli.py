@@ -673,6 +673,8 @@ def coord_orca(args: argparse.Namespace) -> None:
             if not args.command:
                 raise ValueError("configure requires --command absolute executable")
             result = orca_adapter.configure(coord_root(args), args.command)
+        elif args.action == "doctor":
+            result = orca_adapter.doctor(coord_root(args))
         elif args.action == "bind":
             result = orca_adapter.bind(coord_root(args), agent=args.agent, terminal=args.terminal)
         elif args.action == "read":
@@ -2295,7 +2297,7 @@ def build_parser() -> argparse.ArgumentParser:
     adversarial = commands.add_parser("coord-adversarial"); adversarial.add_argument("action", choices=("review", "status")); adversarial.add_argument("--task", required=True); adversarial.add_argument("--submission", required=True); adversarial.add_argument("--agent"); adversarial.add_argument("--role", choices=("ideator", "falsifier", "replicator", "bias_auditor", "referee")); adversarial.add_argument("--review-file", type=Path); adversarial.set_defaults(func=coord_adversarial)
     governed = commands.add_parser("coord-governance"); governed.add_argument("action", choices=("roles", "intervene", "history")); governed.add_argument("--request-file", type=Path); governed.set_defaults(func=coord_governance)
     orca = commands.add_parser("coord-orca")
-    orca.add_argument("action", choices=("configure", "probe", "bind", "read", "wait", "send"))
+    orca.add_argument("action", choices=("configure", "doctor", "probe", "bind", "read", "wait", "send"))
     orca.add_argument("--timeout", type=int, default=15)
     orca.add_argument("--command", type=Path)
     orca.add_argument("--agent")

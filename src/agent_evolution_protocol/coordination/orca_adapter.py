@@ -65,6 +65,74 @@ def probe(root):
             "agent_ack_verified": False, "desktop_input_performed": False}
 
 
+def doctor(root):
+    """Read-only bounded discovery; never binds, sends, launches or repairs."""
+    root = Path(root)
+    report = {"status": "UNCONFIGURED", "upstream_contract": UPSTREAM,
+              "blockers": [], "terminals": [], "bindings": [],
+              "durable_prompt_delivery": False, "agent_ack_verified": False,
+              "conversation_session_verified": False, "desktop_input_performed": False}
+    path = root / "orca" / "config.json"
+    if not path.exists():
+        report["blockers"].append("Configure an existing absolute Orca executable; no automatic installation or launch.")
+        return report
+    try:
+        config = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(config, dict) or config.get("upstream_contract") != UPSTREAM:
+            raise ValueError("configuration contract is unsupported")
+        command = config.get("command")
+        if not isinstance(command, str) or not Path(command).is_absolute() or not Path(command).is_file() or Path(command).suffix.lower() in {".cmd", ".bat", ".ps1"}:
+            raise ValueError("configured executable is unavailable or invalid")
+    except (OSError, ValueError, TypeError) as exc:
+        report.update(status="INVALID_CONFIGURATION", error=type(exc).__name__)
+        report["blockers"].append("Inspect configuration and executable; nothing was repaired or replaced.")
+        return report
+    try:
+        discovery = probe(root)
+        inventory = discovery["inventory"]
+        if inventory.get("truncated") is not False or not isinstance(inventory.get("terminals"), list):
+            raise ValueError("incomplete terminal inventory")
+        capabilities = discovery["runtime"].get("capabilities")
+        if not isinstance(capabilities, list) or any(not isinstance(item, str) for item in capabilities):
+            raise ValueError("unsupported runtime capabilities")
+    except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as exc:
+        report.update(status="PROBE_FAILED", error=type(exc).__name__)
+        report["blockers"].append("Check runtime reachability and pinned JSON contract; no input was attempted.")
+        return report
+    report["runtime_id"] = discovery["runtime_id"]
+    report["durable_prompt_delivery"] = "terminal.prompt-delivery.v1" in capabilities
+    identities = {}
+    for row in inventory["terminals"]:
+        handle = row.get("handle") if isinstance(row, dict) else None
+        try:
+            identity = _terminal(discovery, handle)
+        except ValueError as exc:
+            report["terminals"].append({"handle": handle, "bindable": False, "reason": str(exc)})
+        else:
+            identities[handle] = identity
+            report["terminals"].append({"handle": handle, "bindable": True})
+    for binding_path in sorted((root / "orca" / "bindings").glob("*.json")):
+        fresh = False
+        try:
+            binding = json.loads(binding_path.read_text(encoding="utf-8"))
+            _name(binding_path.stem)
+            fresh = (binding["agent"] == binding_path.stem and binding["runtime_id"] == discovery["runtime_id"]
+                     and binding["identity"] == identities.get(binding["identity"]["handle"]))
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+        report["bindings"].append({"agent": binding_path.stem, "fresh": fresh})
+    stale = any(not row["fresh"] for row in report["bindings"])
+    if stale:
+        report["blockers"].append("Stale or malformed bindings require explicit inspection; no automatic rebinding.")
+    if not report["durable_prompt_delivery"]:
+        report["blockers"].append("Runtime lacks terminal.prompt-delivery.v1; sending is blocked.")
+    if not identities:
+        report["blockers"].append("No uniquely identified live supported agent terminal is bindable.")
+    report["status"] = ("BLOCKED" if report["blockers"] else
+                        "BOUND_PROCESS_ONLY" if report["bindings"] else "BINDABLE")
+    return report
+
+
 def _terminal(discovery, handle):
     inventory = discovery["inventory"]
     if inventory.get("truncated") is not False or not isinstance(inventory.get("terminals"), list):

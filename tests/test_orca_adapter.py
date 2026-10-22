@@ -44,6 +44,40 @@ class OrcaAdapterTests(unittest.TestCase):
             adapter.configure(self.root, sys.executable)
         self.assertEqual((self.root / "orca" / "config.json").read_bytes(), original)
 
+    def test_doctor_is_read_only_and_does_not_infer_ack(self):
+        with patch.object(adapter, "_call", side_effect=self.call):
+            before = sorted(str(p.relative_to(self.root)) for p in self.root.rglob("*"))
+            self.assertEqual(adapter.doctor(self.root)["status"], "BINDABLE")
+            self.assertEqual(before, sorted(str(p.relative_to(self.root)) for p in self.root.rglob("*")))
+            self.bind()
+            report = adapter.doctor(self.root)
+            self.assertEqual(report["status"], "BOUND_PROCESS_ONLY")
+            self.assertFalse(report["agent_ack_verified"])
+            self.row["incarnationId"] = "replacement"
+            self.assertEqual(adapter.doctor(self.root)["status"], "BLOCKED")
+        self.assertTrue(all(args in (["status"], ["terminal", "list"]) for args in self.calls))
+
+    def test_doctor_unconfigured_invalid_and_failed_probe(self):
+        missing = self.root / "missing"
+        with patch.object(adapter, "_call") as called:
+            self.assertEqual(adapter.doctor(missing)["status"], "UNCONFIGURED")
+            self.assertFalse(missing.exists())
+            config = self.root / "orca" / "config.json"
+            original = config.read_bytes()
+            config.write_text("[]", encoding="utf-8")
+            self.assertEqual(adapter.doctor(self.root)["status"], "INVALID_CONFIGURATION")
+            called.assert_not_called()
+            config.write_bytes(original)
+        with patch.object(adapter, "_call", side_effect=subprocess.TimeoutExpired("fixture", 15)):
+            self.assertEqual(adapter.doctor(self.root)["status"], "PROBE_FAILED")
+
+    def test_doctor_missing_capability_and_malformed_inventory(self):
+        with patch.object(adapter, "_call", side_effect=self.call):
+            self.runtime["capabilities"] = []
+            self.assertEqual(adapter.doctor(self.root)["status"], "BLOCKED")
+            self.runtime["capabilities"] = "terminal.prompt-delivery.v1"
+            self.assertEqual(adapter.doctor(self.root)["status"], "PROBE_FAILED")
+
     def test_explicit_target_dedup_and_no_ack_from_echo(self):
         with patch.object(adapter, "_call", side_effect=self.call):
             self.bind()

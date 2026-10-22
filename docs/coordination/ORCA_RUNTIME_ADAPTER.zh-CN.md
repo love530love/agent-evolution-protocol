@@ -40,6 +40,14 @@ PROMPT_ACCEPTED 仅表示上游提供受支持的输入接收证据；超时、�
 
 ## 尚未证明的部分
 
+### 只读接入诊断（2026-10-22）
+
+运行 `aep --coord-root coordination coord-orca doctor`。未配置时也返回结构化报告，且不创建目录、不安装或启动 Orca、不绑定、不发送。已配置时最多调用一次 status 和一次 terminal list，检查固定协议、完整清单、宿主/进程身份、输入能力及现有绑定是否过期。
+
+状态为 UNCONFIGURED、INVALID_CONFIGURATION、PROBE_FAILED、BLOCKED、BINDABLE 或 BOUND_PROCESS_ONLY。最后两者仅说明可绑定或进程绑定有效，不代表原提供商会话、模型或 Agent ACK 已验证；报告始终明确这些证据边界。过期绑定只报告，不自动替换；诊断结果是瞬时快照，发送仍重新核对。外部命令异常只输出错误类型，不泄露其原始输出。
+
+本机已检查 PATH 和常见 Orca 安装目录，未找到可执行文件；未遍历整机，不能断言未安装。下一步仍是提供并核实真实 CLI 路径，再进行原终端低风险验收。
+
 - 本轮是固定契约的模拟回归，尚无本机真实 Orca 运行时验收。PATH 未发现可用 orca.exe 不代表系统所有目录都没有安装。
 - 绑定的是终端进程，不是可认证的提供商会话或模型。conversation_session_verified=false；同一进程内切换会话仍可能无法识别。
 - 未接 commander 自动投递或 transcript_bus 的助手归属证明，不能因该模块存在就称全军团已联通。
