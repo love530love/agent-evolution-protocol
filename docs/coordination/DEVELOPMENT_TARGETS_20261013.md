@@ -1,5 +1,7 @@
 # 多 Agent 协作机制：待开发目标与验收表（2026-10-13）
 
+2026-10-22 漏洞信息接入：新增 coord-dependency-audit，只对明确指定锁执行显式 OSV 查询，保存逐包完整性、通报 ID、时间与哈希；未知/失败/分页/风险非零退出。真实 30 包快照查询本次无已知通报，不构成安全认证。实际安装对账、详情处置、过期策略和许可证审查仍待开发，见 `docs/DEPENDENCY_VULNERABILITY_AUDIT.zh-CN.md`。
+
 2026-10-22 依赖进化：新增 coord-dependencies，wheel 只读检查、显式 PyPI 哈希核验、候选锁及差异/许可证声明；准备和安装器支持显式 -LockFile，在新目录验证候选，不自动采纳。真实 30 wheel 基线再现已执行；新版本对照、漏洞与许可证审查仍待独立证据，见 `docs/DEPENDENCY_CANDIDATES.zh-CN.md`。
 
 2026-10-22 可选依赖交付：新增 Windows CPython 3.13 MCP 完整 wheel 锁、只读核验、精确文件预下载、无索引哈希安装与独立 SDK 启动入口；新增真实离线安装 CI 作业。完整 Python 自包含、候选锁生成/漏洞和许可证审计、真正断网机器验收仍待开发，见 `docs/OFFLINE_DESKTOP_SDK.zh-CN.md`。
