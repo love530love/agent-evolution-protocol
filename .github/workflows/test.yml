@@ -25,3 +25,13 @@ jobs:
       - run: python -m pytest -q
       - run: python -m agent_evolution_protocol --help
       - run: python -m agent_evolution_protocol --coord-root .ci-acceptance coord-improvement self-test
+      - name: Portable Windows core (no system Python fallback)
+        if: runner.os == 'Windows' && matrix.python-version == '3.12'
+        shell: pwsh
+        run: |
+          ./scripts/install-portable-python.ps1 -Install
+          if ($LASTEXITCODE -ne 0) { throw 'Portable installation failed' }
+          ./aep.ps1 --runtime-doctor
+          if ($LASTEXITCODE -ne 0) { throw 'Portable integrity check failed' }
+          ./aep.ps1 --coord-root .tools/ci-portable-acceptance coord-improvement self-test
+          if ($LASTEXITCODE -ne 0) { throw 'Portable workflow acceptance failed' }
