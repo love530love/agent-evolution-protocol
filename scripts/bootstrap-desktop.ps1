@@ -4,6 +4,7 @@ param(
     [Parameter(Mandatory)][string]$Python,
     [string]$EnvironmentPath = '.tools/desktop-sdk',
     [string]$Wheelhouse,
+    [string]$LockFile,
     [switch]$Install
 )
 $ErrorActionPreference = 'Stop'
@@ -11,14 +12,16 @@ $repo = Split-Path -Parent $PSScriptRoot
 $pythonPath = (Get-Command $Python -ErrorAction Stop).Source
 $target = [IO.Path]::GetFullPath($EnvironmentPath, $repo)
 $sdk = Join-Path $target 'Scripts/python.exe'
-$plan = [ordered]@{ python = $pythonPath; environment = $target; sdk = $sdk; package = "$repo[desktop]"; install = [bool]$Install; wheelhouse = $Wheelhouse; offline = [bool]$Wheelhouse }
+$plan = [ordered]@{ python = $pythonPath; environment = $target; sdk = $sdk; package = "$repo[desktop]"; install = [bool]$Install; wheelhouse = $Wheelhouse; offline = [bool]$Wheelhouse; lock_file = $LockFile }
 $plan | ConvertTo-Json
 if (-not $Install) { return }
+if ($LockFile -and -not $Wheelhouse) { throw 'A candidate lock requires explicit offline Wheelhouse; no online fallback' }
 if (Test-Path -LiteralPath $target) { throw 'Target already exists; choose a new isolated environment. No existing environment will be modified.' }
 if ($PSCmdlet.ShouldProcess($target, 'Create isolated AEP desktop SDK environment')) {
     if ($Wheelhouse) {
         . (Join-Path $PSScriptRoot 'wheelhouse-common.ps1')
-        $lock = Get-AepWheelLock $repo
+        $lockPath = if ($LockFile) { [IO.Path]::GetFullPath($LockFile, $repo) } else { Join-Path $repo 'runtime/desktop-win-cp313.lock.json' }
+        $lock = Get-AepWheelLock $repo $lockPath
         $wheels = (Resolve-Path -LiteralPath $Wheelhouse).Path
         Test-AepWheelhouse $wheels $lock
         & $pythonPath -I -c 'import sys,struct,platform,importlib.util; sys.exit(0 if sys.platform == "win32" and sys.version_info[:2] == (3,13) and struct.calcsize("P") == 8 and platform.machine().lower() in ("amd64","x86_64") and importlib.util.find_spec("venv") and importlib.util.find_spec("ensurepip") else 2)'
@@ -47,7 +50,7 @@ if ($PSCmdlet.ShouldProcess($target, 'Create isolated AEP desktop SDK environmen
     & $sdk -I -m agent_evolution_protocol coord-desktop inventory
     if ($LASTEXITCODE -ne 0) { throw 'AEP smoke test failed' }
     if ($Wheelhouse) {
-        @{ profile = $lock.profile; lock_sha256 = (Get-FileHash -LiteralPath (Join-Path $repo 'runtime/desktop-win-cp313.lock.json') -Algorithm SHA256).Hash;
+        @{ profile = $lock.profile; lock_sha256 = (Get-FileHash -LiteralPath $lockPath -Algorithm SHA256).Hash;
             source_mode = 'repository'; offline_install = $true; agent_ack_verified = $false } |
             ConvertTo-Json | Set-Content -LiteralPath (Join-Path $target 'aep-desktop-install.json') -Encoding utf8NoBOM
     }

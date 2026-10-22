@@ -76,6 +76,18 @@ class DesktopWheelhouseTests(unittest.TestCase):
         self.save()
         self.assertNotEqual(self.run_script().returncode, 0)
 
+    def test_explicit_candidate_lock_does_not_replace_default(self):
+        directory = self.root / "candidate wheels"
+        directory.mkdir()
+        (directory / self.wheel["filename"]).write_bytes(b"fixture-not-executable")
+        candidate_lock = self.root / "candidate.lock.json"
+        candidate_lock.write_text(json.dumps(self.lock))
+        self.lock_path.write_text("{}")
+        result = self.run_script("scripts/prepare-desktop-wheelhouse.ps1", "-Action", "Verify",
+                                 "-Directory", str(directory), "-LockFile", str(candidate_lock))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.lock_path.read_text(), "{}")
+
     def test_installer_whatif_and_bad_bundle_never_create_environment(self):
         target = self.root / "sdk"
         preview = self.run_script("scripts/bootstrap-desktop.ps1", "-Python", sys.executable,

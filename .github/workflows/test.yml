@@ -28,6 +28,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'SDK module entry failed' }
           ./aep-desktop.ps1 --help
           if ($LASTEXITCODE -ne 0) { throw 'SDK launcher failed' }
+          ./aep-desktop.ps1 coord-dependencies --baseline runtime/desktop-win-cp313.lock.json --wheelhouse .tools/desktop-wheelhouse --output .tools/ci-dependency-candidate --apply
+          if ($LASTEXITCODE -ne 0) { throw 'Dependency candidate generation failed' }
+          ./scripts/prepare-desktop-wheelhouse.ps1 -Action Verify -Directory .tools/desktop-wheelhouse -LockFile .tools/ci-dependency-candidate/candidate.lock.json
           ./aep-desktop.ps1 --coord-root .tools/sdk-acceptance coord-improvement self-test
           if ($LASTEXITCODE -ne 0) { throw 'SDK workflow failed' }
   test:

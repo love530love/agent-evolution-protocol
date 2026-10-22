@@ -1,5 +1,7 @@
 # 多 Agent 协作机制：待开发目标与验收表（2026-10-13）
 
+2026-10-22 依赖进化：新增 coord-dependencies，wheel 只读检查、显式 PyPI 哈希核验、候选锁及差异/许可证声明；准备和安装器支持显式 -LockFile，在新目录验证候选，不自动采纳。真实 30 wheel 基线再现已执行；新版本对照、漏洞与许可证审查仍待独立证据，见 `docs/DEPENDENCY_CANDIDATES.zh-CN.md`。
+
 2026-10-22 可选依赖交付：新增 Windows CPython 3.13 MCP 完整 wheel 锁、只读核验、精确文件预下载、无索引哈希安装与独立 SDK 启动入口；新增真实离线安装 CI 作业。完整 Python 自包含、候选锁生成/漏洞和许可证审计、真正断网机器验收仍待开发，见 `docs/OFFLINE_DESKTOP_SDK.zh-CN.md`。
 
 2026-10-22 便携运行时：已实现 Windows x64 官方 Python 最小核心、固定 SHA256 在线/离线安装、逐文件诊断及无系统回退启动器。本机真实核心自验收通过；完整可选依赖离线锁、干净机器迁移、发行包和安全更新策略见 `docs/PORTABLE_PYTHON.zh-CN.md`，仍属待开发，不将核心便携等同全组件自包含。

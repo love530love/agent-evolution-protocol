@@ -2,12 +2,13 @@
 [CmdletBinding()]
 param(
     [ValidateSet('Plan', 'Download', 'Verify')][string]$Action = 'Plan',
-    [string]$Directory = '.tools/desktop-wheelhouse'
+    [string]$Directory = '.tools/desktop-wheelhouse',
+    [string]$LockFile
 )
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'wheelhouse-common.ps1')
-$lock = Get-AepWheelLock $repo
+$lock = Get-AepWheelLock $repo $LockFile
 $target = [IO.Path]::GetFullPath($Directory, $repo)
 if ($Action -eq 'Plan') {
     @{ status = 'PLAN_ONLY'; profile = $lock.profile; wheels = $lock.wheels.Count; directory = $target;

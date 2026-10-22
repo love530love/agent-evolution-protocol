@@ -1,7 +1,8 @@
-"""Offline commit-reveal ledger and local coordination CLI.
+"""Commit-reveal ledger and evidence-driven coordination CLI.
 
-No model calls, polling, or external execution are performed by this module.
-Coordination commands only read/write local files under ``--coord-root``.
+The core ledger is offline. Explicit adapter and validation commands may launch
+trusted processes, inspect desktop services, or perform opted-in network reads.
+Consult each command's preview, authorization and evidence boundaries.
 """
 
 from __future__ import annotations
@@ -41,6 +42,7 @@ from agent_evolution_protocol.coordination import transcript_bus
 from agent_evolution_protocol.coordination import transport_cdp
 from agent_evolution_protocol.coordination import commander
 from agent_evolution_protocol.coordination import orca_adapter
+from agent_evolution_protocol.coordination import dependency_candidate
 from agent_evolution_protocol.routing import classify_intent, load_route_config
 from agent_evolution_protocol.route_state import analyze_route_state, continuation_from_events, select_resource_type
 
@@ -665,6 +667,21 @@ def coord_governance(args: argparse.Namespace) -> None:
     except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
         raise ProtocolError(str(exc)) from exc
     print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+def coord_dependencies(args: argparse.Namespace) -> None:
+    try:
+        result = dependency_candidate.build(baseline=args.baseline, wheelhouse=args.wheelhouse,
+            output=args.output, apply=args.apply, verify_pypi=args.verify_pypi)
+    except (OSError, ValueError, KeyError, TypeError, TimeoutError, dependency_candidate.zipfile.BadZipFile) as exc:
+        raise ProtocolError(str(exc)) from exc
+    if result.get("status") == "CANDIDATE_ONLY":
+        result = {**{key: result[key] for key in ("status", "output", "baseline_sha256", "candidate_sha256", "added", "removed", "installed", "adopted")},
+                  "changed": [row["name"] for row in result["changed"]],
+                  "artifact_count": len(result["artifacts"]),
+                  "report": str(args.output / "review.json"),
+                  "note": "Candidate only; full declarations and required gates are in review.json."}
+    print(json.dumps(result, ensure_ascii=True, indent=2))
 
 
 def coord_orca(args: argparse.Namespace) -> None:
@@ -2296,6 +2313,13 @@ def build_parser() -> argparse.ArgumentParser:
     joint = commands.add_parser("coord-joint-case"); joint.add_argument("action", choices=("open", "review", "status")); joint.add_argument("--task", required=True); joint.add_argument("--submission", required=True); joint.add_argument("--lead"); joint.add_argument("--deputy"); joint.add_argument("--artifact-sha256"); joint.add_argument("--result-file", type=Path); joint.add_argument("--agent"); joint.add_argument("--role", choices=("lead", "deputy", "cross_platform", "catfish", "package_reviewer")); joint.add_argument("--review-file", type=Path); joint.set_defaults(func=coord_joint_case)
     adversarial = commands.add_parser("coord-adversarial"); adversarial.add_argument("action", choices=("review", "status")); adversarial.add_argument("--task", required=True); adversarial.add_argument("--submission", required=True); adversarial.add_argument("--agent"); adversarial.add_argument("--role", choices=("ideator", "falsifier", "replicator", "bias_auditor", "referee")); adversarial.add_argument("--review-file", type=Path); adversarial.set_defaults(func=coord_adversarial)
     governed = commands.add_parser("coord-governance"); governed.add_argument("action", choices=("roles", "intervene", "history")); governed.add_argument("--request-file", type=Path); governed.set_defaults(func=coord_governance)
+    dependencies = commands.add_parser("coord-dependencies")
+    dependencies.add_argument("--baseline", type=Path, required=True)
+    dependencies.add_argument("--wheelhouse", type=Path, required=True)
+    dependencies.add_argument("--output", type=Path, required=True)
+    dependencies.add_argument("--apply", action="store_true")
+    dependencies.add_argument("--verify-pypi", action="store_true")
+    dependencies.set_defaults(func=coord_dependencies)
     orca = commands.add_parser("coord-orca")
     orca.add_argument("action", choices=("configure", "doctor", "probe", "bind", "read", "wait", "send"))
     orca.add_argument("--timeout", type=int, default=15)

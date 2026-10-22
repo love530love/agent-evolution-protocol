@@ -1,7 +1,8 @@
 #Requires -Version 7.0
 function Get-AepWheelLock {
-    param([string]$Repo)
-    $lock = Get-Content -LiteralPath (Join-Path $Repo 'runtime/desktop-win-cp313.lock.json') -Raw | ConvertFrom-Json
+    param([string]$Repo, [string]$LockFile)
+    $path = if ($LockFile) { [IO.Path]::GetFullPath($LockFile, $Repo) } else { Join-Path $Repo 'runtime/desktop-win-cp313.lock.json' }
+    $lock = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
     if ($lock.schema -ne 1 -or $lock.profile -ne 'desktop-win-cp313' -or $lock.root -ne 'mcp==1.30.0' -or $lock.wheels.Count -lt 1) {
         throw 'Unsupported desktop dependency lock'
     }

@@ -39,6 +39,6 @@ Download 只访问锁定的 pythonhosted.org HTTPS 文件，不实时解析“�
 
 ## 维护路线
 
-更新依赖必须在新的隔离下载目录重新解析，核对 PyPI 摘要，更新锁并通过离线安装与业务回归，再替换默认锁；禁止安装时自动重解析或原地更新旧 SDK。还需补充自动候选锁生成器、漏洞审计、第三方许可证汇总、完整 Python 离线引导、运行中 SDK 完整性检查和真正断网机器验收。
+更新依赖必须在新的隔离下载目录重新解析，核对 PyPI 摘要，更新锁并通过离线安装与业务回归，再替换默认锁；禁止安装时自动重解析或原地更新旧 SDK。[候选锁生成与审查](DEPENDENCY_CANDIDATES.zh-CN.md) 已提供；安装与准备脚本可用明确的 -LockFile 指向候选，既有默认锁不变。自动依赖解析、漏洞审计、第三方许可证材料汇总、完整 Python 离线引导、运行中 SDK 完整性检查和真正断网机器验收仍待完善。
 
 参考：[pip download](https://pip.pypa.io/en/stable/cli/pip_download/)、[pip 哈希锁定安装](https://pip.pypa.io/en/stable/topics/secure-installs/)。
