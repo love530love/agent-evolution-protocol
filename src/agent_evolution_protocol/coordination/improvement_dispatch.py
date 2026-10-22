@@ -26,6 +26,20 @@ def _roster(value):
     return value["agents"]
 
 
+def _occupies_slot(root, order):
+    """ACK is acceptance of a message, not evidence that a member is idle."""
+    if not order.get("task", "").startswith("improvement:") or order.get("state") == "RETIRED":
+        return False
+    if order.get("state") != "AGENT_ACK":
+        return True  # Unknown deliveries never silently free their recipient.
+    try:
+        proposal = improvement.status(root, order["task"].split(":", 1)[1])
+        event_id = "EVT-IMPROVE-" + proposal["events"][-1]["sha256"][:24].upper()
+        return order.get("event_id") == event_id
+    except (OSError, ValueError, KeyError, TypeError):
+        return True  # Missing/damaged progress is not completion evidence.
+
+
 def _schedule(root, roster, *, apply, limit):
     members = _roster(roster)
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 20:
@@ -34,8 +48,7 @@ def _schedule(root, roster, *, apply, limit):
               if row["state"] == "online" and not row["active_assignments"]}
     orders = commander._orders(root)
     # Existing uncertain/failed deliveries must be inspected, not silently reassigned.
-    busy = {order.get("target") for order in orders if order.get("task", "").startswith("improvement:")
-            and order.get("state") not in {"AGENT_ACK", "RETIRED"}}
+    busy = {order.get("target") for order in orders if _occupies_slot(root, order)}
     work = improvement_work.pending(root)["work"]
     busy.update(item.get("owner") for item in work if not item["available"] and item.get("owner"))
     results = []

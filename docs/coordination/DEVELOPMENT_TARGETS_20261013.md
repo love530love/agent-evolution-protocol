@@ -1,5 +1,7 @@
 # 多 Agent 协作机制：待开发目标与验收表（2026-10-13）
 
+2026-10-23 ACK 背压修复：已 ACK 但阶段未变的成员继续占用改进路由名额，阶段推进后释放；进度缺失/损坏与不确定投递不自动释放。专项测试覆盖 ACK 无认领的重复排队阻断和阶段推进后的恢复。仍待完成：显式协商改派、执行取消确认、真实宿主闭环。
+
 2026-10-23 接力归属修复：delivery-status 保留历史 ACK，区分 CLAIMED_ELSEWHERE、CLAIM_EXPIRED、CLAIM_RELEASED，并保留当前投递阻塞提示。只读，不自动重发或改派；真实双 Agent 原会话接单与产物回传仍待验收。详见 `docs/HANDOFF_OWNERSHIP.zh-CN.md`。
 
 2026-10-23 证据关联：新增 coord-dependency-gate，对四份源报告校验哈希、锁、环境、时间与原始 OSV 响应；wheel 报告新增环境/预检绑定。本机真实证据一致性已验证，不授权部署、不改全局策略。动态漂移检测、身份签名和发布策略集成仍待开发，见 `docs/DEPENDENCY_EVIDENCE_GATE.zh-CN.md`。上一轮 8ee1f10 的五组 CI 已确认通过。

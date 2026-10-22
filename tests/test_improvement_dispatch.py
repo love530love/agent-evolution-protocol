@@ -6,6 +6,40 @@ from agent_evolution_protocol.coordination import improvement, improvement_dispa
 
 
 class DispatchTests(unittest.TestCase):
+    def test_ack_without_claim_keeps_slot_until_stage_changes(self):
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            proof = root / "proof"
+            proof.write_text("ok")
+            identities = [improvement.propose(root, dict(author="a", change=change, acceptance="c",
+                rollback="d", scope="e", evidence=[str(proof)]))["id"] for change in ("first", "second")]
+            roster = {"agents": [{"agent": "worker", "actions": ["validate"]}]}
+            online = {"agents": [{"agent": "worker", "state": "online", "active_assignments": []}]}
+            with patch.object(router.presence, "snapshot", return_value=online):
+                self.assertEqual(router.schedule(root, roster, apply=True)["orders_queued"], 1)
+                order = commander._orders(root)[0]
+                commander._record_attempt(root, order, state="AGENT_ACK", note="fixture only")
+                before = len(commander._orders(root))
+                self.assertEqual(router.schedule(root, roster, apply=True)["orders_queued"], 0)
+                self.assertEqual(len(commander._orders(root)), before)
+                identity = order["task"].split(":", 1)[1]
+                improvement.advance(root, identity, state="VALIDATED", actor="worker",
+                                    evidence=[str(proof)], note="fixture validation")
+                self.assertEqual(router.schedule(root, roster, apply=True)["orders_queued"], 1)
+                self.assertEqual(len(commander._orders(root)), before + 1)
+
+    def test_missing_progress_and_uncertain_delivery_keep_slot(self):
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            order = commander.submit_order(root, target="worker", task="improvement:" + "a" * 24,
+                                            text="verify", sender="router")
+            commander._record_attempt(root, order, state="AGENT_ACK")
+            self.assertTrue(router._occupies_slot(root, order))
+            for state in ("FAILED", "CEASED", "INPUT_SUBMITTED", "DEFERRED"):
+                self.assertTrue(router._occupies_slot(root, {**order, "state": state}))
+            self.assertFalse(router._occupies_slot(root, {**order, "state": "RETIRED"}))
+            self.assertFalse(router._occupies_slot(root, {**order, "task": "ordinary"}))
+
     def test_owner_expiry_release_and_historical_ack_are_distinct(self):
         with TemporaryDirectory() as temp:
             root = Path(temp)
