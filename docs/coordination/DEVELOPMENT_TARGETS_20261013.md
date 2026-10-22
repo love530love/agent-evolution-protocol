@@ -65,6 +65,8 @@ python -m agent_evolution_protocol.coordination.delivery_audit --root coordinati
 
 ## 2026-10-17 补充：可迁移扩展工程
 
+2026-10-22 Orca 增量：独立可选 CLI 适配器已实现 configure/probe/bind/read/wait/send；固定上游契约，绑定运行时/主机/PTY incarnation，首版仅 codex/claude，发送显式 apply，持久 RESERVED 与事件去重。模拟测试不等于本机验收；待验证真实运行时、提供商会话身份和归属明确的 ACK，再接 commander 自动投递，不默认迁移队友。
+
 2026-10-20 稳定性修复：campaign-watch 的维护操作合并为单 Python 进程，统一计算带时区截止时间；支持显式 -Python/-ReadyFile。修复测试固定两秒等待的时序假设，补充可选摄取失败不阻塞任务超时处理测试。非原会话唤醒验收。
 
 2026-10-20 验收工程增量：收尾原子发布修复，新增 self-test 隔离集成验收（真实测试进程＋脚本角色推进，明确不是真实多 Agent 判断）；CI 配置扩展为 Ubuntu/Windows × Python 3.10/3.12。远程通过情况另行核对。下一最高优先级仍为真实原会话投递/ACK/认领/产物回传；不以单元测试数量代替此项。

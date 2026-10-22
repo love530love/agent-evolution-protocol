@@ -2,6 +2,8 @@
 
 红皇后—鲶鱼—创造性破坏：多 Agent 自治协作与进化体系。
 
+[Orca 可选运行时适配器](docs/coordination/ORCA_RUNTIME_ADAPTER.zh-CN.md)：新增 `coord-orca` 原终端探测/绑定/读写预览，显式发送去重并拒绝未知结果重试；尚未真实宿主验收。
+
 [团队执行与自进化契约 v1.0](docs/EVOLUTION_EXECUTION_PACT.zh-CN.md)：新增 `coord-improvement` 证据绑定的改进生命周期；不自动部署、不自行扩权。
 
 `coord-improvement ingest` 可将完成/失败事件转为去重提案；`validate` 实际运行可信工作区的 unittest 并保存证据，通过后推进至 VALIDATED（非安全沙箱）。

@@ -40,6 +40,7 @@ from agent_evolution_protocol.coordination import client_registry
 from agent_evolution_protocol.coordination import transcript_bus
 from agent_evolution_protocol.coordination import transport_cdp
 from agent_evolution_protocol.coordination import commander
+from agent_evolution_protocol.coordination import orca_adapter
 from agent_evolution_protocol.routing import classify_intent, load_route_config
 from agent_evolution_protocol.route_state import analyze_route_state, continuation_from_events, select_resource_type
 
@@ -664,6 +665,32 @@ def coord_governance(args: argparse.Namespace) -> None:
     except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
         raise ProtocolError(str(exc)) from exc
     print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+def coord_orca(args: argparse.Namespace) -> None:
+    try:
+        if args.action == "configure":
+            if not args.command:
+                raise ValueError("configure requires --command absolute executable")
+            result = orca_adapter.configure(coord_root(args), args.command)
+        elif args.action == "bind":
+            result = orca_adapter.bind(coord_root(args), agent=args.agent, terminal=args.terminal)
+        elif args.action == "read":
+            result = orca_adapter.read(coord_root(args), agent=args.agent, cursor=args.cursor)
+        elif args.action == "wait":
+            result = orca_adapter.wait(coord_root(args), agent=args.agent, seconds=args.timeout)
+        elif args.action == "send":
+            if not args.text_file:
+                raise ValueError("send requires --text-file")
+            result = orca_adapter.send(coord_root(args), agent=args.agent, event_id=args.event_id,
+                                       text=args.text_file.read_text(encoding="utf-8"), apply=args.apply)
+        else:
+            result = orca_adapter.probe(coord_root(args))
+    except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as exc:
+        raise ProtocolError(str(exc)) from exc
+    print(json.dumps(result, ensure_ascii=True, indent=2))
+    if result.get("status") in {"OUTCOME_UNKNOWN", "RESERVED"}:
+        raise SystemExit(2)
 
 
 def coord_improvement(args: argparse.Namespace) -> None:
@@ -2267,6 +2294,17 @@ def build_parser() -> argparse.ArgumentParser:
     joint = commands.add_parser("coord-joint-case"); joint.add_argument("action", choices=("open", "review", "status")); joint.add_argument("--task", required=True); joint.add_argument("--submission", required=True); joint.add_argument("--lead"); joint.add_argument("--deputy"); joint.add_argument("--artifact-sha256"); joint.add_argument("--result-file", type=Path); joint.add_argument("--agent"); joint.add_argument("--role", choices=("lead", "deputy", "cross_platform", "catfish", "package_reviewer")); joint.add_argument("--review-file", type=Path); joint.set_defaults(func=coord_joint_case)
     adversarial = commands.add_parser("coord-adversarial"); adversarial.add_argument("action", choices=("review", "status")); adversarial.add_argument("--task", required=True); adversarial.add_argument("--submission", required=True); adversarial.add_argument("--agent"); adversarial.add_argument("--role", choices=("ideator", "falsifier", "replicator", "bias_auditor", "referee")); adversarial.add_argument("--review-file", type=Path); adversarial.set_defaults(func=coord_adversarial)
     governed = commands.add_parser("coord-governance"); governed.add_argument("action", choices=("roles", "intervene", "history")); governed.add_argument("--request-file", type=Path); governed.set_defaults(func=coord_governance)
+    orca = commands.add_parser("coord-orca")
+    orca.add_argument("action", choices=("configure", "probe", "bind", "read", "wait", "send"))
+    orca.add_argument("--timeout", type=int, default=15)
+    orca.add_argument("--command", type=Path)
+    orca.add_argument("--agent")
+    orca.add_argument("--terminal")
+    orca.add_argument("--cursor")
+    orca.add_argument("--event-id")
+    orca.add_argument("--text-file", type=Path)
+    orca.add_argument("--apply", action="store_true")
+    orca.set_defaults(func=coord_orca)
     changes = commands.add_parser("coord-improvement")
     changes.add_argument("action", choices=("propose", "status", "advance", "ingest", "validate", "enqueue", "drain", "overview", "pending", "claim", "complete", "release", "schedule", "delivery-status", "retire", "brief", "renew", "policy", "self-test"))
     changes.add_argument("--mode", choices=sorted(improvement_policy.MODES))
