@@ -53,8 +53,17 @@ def _schedule(root, roster, *, apply, limit):
     results = []
     for item in work:
         if not item["available"]:
+            if item.get("error"):
+                results.append({"id": item["id"], "status": "WORK_DAMAGED", "next_action": "inspect-handoff"})
             continue
-        proposal = improvement.status(root, item["id"])
+        try:
+            proposal = improvement.status(root, item["id"])
+        except (OSError, ValueError, KeyError, TypeError):
+            results.append({"id": item["id"], "status": "WORK_DAMAGED", "next_action": "inspect-handoff"})
+            continue
+        if proposal["state"] != item["state"] or improvement_work.NEXT.get(proposal["state"], (None,))[0] != item["action"]:
+            results.append({"id": item["id"], "status": "STAGE_CHANGED", "next_action": "refresh_pending"})
+            continue
         head = proposal["events"][-1]["sha256"]
         event_id = "EVT-IMPROVE-" + head[:24].upper()
         existing = [order for order in orders if order.get("event_id") == event_id]
@@ -66,6 +75,14 @@ def _schedule(root, roster, *, apply, limit):
                        and row["agent"] in online - busy - excluded), None)
         if not target:
             results.append({"id": item["id"], "status": "NO_ELIGIBLE_MEMBER"})
+            continue
+        try:
+            latest = improvement.status(root, item["id"])
+        except (OSError, ValueError, KeyError, TypeError):
+            results.append({"id": item["id"], "status": "WORK_DAMAGED", "next_action": "inspect-handoff"})
+            continue
+        if latest["events"][-1]["sha256"] != head:
+            results.append({"id": item["id"], "status": "STAGE_CHANGED", "next_action": "refresh_pending"})
             continue
         result = {"id": item["id"], "target": target, "action": item["action"], "status": "PLAN_ONLY"}
         if apply:
@@ -83,6 +100,7 @@ def _schedule(root, roster, *, apply, limit):
         if sum(r["status"] in {"QUEUED", "PLAN_ONLY"} for r in results) >= limit:
             break
     return {"assignments": results, "orders_queued": sum(r["status"] == "QUEUED" for r in results),
+            "blocked_count": sum(r["status"] in {"WORK_DAMAGED", "STAGE_CHANGED", "NO_ELIGIBLE_MEMBER"} for r in results),
             "delivery_attempted": False, "agent_ack_verified": False,
             "note": "Presence and capability declarations are not authenticated availability or acceptance."}
 

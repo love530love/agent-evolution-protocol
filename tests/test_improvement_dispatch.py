@@ -6,6 +6,57 @@ from agent_evolution_protocol.coordination import improvement, improvement_dispa
 
 
 class DispatchTests(unittest.TestCase):
+    def test_stage_changes_before_and_after_selection_do_not_queue_old_action(self):
+        for change_on in (1, 2):
+            with self.subTest(change_on=change_on), TemporaryDirectory() as temp:
+                root = Path(temp)
+                proof = root / "proof"
+                proof.write_text("ok")
+                identity = improvement.propose(root, dict(author="a", change="b", acceptance="c",
+                    rollback="d", scope="e", evidence=[str(proof)]))["id"]
+                pending = improvement_work.pending(root)
+                original = improvement.status
+                calls = [0]
+                def status_with_change(*args):
+                    calls[0] += 1
+                    if calls[0] == change_on:
+                        # advance reads status too; keep the injected race single-shot.
+                        with patch.object(improvement, "status", original):
+                            improvement.advance(root, identity, state="VALIDATED", actor="worker",
+                                                evidence=[str(proof)], note="concurrent fixture")
+                    return original(*args)
+                with patch.object(router.presence, "snapshot", return_value={"agents": [
+                        {"agent": "worker", "state": "online", "active_assignments": []}]}):
+                    with patch.object(improvement_work, "pending", return_value=pending):
+                        with patch.object(improvement, "status", side_effect=status_with_change):
+                            result = router.schedule(root, {"agents": [{"agent": "worker", "actions": ["validate"]}]}, apply=True)
+                self.assertEqual(result["orders_queued"], 0)
+                self.assertEqual(result["assignments"][0]["status"], "STAGE_CHANGED")
+                self.assertEqual(commander._orders(root), [])
+
+    def test_one_unreadable_proposal_does_not_stop_healthy_work(self):
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            proof = root / "proof"
+            proof.write_text("ok")
+            identity = improvement.propose(root, dict(author="a", change="b", acceptance="c",
+                rollback="d", scope="e", evidence=[str(proof)]))["id"]
+            good = improvement_work.pending(root)["work"][0]
+            bad = {**good, "id": "a" * 24}
+            original = improvement.status
+            def reader(root, key):
+                if key == bad["id"]:
+                    raise ValueError("fixture damaged")
+                return original(root, key)
+            with patch.object(router.presence, "snapshot", return_value={"agents": [
+                    {"agent": "worker", "state": "online", "active_assignments": []}]}):
+                with patch.object(improvement_work, "pending", return_value={"work": [bad, good]}):
+                    with patch.object(improvement, "status", side_effect=reader):
+                        result = router.schedule(root, {"agents": [{"agent": "worker", "actions": ["validate"]}]}, apply=True)
+            self.assertEqual(result["blocked_count"], 1)
+            self.assertEqual(result["orders_queued"], 1)
+            self.assertEqual(result["assignments"][0]["status"], "WORK_DAMAGED")
+
     def test_direct_dispatch_does_not_replay_stale_or_uncertain_orders(self):
         from copy import deepcopy
         with TemporaryDirectory() as temp:
