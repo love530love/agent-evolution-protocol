@@ -59,3 +59,9 @@
 - TERMINAL_STAGE：没有下一阶段工作，不代表部署成功。
 
 诊断不是原子快照，无法验证队友是否真实停止；automatic_reclaim_allowed 和 execution_stopped_verified 始终为 false。冻结文件改变应恢复可信原件或另建提案，不自动覆盖、重置日志或重跑业务操作。
+
+## 租约统一读取校验
+
+认领、校验、续租、完成/释放、pending、投递状态和恢复诊断共用租约结构校验。ID、token、阶段头、成员、动作与目标、active 布尔类型和时间数值必须有效；NaN、无穷、布尔时间、超过续租上限等损坏记录拒绝使用。pending 将此项标记不可用，投递状态显示 DAMAGED，诊断返回 BLOCKED；写入口不覆盖旧记录，其他正常提案仍可列出。
+
+旧记录允许缺少可选 claimed_at/deadline/renewed_at；缺 deadline 仍禁止续租。此兼容不跳过 expires 或核心字段检查。格式校验不是签名认证，也无法证明旧执行已停止。

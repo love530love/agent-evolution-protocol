@@ -3,7 +3,6 @@
 No desktop input, model calls, new conversations, or automatic test execution.
 """
 from pathlib import Path
-import json
 
 from . import commander, improvement, improvement_work, presence
 from .battle_orders import _task_writer_lock
@@ -112,8 +111,7 @@ def delivery_status(root):
             proposal = improvement.status(root, identity)
             head = proposal["events"][-1]["sha256"]
             stale = order.get("event_id") != "EVT-IMPROVE-" + head[:24].upper()
-            path = improvement_work._path(root, identity)
-            lease = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+            lease = improvement_work.read_lease(root, identity, optional=True)
             active = bool(lease.get("active") and lease.get("head") == head and
                           lease.get("expires", 0) > improvement_work._now())
             row.update(proposal_state=proposal["state"], obsolete=stale,

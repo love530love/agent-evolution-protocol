@@ -8,10 +8,39 @@ import unittest
 from unittest.mock import patch
 
 from agent_evolution_protocol import cli
-from agent_evolution_protocol.coordination import improvement, improvement_work as work
+from agent_evolution_protocol.coordination import improvement, improvement_work as work, improvement_dispatch as router, commander
 
 
 class InspectionTests(unittest.TestCase):
+    def test_malformed_leases_fail_closed_across_consumers(self):
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            identity, proof = self.setup_proposal(root)
+            lease = work.claim(root, identity, actor="worker")
+            head = improvement.status(root, identity)["events"][-1]["sha256"]
+            commander.submit_order(root, target="worker", task="improvement:" + identity,
+                text="fixture", sender="router", event_id="EVT-IMPROVE-" + head[:24].upper())
+            bad_rows = [[], {}, {**lease, "expires": float("nan")}, {**lease, "expires": float("inf")},
+                {**lease, "expires": True}, {**lease, "active": "false"}, {**lease, "actor": []},
+                {**lease, "token": "invalid"}, {**lease, "head": "invalid"},
+                {**lease, "deadline": float("nan")}, {**lease, "expires": lease["deadline"] + 1}]
+            for row in bad_rows:
+                with self.subTest(row_type=type(row).__name__):
+                    path = work._path(root, identity)
+                    path.write_text(json.dumps(row), encoding="utf-8")
+                    before = path.read_bytes()
+                    for operation in (
+                        lambda: work.check_claim(root, identity, actor="worker", token=lease["token"]),
+                        lambda: work.claim(root, identity, actor="next"),
+                        lambda: work.renew(root, identity, actor="worker", token=lease["token"]),
+                        lambda: work.finish(root, identity, actor="worker", token=lease["token"], release=True)):
+                        with self.assertRaises(ValueError):
+                            operation()
+                    self.assertFalse(work.pending(root)["work"][0]["available"])
+                    self.assertEqual(router.delivery_status(root)["orders"][0]["progress"], "DAMAGED")
+                    self.assertEqual(work.inspect_handoff(root, identity)["status"], "BLOCKED")
+                    self.assertEqual(before, path.read_bytes())
+
     def setup_proposal(self, root):
         proof = root / "proof"
         proof.write_text("frozen")

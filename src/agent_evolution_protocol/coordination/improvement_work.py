@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import math
+import re
 from pathlib import Path
 from uuid import uuid4
 
@@ -22,6 +23,30 @@ def _path(root, identity):
     return Path(root) / "improvement_claims" / f"{identity}.json"
 
 
+def read_lease(root, identity, *, optional=False):
+    """One fail-closed schema for every lease consumer; never repairs records."""
+    path = _path(root, identity)
+    if optional and not path.exists():
+        return {}
+    row = json.loads(path.read_text(encoding="utf-8"))
+    if (not isinstance(row, dict) or row.get("id") != identity
+            or type(row.get("active")) is not bool
+            or not isinstance(row.get("actor"), str) or not row["actor"].strip()
+            or not isinstance(row.get("token"), str) or not re.fullmatch(r"[0-9a-f]{32}", row["token"])
+            or not isinstance(row.get("head"), str) or not re.fullmatch(r"[0-9a-f]{64}", row["head"])
+            or (row.get("action"), row.get("target")) not in NEXT.values()):
+        raise ValueError("invalid lease record; inspect before recovery")
+    for field in ("expires", "claimed_at", "deadline", "renewed_at"):
+        if field not in row and field != "expires":
+            continue  # Legacy records without a deadline still cannot renew.
+        value = row.get(field)
+        if type(value) not in {int, float} or not 0 < value < 1e15 or not math.isfinite(value):
+            raise ValueError("invalid lease timestamp; inspect before recovery")
+    if "deadline" in row and row["expires"] > row["deadline"]:
+        raise ValueError("lease exceeds renewal deadline")
+    return row
+
+
 def claim(root, identity, *, actor, ttl=300):
     if not isinstance(actor, str) or not actor.strip():
         raise ValueError("actor required")
@@ -34,7 +59,7 @@ def claim(root, identity, *, actor, ttl=300):
         if current["state"] == "VALIDATED" and actor in {e["actor"] for e in current["events"]}:
             raise ValueError("review requires an independent actor")
         path = _path(root, identity)
-        old = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        old = read_lease(root, identity, optional=True)
         head = current["events"][-1]["sha256"]
         now = _now()
         if old.get("active") and old.get("head") == head and old["expires"] > now:
@@ -53,7 +78,7 @@ def claim(root, identity, *, actor, ttl=300):
 
 
 def check_claim(root, identity, *, actor, token):
-    row = json.loads(_path(root, identity).read_text(encoding="utf-8"))
+    row = read_lease(root, identity)
     current = improvement.status(root, identity)
     if not row["active"] or row["actor"] != actor or row["token"] != token:
         raise ValueError("claim ownership mismatch")
@@ -154,7 +179,7 @@ def brief(root, identity, *, actor, token):
 def finish(root, identity, *, actor, token, evidence=None, note=None, release=False):
     with _task_writer_lock(Path(root), "improvement-handoff"):
         path = _path(root, identity)
-        row = json.loads(path.read_text(encoding="utf-8"))
+        row = read_lease(root, identity)
         current = improvement.status(root, identity)
         if not row["active"] or row["actor"] != actor or row["token"] != token:
             raise ValueError("claim ownership mismatch")
@@ -198,13 +223,7 @@ def inspect_handoff(root, identity):
     try:
         path = _path(root, identity)
         if path.exists():
-            lease = json.loads(path.read_text(encoding="utf-8"))
-            if (not isinstance(lease, dict) or type(lease.get("active")) is not bool
-                    or not isinstance(lease.get("actor"), str) or not lease["actor"].strip()
-                    or not isinstance(lease.get("head"), str)
-                    or type(lease.get("expires")) not in {int, float}
-                    or not math.isfinite(lease["expires"])):
-                raise ValueError("invalid lease")
+            lease = read_lease(root, identity)
             result["claim_owner"] = lease["actor"]
             result["lease_state"] = ("STALE_STAGE" if lease["head"] != head else
                 "INACTIVE" if not lease["active"] else "EXPIRED" if lease["expires"] <= _now() else "ACTIVE")
@@ -234,7 +253,7 @@ def pending(root):
             if current["state"] not in NEXT:
                 continue
             path = _path(root, folder.name)
-            lease = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+            lease = read_lease(root, folder.name, optional=True)
             active = bool(lease.get("active") and lease.get("expires", 0) > _now()
                           and lease.get("head") == current["events"][-1]["sha256"])
             rows.append({"id": folder.name, "state": current["state"], "action": NEXT[current["state"]][0],
