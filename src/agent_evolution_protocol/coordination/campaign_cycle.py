@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+import errno
 import json
 import os
 from pathlib import Path
@@ -87,6 +88,22 @@ def _write_once(path: Path, data: dict) -> None:
         os.fsync(stream.fileno())
 
 
+def _read_json_snapshot(path: Path) -> dict:
+    """Bounded read-only retry for Windows replace/open sharing conflicts."""
+    for attempt in range(4):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except PermissionError as exc:
+            code = getattr(exc, "winerror", None)
+            # CRT-backed open may expose only EACCES, unlike os.replace.
+            transient = os.name == "nt" and (code in {5, 32, 33} or (code is None and exc.errno == errno.EACCES))
+            if not transient or attempt == 3:
+                raise
+            time.sleep(0.02 * (attempt + 1))
+        else:
+            return json.loads(text)  # Invalid JSON is never retried or hidden.
+
+
 @contextmanager
 def _lock(root: Path, task: str):
     path = Path(root) / "campaign" / "locks" / f"{_task(task)}.lock"
@@ -118,7 +135,7 @@ def _read(root: Path, task: str) -> dict:
     path = _state_path(root, task)
     if not path.is_file():
         raise ValueError(f"mission not found: {task}")
-    return json.loads(path.read_text(encoding="utf-8"))
+    return _read_json_snapshot(path)
 
 
 def _save(root: Path, state: dict, kind: str, detail: dict) -> None:
@@ -378,7 +395,7 @@ def status(root: Path, task: str = "") -> dict:
     missions = []
     for path in paths:
         if path.is_file():
-            state = json.loads(path.read_text(encoding="utf-8"))
+            state = _read_json_snapshot(path)
             missions.append(state)
     return {"missions": missions, "next_due_at": next_due(root),
             "note": "Mailbox/wake is not ACK; all uploads remain independently gated."}
@@ -407,7 +424,7 @@ def scoreboard(root: Path) -> dict:
 def next_due(root: Path) -> str:
     times = []
     for path in (Path(root) / "campaign" / "missions").glob("T*.json"):
-        state = json.loads(path.read_text(encoding="utf-8"))
+        state = _read_json_snapshot(path)
         for item in state.get("assignments", []):
             key = "ack_due_at" if item["status"] == "awaiting_ack" else "work_due_at" if item["status"] == "active" else ""
             if key and item.get(key):
