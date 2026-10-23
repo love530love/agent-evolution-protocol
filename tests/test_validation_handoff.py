@@ -25,7 +25,8 @@ class ValidationHandoffTests(unittest.TestCase):
     def setUp(self):
         temporary = TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        folder = Path(temporary.name)
+        # Normalize 8.3 TEMP aliases before comparing to frozen evidence paths.
+        folder = Path(temporary.name).resolve()
         self.root = folder / "coordination"
         self.workspace = folder / "workspace"
         (self.workspace / "tests").mkdir(parents=True)

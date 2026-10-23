@@ -12,7 +12,8 @@ class PromotionFenceTests(unittest.TestCase):
             for delayed_evidence in ("previous", "submitted"):
                 with self.subTest(entrypoint=entrypoint, delayed_evidence=delayed_evidence):
                     with TemporaryDirectory() as temp:
-                        root = Path(temp)
+                        # CI TEMP may use RUNNER~1; evidence uses resolved paths.
+                        root = Path(temp).resolve()
                         proof = root / "proof"
                         proof.write_text("baseline")
                         result = root / "result"
@@ -43,6 +44,7 @@ class PromotionFenceTests(unittest.TestCase):
                                     work.finish(root, identity, actor="tester", token=lease["token"],
                                         evidence=[str(result)], note="passed")
                             publish.assert_not_called()
+                        self.assertEqual(clock[0], lease["expires"], "expiry injection must actually run")
                         self.assertEqual(gate.status(root, identity)["state"], "PROPOSED")
                         self.assertEqual(work._path(root, identity).read_bytes(), original_lease)
 
@@ -50,7 +52,7 @@ class PromotionFenceTests(unittest.TestCase):
         for with_token in (False, True):
             with self.subTest(with_token=with_token):
                 with TemporaryDirectory() as temp:
-                    root = Path(temp)
+                    root = Path(temp).resolve()
                     proof = root / "proof"
                     proof.write_text("baseline")
                     identity = gate.propose(root, dict(author="author", change="change",
