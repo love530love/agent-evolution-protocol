@@ -33,6 +33,10 @@ proposal.json 必须包含 author/change/acceptance/rollback/scope（非空字�
 
 ## 开发顺序
 
+### 验证失败也必须交接（2026-10-23）
+
+已实现[验证结果接力](VALIDATION_HANDOFF.zh-CN.md)：真实测试的成功、失败和晋级受阻均生成冻结回执；接替者 brief 获取当前阶段结果。单提案执行锁避免重复启动，未完成运行阻止自动认领/重跑；证据哈希结束后再次检查租约与阶段。self-test 新增真实失败后脚本角色交接及显式修复。恢复入口、进程树停止验证和真实宿主 ACK 仍待实现，不能将记录可读当作执行已停止。
+
 ### 一键集成验收（不是多 Agent 实测）
 
 `aep --coord-root <验收产物父目录> coord-improvement self-test` 在 acceptance_runs/唯一ID 下创建全新工作区和协作区，不改变父目录的生产策略或订单。串联事件排队/去重、强制策略、认领与简报、真实 unittest 子进程、独立身份约束、脚本角色推进及回滚记录，保存 acceptance-report.json、测试输出与完整阶段日志。失败返回 CLI 2，不自动清理证据或重试。

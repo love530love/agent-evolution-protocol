@@ -68,6 +68,7 @@ def _schedule(root, roster, *, apply, limit):
     busy.update(row["agent"] for row in observed if row["active_assignments"])
     work = improvement_work.pending(root)["work"]
     busy.update(item.get("owner") for item in work if not item["available"] and item.get("owner"))
+    busy.update(actor for item in work for actor in item.get("execution_owners", []))
     results = []
     for item in work:
         if not item["available"]:

@@ -77,6 +77,34 @@ def run(root):
                                     evidence=[str(proof)], note="scripted rollback record, no deployment")
         record("rollback_recorded", final["state"] == "ROLLED_BACK")
         record("journal_chain_readable", len(final["events"]) == 6)
+        # Exercise evidence recovery using real failing and repaired test processes.
+        failed_workspace = folder / "failure-workspace"
+        (failed_workspace / "tests").mkdir(parents=True)
+        failed_fixture = failed_workspace / "tests" / "test_recovery.py"
+        failed_fixture.write_text("import unittest\nclass Recovery(unittest.TestCase):\n"
+            "    def test_recovery(self):\n        self.fail('intentional acceptance fixture failure')\n", encoding="utf-8")
+        failure_id = improvement.propose(coord, {"author": "fixture-author", "change": "failure handoff exercise",
+            "acceptance": "successor reads frozen failure then explicitly validates a repair",
+            "scope": "isolated failure-workspace", "rollback": "discard generated fixture",
+            "evidence": [str(proof)]})["id"]
+        first = improvement_work.claim(coord, failure_id, actor="fixture-first")
+        failed = improvement.validate_tests(coord, failure_id, workspace=failed_workspace,
+            actor="fixture-first", token=first["token"], timeout=30)
+        record("real_failure_preserves_stage", failed["status"] == "FAILED" and failed["proposal"]["state"] == "PROPOSED")
+        improvement_work.finish(coord, failure_id, actor="fixture-first", token=first["token"], release=True)
+        successor = improvement_work.claim(coord, failure_id, actor="fixture-successor")
+        packet = improvement_work.brief(coord, failure_id, actor="fixture-successor", token=successor["token"])
+        record("successor_receives_verified_failure", len(packet["validation_runs"]) == 1
+               and packet["validation_runs"][0]["actor"] == "fixture-first"
+               and packet["validation_runs"][0]["test_status"] == "FAILED")
+        failed_fixture.write_text("import unittest\nclass Recovery(unittest.TestCase):\n"
+            "    def test_recovery(self):\n        self.assertEqual(2 + 2, 4)\n", encoding="utf-8")
+        repaired = improvement.validate_tests(coord, failure_id, workspace=failed_workspace,
+            actor="fixture-successor", token=successor["token"], timeout=30)
+        record("explicit_repair_validates", repaired["status"] == "PASSED"
+               and repaired["proposal"]["state"] == "VALIDATED")
+        report["failure_handoff"] = {"proposal_id": failure_id, "failed_receipt": failed["execution_receipt"],
+            "repaired_receipt": repaired["execution_receipt"], "scripted_roles": True}
         report.update(status="PASSED", proposal_id=identity)
     except (OSError, ValueError, KeyError, TypeError) as exc:
         report["error"] = str(exc)

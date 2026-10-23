@@ -1,5 +1,7 @@
 # 接力归属与历史回执
 
+实际测试结果现在也进入交接：`brief.validation_runs` 返回同阶段的已核验成功/失败/晋级受阻记录；`validation-runs` 核查运行请求与回执，中断或损坏阻止盲目重跑。详见[验证结果接力](VALIDATION_HANDOFF.zh-CN.md)。这些记录不证明进程树停止或真实 Agent ACK。
+
 `coord-improvement delivery-status` 只读取本地记录，不操作界面、不调用模型、不重发订单。
 
 `target_claimed` 仅在当前阶段的有效租约属于订单目标时成立；`claim_expires_at` 为其到期时间。

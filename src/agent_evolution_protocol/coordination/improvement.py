@@ -115,8 +115,14 @@ def advance(root, identity, *, state, actor, evidence, note, token=None):
         for record in event.get("evidence", event.get("proposal", {}).get("evidence", [])):
             if hashlib.sha256(Path(record["path"]).read_bytes()).hexdigest() != record["sha256"]:
                 raise ValueError("frozen evidence changed")
+    records = _evidence(evidence)
+    # Evidence hashing may outlive the lease or overlap another stage decision.
+    if status(root, identity)["events"][-1]["sha256"] != events[-1]["sha256"]:
+        raise ValueError("proposal changed during evidence verification")
+    if state in {"VALIDATED", "REVIEWED", "TRIAL", "ADOPTED"} and (enforced or token is not None):
+        improvement_work.check_claim(root, identity, actor=actor, token=token)
     _save(_folder(root, identity), len(events), {"state": state, "actor": actor, "note": note,
-          "evidence": _evidence(evidence), "previous": events[-1]["sha256"]})
+          "evidence": records, "previous": events[-1]["sha256"]})
     return status(root, identity)
 
 
@@ -155,19 +161,28 @@ def _ingest(root, event_file):
 
 
 def validate_tests(root, identity, *, workspace, actor, timeout=120, token=None):
+    from .battle_orders import _task_writer_lock
+    _folder(root, identity)  # Validate before deriving the execution lock name.
+    with _task_writer_lock(Path(root), "improvement-validation-" + identity):
+        return _validate_tests(root, identity, workspace=workspace, actor=actor, timeout=timeout, token=token)
+
+
+def _validate_tests(root, identity, *, workspace, actor, timeout, token):
     """Run only repository unittest discovery, never execute commands from events.
 
     Tests are arbitrary code: caller must authorize/trust the workspace. This is a
     subprocess with a deadline, NOT a security sandbox or resource isolation.
     """
-    from . import improvement_policy
+    from . import improvement_policy, improvement_runs
+    from .battle_orders import _task_writer_lock
     if improvement_policy.read(root)["mode"] == "enforced" and not token:
         raise ValueError("enforced mode requires claim token before executing tests")
     if isinstance(timeout, bool) or not isinstance(timeout, int) or not 1 <= timeout <= 300:
         raise ValueError("timeout must be 1..300 seconds")
     if not isinstance(actor, str) or not actor.strip():
         raise ValueError("actor required before executing tests")
-    if status(root, identity)["state"] != "PROPOSED":
+    current = status(root, identity)
+    if current["state"] != "PROPOSED":
         raise ValueError("validation requires PROPOSED")
     if token is not None:
         from . import improvement_work
@@ -175,10 +190,24 @@ def validate_tests(root, identity, *, workspace, actor, timeout=120, token=None)
     workspace = Path(workspace).resolve()
     if not (workspace / "tests").is_dir():
         raise ValueError("workspace needs tests directory")
-    folder = _folder(root, identity) / "runs" / uuid4().hex
-    folder.mkdir(parents=True)
     report = {"command": [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v"],
               "workspace": str(workspace), "security_sandbox": False, "status": "FAILED"}
+    # Claim replacement and run reservation share this short lock. The execution
+    # lock remains held for the process lifetime; no long global handoff lock.
+    with _task_writer_lock(Path(root), "improvement-handoff"):
+        improvement_runs.require_handoff(root, identity)
+        if status(root, identity)["events"][-1]["sha256"] != current["events"][-1]["sha256"]:
+            raise ValueError("proposal changed before validation reservation")
+        if token is not None:
+            improvement_work.check_claim(root, identity, actor=actor, token=token)
+        else:
+            from . import improvement_work
+            lease = improvement_work.read_lease(root, identity, optional=True)
+            if lease.get("active") and lease["head"] == current["events"][-1]["sha256"] and lease["expires"] > improvement_work._now():
+                raise ValueError("active claim requires its token before executing tests")
+        folder = _folder(root, identity) / "runs" / uuid4().hex
+        request = improvement_runs.begin(root, identity, folder, head=current["events"][-1]["sha256"],
+            actor=actor, token=token, command=report["command"], workspace=workspace, timeout=timeout)
     try:
         with (folder / "output.txt").open("w", encoding="utf-8") as output:
             run = subprocess.run(report["command"], cwd=workspace, stdout=output, stderr=subprocess.STDOUT,
@@ -193,20 +222,22 @@ def validate_tests(root, identity, *, workspace, actor, timeout=120, token=None)
     except (OSError, subprocess.TimeoutExpired) as exc:
         report["error"] = str(exc)
     path = folder / "report.json"
-    path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    _publish_new(path, report)
     if report["status"] == "PASSED":
         proofs = [str(path), str(folder / "output.txt")]
-        if token is not None:
-            try:
+        try:
+            if token is not None:
                 improvement_work.finish(root, identity, actor=actor, token=token,
                                         evidence=proofs, note="Executed unittest discovery passed")
-            except (OSError, ValueError, KeyError, TypeError) as exc:
-                report.update(status="PROMOTION_BLOCKED", promotion_error=str(exc))
-                # Never rewrite a test report that a partially committed journal may reference.
-                (folder / "promotion.json").write_text(json.dumps({
-                    "status": "PROMOTION_BLOCKED", "error": str(exc),
-                    "note": "Inspect current proposal before retrying; test success is not promotion."}, indent=2), encoding="utf-8")
-        else:
-            advance(root, identity, state="VALIDATED", actor=actor,
+            else:
+                advance(root, identity, state="VALIDATED", actor=actor,
                     evidence=proofs, note="Executed unittest discovery passed")
-    return {**report, "report": str(path), "proposal": status(root, identity)}
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            report.update(status="PROMOTION_BLOCKED", promotion_error=str(exc))
+            # Never rewrite a test report that a partially committed journal may reference.
+            _publish_new(folder / "promotion.json", {
+                "status": "PROMOTION_BLOCKED", "error": str(exc),
+                "note": "Inspect current proposal before retrying; test success is not promotion."})
+    receipt = improvement_runs.complete(folder, request, status=report["status"])
+    return {**report, "report": str(path), "run_id": folder.name, "execution_receipt": receipt,
+            "proposal": status(root, identity)}
