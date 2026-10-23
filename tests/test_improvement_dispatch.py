@@ -6,6 +6,33 @@ from agent_evolution_protocol.coordination import improvement, improvement_dispa
 
 
 class DispatchTests(unittest.TestCase):
+    def test_dispatch_defers_claimed_work_and_stops_on_damaged_lease(self):
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            proof = root / "proof"
+            proof.write_text("ok")
+            identity = improvement.propose(root, dict(author="a", change="b", acceptance="c",
+                rollback="d", scope="e", evidence=[str(proof)]))["id"]
+            head = improvement.status(root, identity)["events"][-1]["sha256"]
+            order = commander.submit_order(root, target="worker", task="improvement:" + identity,
+                text="verify", sender="router", event_id="EVT-IMPROVE-" + head[:24].upper())
+            lease = improvement_work.claim(root, identity, actor="owner")
+            with patch.object(commander.registry, "profile") as profile:
+                result = commander.dispatch(root, order=order)
+                self.assertEqual(result["state"], "DEFERRED")
+                self.assertIn("ALREADY_CLAIMED", result["attempts"][-1]["note"])
+                profile.assert_not_called()
+            improvement_work.finish(root, identity, actor="owner", token=lease["token"], release=True)
+            with patch.object(commander.registry, "profile", side_effect=ValueError("not registered")) as profile:
+                commander.dispatch(root, order=order)
+                profile.assert_called_once()
+            improvement_work._path(root, identity).write_text("{}", encoding="utf-8")
+            with patch.object(commander.registry, "profile") as profile:
+                result = commander.dispatch(root, order=order)
+                self.assertEqual(result["state"], "CEASED")
+                self.assertIn("INVALID_IMPROVEMENT_LEASE", result["attempts"][-1]["note"])
+                profile.assert_not_called()
+
     def test_unavailable_members_have_specific_non_authorizing_reasons(self):
         with TemporaryDirectory() as temp:
             root = Path(temp)

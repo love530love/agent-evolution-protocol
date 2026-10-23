@@ -85,3 +85,9 @@ schedule 会核对待办阶段与重新读取的提案阶段/动作，并在选�
 NO_ELIGIBLE_MEMBER 附带所需 action 和逐成员 candidates，eligible=false 的 reasons 可同时列出多项：CAPABILITY_NOT_DECLARED、NO_FRESH_ONLINE_DECLARATION、KNOWN_ASSIGNMENT_OR_ORDER、REVIEW_NOT_INDEPENDENT。对应检查能力名单、新鲜在线声明、既有任务/订单和独立复核成员。
 
 缺少声明不代表真实无能力或已离线；忙碌记录也不授权强制释放。诊断不更改原有名单顺序选人策略，不自动启动客户端、转移任务、绕过评审或新增模型调用。名单为空时 candidates 为空，须先配置真实成员。presence、名单和本次调度均非跨宿主原子快照。
+
+## 改进任务与通用增援的边界
+
+improvement: 订单不再进入通用 reinforce 补位分支，即使指定 candidates、超时或 CEASED，也不自动生成第二份改进订单。应先用 inspect-handoff/delivery-status 检查；只在原订单证明尚未输入时使用显式 reroute。普通任务的差异化增援规则未改变。
+
+直接 dispatch 在桌面发现前校验同阶段租约：有效认领存在时记为 DEFERRED（IMPROVEMENT_ALREADY_CLAIMED），先协调持有者；租约损坏则 CEASED（INVALID_IMPROVEMENT_LEASE），禁止输入。释放后仍需显式恢复及重新预检，不安装自动重试。该预检无法消除随后发生的全部认领竞态，不等于持有租约锁直到外部副作用完成，更不是跨宿主取消协议。

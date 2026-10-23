@@ -351,6 +351,15 @@ def _dispatch(root: Path, *, order: dict) -> dict:
                 for attempt in order.get("attempts", [])):
             # Even direct API calls cannot replay an uncertain/completed send.
             return order
+        from . import improvement_work
+        try:
+            lease = improvement_work.read_lease(root, order["task"].split(":", 1)[1], optional=True)
+        except (OSError, ValueError, KeyError, TypeError):
+            return _record_attempt(root, order, state="CEASED",
+                                   note="INVALID_IMPROVEMENT_LEASE: inspect before delivery")
+        if lease.get("active") and lease["head"] == proposal["events"][-1]["sha256"] and lease["expires"] > improvement_work._now():
+            return _record_attempt(root, order, state="DEFERRED",
+                                   note="IMPROVEMENT_ALREADY_CLAIMED: coordinate with owner before delivery")
     target = order["target"]
     try:
         registry.profile(root, target)
@@ -473,6 +482,10 @@ def reinforce(root: Path, order_id: str) -> dict | None:
     """
     order = next((o for o in _orders(root) if o.get("id") == order_id), None)
     if not order or order.get("state") in ("AGENT_ACK", "RETIRED"):
+        return None
+    if str(order.get("task", "")).startswith("improvement:"):
+        # This pipeline has stable stage IDs, leases and explicit pre-input
+        # rerouting. Generic reinforcements must not create duplicate waves.
         return None
     candidate = _pick_reinforcement_candidate(order, _orders(root))
     if not candidate:

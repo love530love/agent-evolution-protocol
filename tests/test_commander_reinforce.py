@@ -67,3 +67,15 @@ def test_reinforce_skips_acked(root):
     order["state"] = "AGENT_ACK"
     _write_order(root, order)
     assert C.reinforce(root, order["id"]) is None
+
+
+@pytest.mark.parametrize("state", ["CEASED", "WINDOW_FOUND", "MESSAGE_VISIBLE", "INPUT_SUBMITTED"])
+def test_improvement_does_not_spawn_generic_reinforcements(root, state):
+    order = C.submit_order(root, target="alpha", task="improvement:" + "a" * 24,
+                           text="review", sender="commander", candidates="beta,gamma")
+    order["state"] = state
+    order["created_at"] = "2000-01-01T00:00:00+00:00"
+    _write_order(root, order)
+    before = {str(p): p.read_bytes() for p in root.rglob("*.json")}
+    assert C.reinforce(root, order["id"]) is None
+    assert {str(p): p.read_bytes() for p in root.rglob("*.json")} == before
