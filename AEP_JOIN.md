@@ -33,6 +33,8 @@ aep --coord-root 'K:\PythonProjects5\agent-evolution-protocol\coordination' --ke
    https://github.com/love530love/agent-evolution-protocol/blob/main/docs/SCENARIO_ROUTER.zh-CN.md .
    Those documents need not exist inside this project's own `docs` folder.
 
+5. Before taking over delivery work, run `aep --coord-root 'K:\PythonProjects5\agent-evolution-protocol\coordination' coord-delivery-audit --summary-only` and report the `next_required` evidence. This is read-only and does not wake or message another agent.
+
 First reply template:
 
 ```text

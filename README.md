@@ -209,3 +209,5 @@ Apache-2.0.
 接力部署与真实验收：[docs/AGENT_HANDOFF_AND_ACCEPTANCE.zh-CN.md](docs/AGENT_HANDOFF_AND_ACCEPTANCE.zh-CN.md) · 健壮性调研：[docs/ROBUSTNESS_RESEARCH_20261028.zh-CN.md](docs/ROBUSTNESS_RESEARCH_20261028.zh-CN.md)
 
 [协作机制审计与目标](docs/COOPERATION_AUDIT_20261028.zh-CN.md)
+
+投递证据审计：`aep --coord-root coordination coord-delivery-audit --summary-only`。它只读显示每个 Agent 下一项需要补齐的证据，不发送消息、不唤醒模型、不自动重试。
