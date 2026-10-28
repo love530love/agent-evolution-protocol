@@ -1,10 +1,12 @@
 param(
   [string]$Model = "Qwen/Qwen3-0.6B",
-  [string]$Destination = ".models/Qwen3-0.6B"
+  [string]$Destination = ""
 )
 $ErrorActionPreference = "Stop"
 $hf = (Get-Command hf.exe -ErrorAction SilentlyContinue).Source
 if (-not $hf) { throw "Hugging Face CLI (hf.exe) is required. Install huggingface_hub first." }
+$repo = (Resolve-Path (Join-Path $PSScriptRoot ".." )).Path
+if ([string]::IsNullOrWhiteSpace($Destination)) { $Destination = Join-Path $repo ".models\Qwen3-0.6B" }
 $target = [IO.Path]::GetFullPath($Destination)
 New-Item -ItemType Directory -Force -Path $target | Out-Null
 & $hf download $Model --local-dir $target
