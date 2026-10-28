@@ -173,7 +173,7 @@ def _validate_tests(root, identity, *, workspace, actor, timeout, token):
     Tests are arbitrary code: caller must authorize/trust the workspace. This is a
     subprocess with a deadline, NOT a security sandbox or resource isolation.
     """
-    from . import improvement_policy, improvement_runs
+    from . import improvement_policy, improvement_runs, validation_execution
     from .battle_orders import _task_writer_lock
     if improvement_policy.read(root)["mode"] == "enforced" and not token:
         raise ValueError("enforced mode requires claim token before executing tests")
@@ -208,10 +208,11 @@ def _validate_tests(root, identity, *, workspace, actor, timeout, token):
         folder = _folder(root, identity) / "runs" / uuid4().hex
         request = improvement_runs.begin(root, identity, folder, head=current["events"][-1]["sha256"],
             actor=actor, token=token, command=report["command"], workspace=workspace, timeout=timeout)
+    report.update(execution_stop_required=os.name == "nt", execution_stop_verified=False,
+                  execution_backend="windows-job" if os.name == "nt" else "direct-subprocess")
     try:
         with (folder / "output.txt").open("w", encoding="utf-8") as output:
-            run = subprocess.run(report["command"], cwd=workspace, stdout=output, stderr=subprocess.STDOUT,
-                                 timeout=timeout, check=False)
+            run = validation_execution.run(folder, request, output)
         report["exit_code"] = run.returncode
         # unittest returns success for zero discovered tests: do not accept that.
         text = (folder / "output.txt").read_text(encoding="utf-8", errors="replace")
@@ -221,6 +222,13 @@ def _validate_tests(root, identity, *, workspace, actor, timeout, token):
             report["status"] = "PASSED"
     except (OSError, subprocess.TimeoutExpired) as exc:
         report["error"] = str(exc)
+        if isinstance(exc, subprocess.TimeoutExpired):
+            report["execution_stop_required"] = True
+    if (folder / "execution-stop.json").exists():
+        report["execution_stop_verified"] = validation_execution.stop_record(folder, request)["execution_stop_verified"]
+    if report["execution_stop_required"] and not report["execution_stop_verified"]:
+        report["status"] = "FAILED"
+        report["error"] = report.get("error", "") + " Execution stop not verified; inspect before recovery."
     path = folder / "report.json"
     _publish_new(path, report)
     if report["status"] == "PASSED":

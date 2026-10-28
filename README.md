@@ -205,3 +205,5 @@ Experimental shadow tooling. Keep irreversible operations and production automat
 ## License
 
 Apache-2.0.
+
+接力部署与真实验收：[docs/AGENT_HANDOFF_AND_ACCEPTANCE.zh-CN.md](docs/AGENT_HANDOFF_AND_ACCEPTANCE.zh-CN.md) · 健壮性调研：[docs/ROBUSTNESS_RESEARCH_20261028.zh-CN.md](docs/ROBUSTNESS_RESEARCH_20261028.zh-CN.md)

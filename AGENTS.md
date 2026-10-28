@@ -18,3 +18,9 @@
 - WSLC 昆仑镜像已于 2026-10-13 复制到普通用户会话；旧记忆中的“必须管理员/普通会话恒为空”仅是迁移前状态。先读 `docs/coordination/REA_WSLC_BRIEFING_20261013.md` 的最新状态并核对 `images/inspect`；不得因空表盲目 `run/pull`，创建时使用 `--pull never`。物理 XPU 与完整编译门尚未验收。
 - 紧急跨 Agent 指令按 `docs/coordination/URGENT_DELIVERY.md`：信箱投递、原会话消息可见、Agent ACK、记忆修改是不同证据级别。需即时唤醒时用 `coord-send --dispatch`；失败不得盲目重复发送。
 - 本机桌面 MCP 备用能力按 `docs/coordination/DESKTOP_MCP_PROVIDERS.md` 登记与探测，统一入口 `coord-desktop inventory|probe|plan`；工具发现不等于原会话投递。结果不明的输入禁止切换服务重发。
+
+<!-- AEP JOIN START -->
+# Agent Evolution Protocol
+
+If you are an AI agent opened in this workspace, first read `AEP_JOIN.md` and join the collaboration. Do not create a new session by default; use digest-first handoff, claim before writes, and guided retry after failures.
+<!-- AEP JOIN END -->

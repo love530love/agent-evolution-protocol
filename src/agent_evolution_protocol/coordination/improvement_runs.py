@@ -1,4 +1,4 @@
-"""Immutable validation receipts for handoffs, not proof of process-tree shutdown."""
+"""Immutable validation receipts and explicit, scoped interrupted-run recovery."""
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -37,10 +37,14 @@ def complete(folder, request, *, status):
     names = ["report.json", "output.txt"]
     if status == "PROMOTION_BLOCKED":
         names.append("promotion.json")
-    receipt = _signed({"schema_version": 1, "id": request["id"], "run_id": request["run_id"],
+    names.extend(name for name in ("execution.json", "execution-stop.json") if (folder / name).exists())
+    report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+    receipt = _signed({"schema_version": 2, "id": request["id"], "run_id": request["run_id"],
         "request_sha256": request["sha256"], "status": status,
         "completed_at": datetime.now(timezone.utc).isoformat(),
         "files": {name: hashlib.sha256((folder / name).read_bytes()).hexdigest() for name in names},
+        "execution_stop_required": report.get("execution_stop_required", False),
+        "execution_stop_verified": report.get("execution_stop_verified", False),
         "process_tree_stopped_verified": False})
     improvement._publish_new(folder / "receipt.json", receipt)
     return str(folder / "receipt.json")
@@ -94,7 +98,23 @@ def history(root, identity, *, verify_artifacts=True):
             belongs = request["head"] == head
             row.update({key: request[key] for key in ("head", "actor", "command", "workspace",
                                                       "timeout", "started_at", "claim_fingerprint")})
+            from . import validation_execution
+            if (folder / "execution.json").exists():
+                validation_execution.descriptor(folder, request)
+            if (folder / "execution-stop.json").exists():
+                validation_execution.stop_record(folder, request)
             if not (folder / "receipt.json").exists():
+                # An interrupt may occur after publishing a report. Recovery
+                # preserves partial progress but must never launder corrupt JSON.
+                if (folder / "report.json").exists():
+                    partial = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+                    if not isinstance(partial, dict) or partial.get("status") not in {"PASSED", "FAILED"}:
+                        raise ValueError("invalid incomplete validation report")
+                if (folder / "promotion.json").exists():
+                    promotion = json.loads((folder / "promotion.json").read_text(encoding="utf-8"))
+                    if (not isinstance(promotion, dict) or promotion.get("status") != "PROMOTION_BLOCKED"
+                            or not (folder / "report.json").exists() or partial["status"] != "PASSED"):
+                        raise ValueError("invalid incomplete promotion record")
                 row.update(status="INCOMPLETE", next_action="inspect_original_execution_and_preserve_run_files")
             else:
                 receipt = _read(folder / "receipt.json")
@@ -103,7 +123,10 @@ def history(root, identity, *, verify_artifacts=True):
                 if outcome == "PROMOTION_BLOCKED":
                     names.add("promotion.json")
                 files = receipt.get("files")
-                if (receipt.get("schema_version") != 1 or receipt.get("id") != identity
+                version = receipt.get("schema_version")
+                if version == 2:
+                    names.update(name for name in ("execution.json", "execution-stop.json") if (folder / name).exists())
+                if (version not in {1, 2} or receipt.get("id") != identity
                         or receipt.get("run_id") != folder.name
                         or receipt.get("request_sha256") != request["sha256"]
                         or outcome not in {"PASSED", "FAILED", "PROMOTION_BLOCKED"}
@@ -113,6 +136,22 @@ def history(root, identity, *, verify_artifacts=True):
                         or receipt.get("process_tree_stopped_verified") is not False):
                     raise ValueError("invalid validation receipt binding")
                 row.update(status=outcome, completed_at=receipt["completed_at"])
+                if version == 2:
+                    from . import validation_execution
+                    required, verified = receipt.get("execution_stop_required"), receipt.get("execution_stop_verified")
+                    if type(required) is not bool or type(verified) is not bool:
+                        raise ValueError("invalid execution stop flags")
+                    if "execution.json" in files:
+                        validation_execution.descriptor(folder, request)
+                    if "execution-stop.json" in files:
+                        stop = validation_execution.stop_record(folder, request)
+                        if verified != stop["execution_stop_verified"]:
+                            raise ValueError("inconsistent execution stop receipt")
+                    elif verified:
+                        raise ValueError("execution stop proof missing")
+                    row.update(execution_stop_verified=verified, execution_stop_required=required)
+                    if required and not verified:
+                        row.update(status="STOP_UNVERIFIED", next_action="inspect_original_execution_before_recovery")
                 if belongs and verify_artifacts:
                     for name, digest in files.items():
                         if hashlib.sha256((folder / name).read_bytes()).hexdigest() != digest:
@@ -124,9 +163,16 @@ def history(root, identity, *, verify_artifacts=True):
                     row.update(test_status=report["status"], tests_run=report.get("tests_run", 0),
                                exit_code=report.get("exit_code"), error=report.get("error"),
                                evidence=[{"path": str(folder / name), "sha256": digest} for name, digest in files.items()])
+            if (folder / "recovery.json").exists():
+                recovered = _check_recovery(folder, request)
+                if row["status"] not in {"INCOMPLETE", "STOP_UNVERIFIED"}:
+                    raise ValueError("recovery cannot replace a completed validation result")
+                row.update(status="RECOVERED_STOPPED", recovery=str(folder / "recovery.json"),
+                           execution_stop_verified=True, recovery_actor=recovered["actor"],
+                           next_action="inspect_handoff_and_existing_lease_before_claiming")
         except (OSError, ValueError, KeyError, TypeError) as exc:
             row.update(status="DAMAGED", error=str(exc), next_action="inspect_validation_evidence_do_not_overwrite")
-        if row["status"] in {"INCOMPLETE", "DAMAGED"}:
+        if row["status"] in {"INCOMPLETE", "DAMAGED", "STOP_UNVERIFIED"}:
             blocked.append(row)
         if belongs:
             runs.append(row)
@@ -143,3 +189,91 @@ def require_handoff(root, identity):
     if not packet["handoff_ready"]:
         raise ValueError("validation run incomplete or damaged; inspect validation-runs before recovery")
     return packet
+
+
+_RUN_FILES = ("request.json", "execution.json", "execution-stop.json", "output.txt",
+              "report.json", "promotion.json", "receipt.json")
+
+
+def _file_snapshot(folder):
+    return {name: hashlib.sha256((folder / name).read_bytes()).hexdigest()
+            for name in _RUN_FILES if (folder / name).exists()}
+
+
+def _check_recovery(folder, request):
+    from . import validation_execution
+    execution = validation_execution.descriptor(folder, request)
+    if (folder / "execution-stop.json").exists():
+        validation_execution.stop_record(folder, request)
+    row = _read(folder / "recovery.json")
+    if (row.get("schema_version") != 1 or row.get("id") != request["id"]
+            or row.get("run_id") != request["run_id"] or row.get("request_sha256") != request["sha256"]
+            or row.get("execution_sha256") != execution["sha256"]
+            or row.get("status") != "RECOVERED_STOPPED" or row.get("observation") != "JOB_ABSENT"
+            or row.get("stop_scope") != "owned_windows_job" or row.get("execution_stop_verified") is not True
+            or row.get("process_tree_stopped_verified") is not False
+            or not isinstance(row.get("actor"), str) or not row["actor"].strip()
+            or not isinstance(row.get("note"), str) or not row["note"].strip()
+            or not isinstance(row.get("evidence"), list) or not row["evidence"]
+            or row.get("files") != _file_snapshot(folder)):
+        raise ValueError("invalid recovery binding or changed run files")
+    for item in row["evidence"]:
+        if hashlib.sha256(Path(item["path"]).read_bytes()).hexdigest() != item["sha256"]:
+            raise ValueError("recovery evidence changed")
+    return row
+
+
+def recover(root, identity, run_id, *, actor=None, note=None, evidence=None, apply=False):
+    """Preview by default. No process kill, implicit retry, lease release or promotion."""
+    from . import validation_execution
+    from .battle_orders import _task_writer_lock
+    if not isinstance(run_id, str) or not re.fullmatch(r"[0-9a-f]{32}", run_id):
+        raise ValueError("valid run-id required")
+    folder = improvement._folder(root, identity) / "runs" / run_id
+
+    def inspect():
+        packet = history(root, identity)
+        # Read and validate the specific run even if its stage is now historical.
+        request = _read(folder / "request.json")
+        _check_request(request, identity, run_id)
+        if (folder / "recovery.json").exists():
+            row = _check_recovery(folder, request)
+            if any(item["run_id"] == run_id for item in packet["blocked_runs"]):
+                raise ValueError("recovered run is damaged; preserve original records")
+            return request, None, {**row, "already_recovered": True, "applied": False}
+        target = next((item for item in packet["blocked_runs"] if item["run_id"] == run_id), None)
+        if target is None or target["status"] not in {"INCOMPLETE", "STOP_UNVERIFIED"}:
+            raise ValueError("only intact incomplete or stop-unverified runs can be recovered")
+        execution = validation_execution.descriptor(folder, request)
+        observed = validation_execution.observe_absence(execution)
+        return request, execution, {"id": identity, "run_id": run_id,
+            "head": packet["head"], "status": "READY_FOR_RECOVERY", **observed,
+            "applied": False, "execution_started": False, "lease_released": False,
+            "next_action": "review_external_side_effects_then_apply_with_actor_note_and_evidence"}
+
+    if not apply:
+        return inspect()[2]
+    if not isinstance(actor, str) or not actor.strip() or not isinstance(note, str) or not note.strip():
+        raise ValueError("recovery apply requires actor and side-effect review note")
+    # Same lock order as validation; a live validator is never recovered underneath it.
+    with _task_writer_lock(Path(root), "improvement-validation-" + identity):
+        request, execution, preview = inspect()
+        if preview.get("already_recovered"):
+            return preview
+        proofs = improvement._evidence(evidence)
+        files = _file_snapshot(folder)
+        with _task_writer_lock(Path(root), "improvement-handoff"):
+            if improvement.status(root, identity)["events"][-1]["sha256"] != preview["head"]:
+                raise ValueError("proposal changed during recovery review")
+            # Hashing may take time. Recheck execution absence and all evidence.
+            observed = validation_execution.observe_absence(execution)
+            if files != _file_snapshot(folder) or proofs != improvement._evidence(evidence):
+                raise ValueError("recovery evidence changed during review")
+            row = _signed({"schema_version": 1, "id": identity, "run_id": run_id,
+                "request_sha256": request["sha256"], "execution_sha256": execution["sha256"],
+                "head": preview["head"], "status": "RECOVERED_STOPPED", **observed,
+                "actor": actor, "note": note, "evidence": proofs, "files": files,
+                "recovered_at": datetime.now(timezone.utc).isoformat()})
+            improvement._publish_new(folder / "recovery.json", row)
+        return {**row, "applied": True, "execution_started": False, "lease_released": False,
+                "next_action": "inspect_handoff_and_existing_lease_before_claiming"}

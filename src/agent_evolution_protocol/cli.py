@@ -789,6 +789,10 @@ def coord_improvement(args: argparse.Namespace) -> None:
         elif args.action == "validation-runs":
             from .coordination import improvement_runs
             result = improvement_runs.history(coord_root(args), args.id)
+        elif args.action == "recover-run":
+            from .coordination import improvement_runs
+            result = improvement_runs.recover(coord_root(args), args.id, args.run_id,
+                actor=args.actor, note=args.note, evidence=args.evidence, apply=args.apply)
         elif args.action == "inspect-handoff":
             result = improvement_work.inspect_handoff(coord_root(args), args.id)
         elif args.action == "checkpoint":
@@ -1656,6 +1660,7 @@ def route_profile(scenario: str, croot: Path, kroot: Path, who: str, task_name: 
 
 
 def route_intent(args: argparse.Namespace) -> None:
+    from .route_guidance import build_next_action
     croot = coord_root(args)
     kroot = kernel_root(args)
     intent = args.intent.strip()
@@ -1776,6 +1781,7 @@ def route_intent(args: argparse.Namespace) -> None:
     }
     result.setdefault("description", result.get("decision", ""))
     result.setdefault("runbook", "docs/ROUTE_DEVELOPMENT_PLAN.zh-CN.md")
+    result["next_action"] = build_next_action(result, root=workspace, coord_root=croot)
     if args.markdown:
         print(f"# AEP Route: {result['scenario']}\n")
         print(f"- confidence: `{result['confidence']}`")
@@ -2429,7 +2435,8 @@ def build_parser() -> argparse.ArgumentParser:
     orca.add_argument("--apply", action="store_true")
     orca.set_defaults(func=coord_orca)
     changes = commands.add_parser("coord-improvement")
-    changes.add_argument("action", choices=("propose", "status", "advance", "ingest", "validate", "enqueue", "drain", "overview", "pending", "claim", "complete", "release", "schedule", "delivery-status", "retire", "reroute", "checkpoint", "checkpoints", "validation-runs", "inspect-handoff", "brief", "renew", "policy", "self-test"))
+    changes.add_argument("action", choices=("propose", "status", "advance", "ingest", "validate", "enqueue", "drain", "overview", "pending", "claim", "complete", "release", "schedule", "delivery-status", "retire", "reroute", "checkpoint", "checkpoints", "validation-runs", "recover-run", "inspect-handoff", "brief", "renew", "policy", "self-test"))
+    changes.add_argument("--run-id")
     changes.add_argument("--target")
     changes.add_argument("--mode", choices=sorted(improvement_policy.MODES))
     changes.add_argument("--order-id")
