@@ -25,3 +25,12 @@
 - Added isolated proposal commit–reveal.
 - Added artifact SHA binding and protected reserve budgets.
 - Published the protocol, evolution history, templates, and minimal CLI.
+## 0.4.0
+
+- Added persistent, resumable mission graphs with event recovery and ACK-driven successor unlocking.
+- Added provider readback contract `aep-readback-v1` and explicit Agent ACK semantics.
+- Added onboarding diagnostics for Git LFS, CUDA/NVIDIA and local model weights.
+- Added CUDA-first local Qwen runtime with model-contract validation and deterministic fallback.
+- Added evidence-driven capability scoring with persistence and adaptive routing.
+- Added bounded autonomous supervision, Computer-use capability matrix and delegation playbook.
+
