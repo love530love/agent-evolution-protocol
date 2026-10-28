@@ -27,6 +27,7 @@ from agent_evolution_protocol.coordination import transcript_bus as bus
 from agent_evolution_protocol.coordination import transport_cdp as cdp
 from agent_evolution_protocol.coordination import ui_fallback
 from agent_evolution_protocol.coordination import desktop_providers
+from agent_evolution_protocol.coordination.provider_readback import receipt as make_readback, accepted as readback_accepted
 
 SAFE_AGENT = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 ACK_TOKEN = "AEP-ACK"
@@ -35,6 +36,27 @@ REINFORCE_AFTER_MINUTES = 20  # 主订单停火或久未ACK后，允许候选age
 
 # DEPOSITED -> WINDOW_FOUND -> INPUT_SUBMITTED -> MESSAGE_VISIBLE -> AGENT_ACK
 ORDER_STATES = ("DEPOSITED", "DEFERRED", "WINDOW_FOUND", "INPUT_SUBMITTED", "MESSAGE_VISIBLE", "AGENT_ACK", "CEASED", "FAILED", "RETIRED")
+
+
+def provider_readback(provider: str, event_id: str, raw: dict) -> dict:
+    """Normalize adapter receipts; visibility never becomes an ACK."""
+    if not isinstance(raw, dict):
+        return make_readback(provider=provider, event_id=event_id, state="UNKNOWN", observed=False, error="adapter receipt is not an object")
+    if raw.get("agent_accepted") is True:
+        state, ack = "AGENT_ACK", True
+    elif raw.get("task_delivered") is True:
+        state, ack = "MESSAGE_VISIBLE", False
+    elif raw.get("status") in {"NO_RECEIPT", "ADAPTER_ERROR", "ADAPTER_MISSING", "PROFILE_DELIVERY_FAILED"}:
+        state, ack = "FAILED", False
+    else:
+        state, ack = "INPUT_SUBMITTED", False
+    value = make_readback(provider=provider, event_id=event_id, state=state,
+                          observed=bool(raw.get("task_delivered") or raw.get("agent_accepted")),
+                          ack=ack, evidence=list(raw.get("evidence", [])) if isinstance(raw.get("evidence", []), list) else [],
+                          error=str(raw.get("error", "")))
+    value["raw"] = raw
+    value["accepted"] = readback_accepted(value)
+    return value
 
 
 def _root(base: Path) -> Path:
