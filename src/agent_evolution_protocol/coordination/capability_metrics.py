@@ -1,6 +1,8 @@
 """Evidence-driven provider/agent capability scoring."""
 from __future__ import annotations
 from typing import Any
+import json
+from pathlib import Path
 
 def record(metrics: dict[str, Any], provider: str, *, success: bool, latency_ms: int,
            evidence_quality: float = 1.0, failure_signature: str = "") -> dict[str, Any]:
@@ -23,3 +25,16 @@ def score(row: dict[str, Any]) -> float:
 
 def rank(metrics: dict[str, Any]) -> list[dict[str, Any]]:
     return sorted(({"provider": name, "score": score(row), "attempts": row.get("attempts", 0), "top_failure": max(row.get("failures", {}), key=row.get("failures", {}).get) if row.get("failures") else ""} for name, row in metrics.items()), key=lambda x: (-x["score"], x["provider"]))
+
+def save(path: Path, metrics: dict[str, Any]) -> None:
+    path = Path(path); path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"schema": "aep-capability-metrics-v1", "metrics": metrics}
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+def load(path: Path) -> dict[str, Any]:
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if payload.get("schema") != "aep-capability-metrics-v1" or not isinstance(payload.get("metrics"), dict):
+        raise ValueError("invalid capability metrics schema")
+    return payload["metrics"]
