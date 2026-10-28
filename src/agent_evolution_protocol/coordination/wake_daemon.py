@@ -205,7 +205,18 @@ def consume(path: Path, *, dry_run: bool = False) -> int:
 
 def queue_items() -> list[Path]:
     QUEUE.mkdir(parents=True, exist_ok=True)
-    return sorted(QUEUE.glob("*.json"))
+    priority = {"urgent": 0, "high": 1, "normal": 2, "low": 3}
+
+    def order(path: Path):
+        # Scheduling hint only. Invalid or absent priority remains runnable at
+        # normal priority; consume() still validates the event itself.
+        try:
+            event = read_json(path)
+        except Exception:  # noqa: BLE001
+            event = {}
+        return (priority.get(str(event.get("priority", "normal")).lower(), 2), path.name)
+
+    return sorted(QUEUE.glob("*.json"), key=order)
 
 
 def main() -> int:

@@ -19,6 +19,16 @@ def load(name, filename):
 
 
 class CollaborationTests(unittest.TestCase):
+    def test_wake_queue_prioritizes_urgent_corrections(self):
+        daemon = load("wake_daemon_priority_test", "wake_daemon.py")
+        with tempfile.TemporaryDirectory() as temp:
+            queue = Path(temp) / "wake_queue"
+            queue.mkdir()
+            (queue / "normal.json").write_text(json.dumps({"id": "n", "priority": "normal"}), encoding="utf-8")
+            (queue / "urgent.json").write_text(json.dumps({"id": "u", "priority": "urgent"}), encoding="utf-8")
+            with mock.patch.object(daemon, "QUEUE", queue):
+                self.assertEqual([path.name for path in daemon.queue_items()], ["urgent.json", "normal.json"])
+
     def test_wake_cooldown_is_scoped_to_task(self):
         daemon = load("wake_daemon_cooldown_test", "wake_daemon.py")
         with tempfile.TemporaryDirectory() as temp:
