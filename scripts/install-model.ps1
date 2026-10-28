@@ -3,6 +3,7 @@ param(
   [string]$Destination = ""
 )
 $ErrorActionPreference = "Stop"
+$env:HF_HUB_DISABLE_XET = "1"
 $hf = (Get-Command hf.exe -ErrorAction SilentlyContinue).Source
 if (-not $hf) { throw "Hugging Face CLI (hf.exe) is required. Install huggingface_hub first." }
 $repo = (Resolve-Path (Join-Path $PSScriptRoot ".." )).Path
