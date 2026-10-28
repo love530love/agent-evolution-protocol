@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 from typing import Any
 from .model_contract import validate_proposal, safe_fallback
+from .capability_metrics import score
 
 OPERATIONS = {"observe", "read", "locate", "type", "click", "keys", "select", "screenshot", "wait", "send"}
 RISK = {"observe": "low", "read": "low", "locate": "low", "screenshot": "low", "wait": "low",
@@ -61,7 +62,7 @@ def load_capabilities(path: Path | None = None) -> list[Capability]:
 
 
 def plan(intent: str, operation: str, *, manifest: Path | None = None, allow_high_risk: bool = False,
-         execution_mode: str = "gated") -> dict[str, Any]:
+         execution_mode: str = "gated", metrics: dict[str, Any] | None = None) -> dict[str, Any]:
     """Return an auditable, non-executing action plan."""
     if not isinstance(intent, str) or not intent.strip() or len(intent) > 16000:
         raise ValueError("intent must be 1..16000 characters")
@@ -76,7 +77,8 @@ def plan(intent: str, operation: str, *, manifest: Path | None = None, allow_hig
                 "intent": intent, "candidates": [], "execution_started": False, "execution_mode": execution_mode}
     candidates = [c for c in load_capabilities(manifest)
                   if c.status != "disabled" and operation in c.operations]
-    candidates.sort(key=lambda c: (0 if c.status == "task-tested" else 1 if c.status == "probed" else 2, c.priority, c.provider))
+    candidates.sort(key=lambda c: (-(score(metrics[c.provider]) if metrics and c.provider in metrics else 0),
+                                   0 if c.status == "task-tested" else 1 if c.status == "probed" else 2, c.priority, c.provider))
     rows = [{"provider": c.provider, "status": c.status, "priority": c.priority,
              "requires": list(c.requires), "risk": risk} for c in candidates]
     return {"status": "PLAN_ONLY" if rows else "NO_CAPABILITY", "operation": operation,
