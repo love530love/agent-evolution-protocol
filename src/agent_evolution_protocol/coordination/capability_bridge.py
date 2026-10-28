@@ -60,16 +60,20 @@ def load_capabilities(path: Path | None = None) -> list[Capability]:
     return [_cap(row) for row in rows]
 
 
-def plan(intent: str, operation: str, *, manifest: Path | None = None, allow_high_risk: bool = False) -> dict[str, Any]:
+def plan(intent: str, operation: str, *, manifest: Path | None = None, allow_high_risk: bool = False,
+         execution_mode: str = "gated") -> dict[str, Any]:
     """Return an auditable, non-executing action plan."""
     if not isinstance(intent, str) or not intent.strip() or len(intent) > 16000:
         raise ValueError("intent must be 1..16000 characters")
     if operation not in OPERATIONS:
         raise ValueError("unknown operation")
     risk = RISK[operation]
-    if risk == "high" and not allow_high_risk:
+    if execution_mode not in {"gated", "delegated-open"}:
+        raise ValueError("execution_mode must be gated or delegated-open")
+    open_mode = execution_mode == "delegated-open"
+    if risk == "high" and not (allow_high_risk or open_mode):
         return {"status": "REQUIRES_EXPLICIT_LEASE", "operation": operation, "risk": risk,
-                "intent": intent, "candidates": [], "execution_started": False}
+                "intent": intent, "candidates": [], "execution_started": False, "execution_mode": execution_mode}
     candidates = [c for c in load_capabilities(manifest)
                   if c.status != "disabled" and operation in c.operations]
     candidates.sort(key=lambda c: (0 if c.status == "task-tested" else 1 if c.status == "probed" else 2, c.priority, c.provider))
@@ -77,11 +81,12 @@ def plan(intent: str, operation: str, *, manifest: Path | None = None, allow_hig
              "requires": list(c.requires), "risk": risk} for c in candidates]
     return {"status": "PLAN_ONLY" if rows else "NO_CAPABILITY", "operation": operation,
             "risk": risk, "intent": intent, "candidates": rows, "execution_started": False,
+            "execution_mode": execution_mode, "delegated_authority": open_mode,
             "next": "acquire shared desktop-input lease, execute through provider adapter, then read back evidence" if rows else "register or probe a provider"}
 
 
 def plan_proposal(proposal: Any, *, manifest: Path | None = None, allow_high_risk: bool = False,
-                  min_confidence: float = 0.55) -> dict[str, Any]:
+                  min_confidence: float = 0.55, execution_mode: str = "gated") -> dict[str, Any]:
     """Validate a model proposal and route it through the normal planner."""
     try:
         value = validate_proposal(proposal)
@@ -91,7 +96,8 @@ def plan_proposal(proposal: Any, *, manifest: Path | None = None, allow_high_ris
         return {"status": "MODEL_CONFIDENCE_TOO_LOW", "execution_started": False,
                 "confidence": value["confidence"], "threshold": min_confidence,
                 "next": "ask a stronger agent or provide a structured intent"}
-    result = plan(value["intent"], value["operation"], manifest=manifest, allow_high_risk=allow_high_risk)
+    result = plan(value["intent"], value["operation"], manifest=manifest, allow_high_risk=allow_high_risk,
+                  execution_mode=execution_mode)
     result["model_confidence"] = value["confidence"]
     result["model_reason"] = value["reason"]
     return result
