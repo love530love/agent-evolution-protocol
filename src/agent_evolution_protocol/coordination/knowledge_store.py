@@ -10,7 +10,7 @@ CREATE INDEX IF NOT EXISTS idx_records_kind ON records(kind);
 """
 
 def connect(path: Path) -> sqlite3.Connection:
-    db = sqlite3.connect(str(path)); db.executescript(SCHEMA); db.commit(); return db
+    db = sqlite3.connect(str(path)); db.row_factory = sqlite3.Row; db.executescript(SCHEMA); db.commit(); return db
 
 def add(path: Path, *, kind: str, body: str, task_id: str = "", actor: str = "", title: str = "", tags: str = "") -> int:
     if kind not in {"intent", "session", "decision", "dissent", "evidence", "failure", "lesson", "code_detail"}: raise ValueError("invalid record kind")
