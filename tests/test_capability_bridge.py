@@ -1,6 +1,6 @@
 import json
 
-from agent_evolution_protocol.coordination.capability_bridge import plan
+from agent_evolution_protocol.coordination.capability_bridge import plan, plan_proposal
 
 
 def test_plan_prefers_task_tested_and_never_executes(tmp_path):
@@ -21,3 +21,12 @@ def test_high_risk_requires_lease(tmp_path):
     result = plan("send a message", "send", manifest=path)
     assert result["status"] == "REQUIRES_EXPLICIT_LEASE"
     assert result["execution_started"] is False
+
+
+def test_model_proposal_enters_same_non_executing_planner(tmp_path):
+    path = tmp_path / "capabilities.json"
+    path.write_text(json.dumps({"capabilities": [{"provider": "rules", "operations": ["read"], "status": "task-tested"}]}), encoding="utf-8")
+    result = plan_proposal({"intent": "read inbox", "operation": "read", "confidence": .9, "reason": "need evidence"}, manifest=path)
+    assert result["status"] == "PLAN_ONLY"
+    assert result["execution_started"] is False
+    assert result["model_confidence"] == .9

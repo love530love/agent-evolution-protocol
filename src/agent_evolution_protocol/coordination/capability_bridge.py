@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 from typing import Any
+from .model_contract import validate_proposal, safe_fallback
 
 OPERATIONS = {"observe", "read", "locate", "type", "click", "keys", "select", "screenshot", "wait", "send"}
 RISK = {"observe": "low", "read": "low", "locate": "low", "screenshot": "low", "wait": "low",
@@ -77,3 +78,20 @@ def plan(intent: str, operation: str, *, manifest: Path | None = None, allow_hig
     return {"status": "PLAN_ONLY" if rows else "NO_CAPABILITY", "operation": operation,
             "risk": risk, "intent": intent, "candidates": rows, "execution_started": False,
             "next": "acquire shared desktop-input lease, execute through provider adapter, then read back evidence" if rows else "register or probe a provider"}
+
+
+def plan_proposal(proposal: Any, *, manifest: Path | None = None, allow_high_risk: bool = False,
+                  min_confidence: float = 0.55) -> dict[str, Any]:
+    """Validate a model proposal and route it through the normal planner."""
+    try:
+        value = validate_proposal(proposal)
+    except ValueError as exc:
+        return safe_fallback(proposal, reason=str(exc))
+    if value["confidence"] < min_confidence:
+        return {"status": "MODEL_CONFIDENCE_TOO_LOW", "execution_started": False,
+                "confidence": value["confidence"], "threshold": min_confidence,
+                "next": "ask a stronger agent or provide a structured intent"}
+    result = plan(value["intent"], value["operation"], manifest=manifest, allow_high_risk=allow_high_risk)
+    result["model_confidence"] = value["confidence"]
+    result["model_reason"] = value["reason"]
+    return result
