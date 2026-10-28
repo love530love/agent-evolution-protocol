@@ -38,3 +38,4 @@ src/agent_evolution_protocol/coordination/pad_receipts/
 .aep-kernel/
 /coordination/
 src/agent_evolution_protocol/coordination/messages/
+.models/
