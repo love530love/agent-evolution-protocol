@@ -461,6 +461,10 @@ def coord_doctor(args: argparse.Namespace) -> None:
     checks = []
     checks.append({"name": "python", "ok": sys.version_info >= (3, 10), "detail": sys.version.split()[0]})
     checks.append({"name": "coord_root_exists", "ok": root.exists(), "detail": str(root)})
+    checks.append({"name": "git_lfs", "ok": shutil.which("git-lfs") is not None, "detail": "required for large model/provider artifacts"})
+    checks.append({"name": "cuda_driver", "ok": shutil.which("nvidia-smi") is not None, "detail": "optional CUDA execution"})
+    workspace = workspace_root(args)
+    checks.append({"name": "local_model", "ok": (workspace / ".models" / "Qwen3-0.6B" / "model.safetensors").exists(), "detail": str(workspace / ".models" / "Qwen3-0.6B")})
     required_dirs = ("messages", "acks", "sessions", "wake_queue", "wake_done", "wake_failed", "task_states")
     for name in required_dirs:
         path = coord_file(root, name)
