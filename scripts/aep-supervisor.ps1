@@ -1,5 +1,8 @@
 param([int]$IntervalSeconds = 30, [int]$MaxTicks = 0)
 $ErrorActionPreference = "Stop"
+$env:PYTHONIOENCODING = "utf-8"
+$env:PYTHONUTF8 = "1"
+$OutputEncoding = [Console]::OutputEncoding
 $root = (Resolve-Path (Join-Path $PSScriptRoot ".." )).Path
 $ticks = 0
 while (($MaxTicks -eq 0) -or ($ticks -lt $MaxTicks)) {
