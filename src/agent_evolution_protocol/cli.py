@@ -48,6 +48,7 @@ from agent_evolution_protocol.coordination import dependency_inventory
 from agent_evolution_protocol.coordination import wheel_compare
 from agent_evolution_protocol.coordination import dependency_gate
 from agent_evolution_protocol.coordination import delivery_audit
+from agent_evolution_protocol.coordination import capability_bridge
 from agent_evolution_protocol.routing import classify_intent, load_route_config
 from agent_evolution_protocol.route_state import analyze_route_state, continuation_from_events, select_resource_type
 
@@ -897,6 +898,15 @@ def coord_desktop(args: argparse.Namespace) -> None:
     print(json.dumps(result, ensure_ascii=False, indent=2))
     if args.action == "probe" and result["status"] != "TOOLS_DISCOVERED":
         raise SystemExit(2)
+
+
+def coord_capability_plan(args: argparse.Namespace) -> None:
+    try:
+        result = capability_bridge.plan(args.intent, args.operation, manifest=args.manifest,
+                                        allow_high_risk=args.allow_high_risk)
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise ProtocolError(str(exc)) from exc
+    print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
 def coord_capabilities(args: argparse.Namespace) -> None:
@@ -2497,6 +2507,7 @@ def build_parser() -> argparse.ArgumentParser:
     changes.set_defaults(func=coord_improvement)
     reasoning = commands.add_parser("coord-reasoning"); reasoning.add_argument("action", choices=("create", "status")); reasoning.add_argument("--request-file", type=Path); reasoning.add_argument("--task"); reasoning.set_defaults(func=coord_reasoning)
     desktop = commands.add_parser("coord-desktop"); desktop.add_argument("action", choices=("register", "inventory", "probe", "plan", "export-config")); desktop.add_argument("--profile-file", type=Path); desktop.add_argument("--provider"); desktop.add_argument("--operation", choices=sorted(desktop_providers.OPERATIONS)); desktop.add_argument("--previous-state", default="NOT_STARTED"); desktop.add_argument("--timeout", type=int, default=30); desktop.add_argument("--details", action="store_true"); desktop.set_defaults(func=coord_desktop)
+    capability_plan = commands.add_parser("coord-capability-plan"); capability_plan.add_argument("--intent", required=True); capability_plan.add_argument("--operation", choices=sorted(capability_bridge.OPERATIONS), required=True); capability_plan.add_argument("--manifest", type=Path); capability_plan.add_argument("--allow-high-risk", action="store_true"); capability_plan.set_defaults(func=coord_capability_plan)
     capability = commands.add_parser("coord-capabilities"); capability.add_argument("action", choices=("declare", "match")); capability.add_argument("--agent"); capability.add_argument("--chips", nargs="*", default=[]); capability.add_argument("--compilers", nargs="*", default=[]); capability.add_argument("--strengths", nargs="*", default=[]); capability.add_argument("--evidence", nargs="*", default=[]); capability.add_argument("--ttl-minutes", type=int, default=30); capability.add_argument("--chip"); capability.add_argument("--compiler"); capability.add_argument("--strength"); capability.set_defaults(func=coord_capabilities)
     mechanism = commands.add_parser("coord-mechanism-audit"); mechanism.add_argument("--metrics-file", type=Path, required=True); mechanism.set_defaults(func=coord_mechanism_audit)
     evolution = commands.add_parser("coord-evolution"); evolution.add_argument("action", choices=("propose", "evaluate")); evolution.add_argument("--metrics-file", type=Path); evolution.add_argument("--candidate-file", type=Path); evolution.add_argument("--proposal-id"); evolution.add_argument("--change"); evolution.add_argument("--rollback"); evolution.add_argument("--author"); evolution.set_defaults(func=coord_evolution)

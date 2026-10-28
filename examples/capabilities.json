@@ -1,0 +1,10 @@
+{
+  "schema": "aep-capabilities-v1",
+  "capabilities": [
+    {"provider": "rules", "operations": ["observe", "read", "locate", "screenshot", "wait"], "status": "task-tested", "priority": 0},
+    {"provider": "uia", "operations": ["observe", "read", "locate", "type", "keys", "select", "screenshot", "wait"], "status": "declared", "priority": 10, "requires": ["unique-window-anchor", "desktop-input-lease"]},
+    {"provider": "cdp", "operations": ["observe", "read", "locate", "type", "keys", "select", "screenshot", "wait"], "status": "declared", "priority": 20, "requires": ["authorized-debugger-target", "desktop-input-lease"]},
+    {"provider": "mcp", "operations": ["observe", "read", "locate", "type", "click", "keys", "select", "screenshot", "wait"], "status": "declared", "priority": 30, "requires": ["probed-tool-schema", "desktop-input-lease"]},
+    {"provider": "file", "operations": ["observe", "read", "wait"], "status": "task-tested", "priority": 40}
+  ]
+}
