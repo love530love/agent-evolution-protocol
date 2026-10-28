@@ -30,6 +30,8 @@ class DeliveryAuditTests(unittest.TestCase):
             self.assertEqual(result["mailbox_read"], 1)
             self.assertEqual(result["message_visible"], 2)
             self.assertEqual(result["agent_accepted"], 1)
+            self.assertEqual(result["next_required"], {"AGENT_ACK": 1, "ARTIFACT_VERIFIED": 1, "CLIENT_BOUND": 1})
+            self.assertEqual(result["rows"][0]["next_required"], "CLIENT_BOUND")
             self.assertFalse(result["rows"][0]["agent_accepted"])
 
     def test_ignores_malformed_and_mismatched_paths(self):

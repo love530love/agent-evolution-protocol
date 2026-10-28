@@ -45,6 +45,13 @@ def audit(root: Path, *, topic: str = "", agent: str = "") -> dict:
         desktop = str(state.get("state", "")) or "NOT_ATTEMPTED"
         # The mailbox read ACK is not the same thing as accepting a task.
         read_ack = _read(root / "acks" / target / f"{message_id}.json")
+        accepted = desktop == "AGENT_ACK" and bool(state.get("ack"))
+        next_required = ("ARTIFACT_VERIFIED" if accepted else
+                         "AGENT_ACK" if desktop == "MESSAGE_VISIBLE" else
+                         "MESSAGE_VISIBLE" if desktop == "INPUT_SUBMITTED" else
+                         "INPUT_SUBMITTED" if desktop == "WINDOW_FOUND" else
+                         "CLIENT_BOUND" if desktop == "DEPOSITED" or desktop == "NOT_ATTEMPTED" else
+                         "INSPECT_UNKNOWN")
         rows.append({
             "id": message_id,
             "to": target,
@@ -53,7 +60,8 @@ def audit(root: Path, *, topic: str = "", agent: str = "") -> dict:
             "mailbox": "DEPOSITED",
             "mailbox_read": read_ack.get("id") == message_id and read_ack.get("agent") == target,
             "desktop": desktop,
-            "agent_accepted": desktop == "AGENT_ACK" and bool(state.get("ack")),
+            "agent_accepted": accepted,
+            "next_required": next_required,
             "order_id": state.get("id", ""),
             "last_attempt": (state.get("attempts") or [{}])[-1].get("note", ""),
         })
@@ -64,6 +72,7 @@ def audit(root: Path, *, topic: str = "", agent: str = "") -> dict:
         "mailbox_read": sum(row["mailbox_read"] for row in rows),
         "message_visible": counts["MESSAGE_VISIBLE"] + counts["AGENT_ACK"],
         "agent_accepted": sum(row["agent_accepted"] for row in rows),
+        "next_required": dict(sorted(Counter(row["next_required"] for row in rows).items())),
         "ceased": counts["CEASED"],
         "desktop_states": dict(sorted(counts.items())),
         "rows": rows,
