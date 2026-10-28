@@ -5,6 +5,9 @@ import json
 import unittest
 
 from agent_evolution_protocol.coordination.delivery_audit import audit
+from agent_evolution_protocol import cli
+from contextlib import redirect_stdout
+from io import StringIO
 
 
 def put(path: Path, value: dict) -> None:
@@ -41,6 +44,18 @@ class DeliveryAuditTests(unittest.TestCase):
             put(root / "messages" / "qoder" / "y.json", {"id": "y", "to": "workbuddy"})
             (root / "messages" / "qoder" / "bad.json").write_text("{bad", encoding="utf-8")
             self.assertEqual(audit(root)["messages"], 0)
+
+    def test_cli_exposes_read_only_next_evidence_summary(self):
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            put(root / "messages" / "qoder" / "m.json", {"id": "m", "to": "qoder", "topic": "T1"})
+            args = cli.build_parser().parse_args(["--coord-root", str(root), "coord-delivery-audit", "--summary-only"])
+            output = StringIO()
+            with redirect_stdout(output):
+                args.func(args)
+            result = json.loads(output.getvalue())
+            self.assertEqual(result["next_required"], {"CLIENT_BOUND": 1})
+            self.assertNotIn("rows", result)
 
 
 if __name__ == "__main__":

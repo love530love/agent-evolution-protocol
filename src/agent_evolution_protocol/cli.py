@@ -47,6 +47,7 @@ from agent_evolution_protocol.coordination import dependency_audit
 from agent_evolution_protocol.coordination import dependency_inventory
 from agent_evolution_protocol.coordination import wheel_compare
 from agent_evolution_protocol.coordination import dependency_gate
+from agent_evolution_protocol.coordination import delivery_audit
 from agent_evolution_protocol.routing import classify_intent, load_route_config
 from agent_evolution_protocol.route_state import analyze_route_state, continuation_from_events, select_resource_type
 
@@ -601,6 +602,14 @@ def coord_delivery_status(args: argparse.Namespace) -> None:
                       "state": "ACKNOWLEDGED" if ack else "DEPOSITED_UNCONFIRMED",
                       "deposited_at": message.get("at"), "acknowledged_at": ack.get("at") if ack else None,
                       "execution_proven": False}, ensure_ascii=False, indent=2))
+
+
+def coord_delivery_audit(args: argparse.Namespace) -> None:
+    """Read-only evidence ladder for all locally recorded deliveries."""
+    result = delivery_audit.audit(coord_root(args), topic=args.topic or "", agent=args.agent or "")
+    if args.summary_only:
+        result.pop("rows", None)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
 def coord_ack_message(args: argparse.Namespace) -> None:
@@ -2383,6 +2392,7 @@ def build_parser() -> argparse.ArgumentParser:
     send.set_defaults(func=coord_send)
     ack_topic = commands.add_parser("coord-ack-topic"); ack_topic.add_argument("--agent", required=True); ack_topic.add_argument("--topic", required=True); ack_topic.set_defaults(func=coord_ack_topic)
     delivery = commands.add_parser("coord-delivery-status"); delivery.add_argument("--to", required=True); delivery.add_argument("--id", required=True); delivery.set_defaults(func=coord_delivery_status)
+    delivery_audit_cmd = commands.add_parser("coord-delivery-audit"); delivery_audit_cmd.add_argument("--agent", default=""); delivery_audit_cmd.add_argument("--topic", default=""); delivery_audit_cmd.add_argument("--summary-only", action="store_true"); delivery_audit_cmd.set_defaults(func=coord_delivery_audit)
     ack_message = commands.add_parser("coord-ack-message"); ack_message.add_argument("--agent", required=True); ack_message.add_argument("--id", required=True); ack_message.set_defaults(func=coord_ack_message)
     joint = commands.add_parser("coord-joint-case"); joint.add_argument("action", choices=("open", "review", "status")); joint.add_argument("--task", required=True); joint.add_argument("--submission", required=True); joint.add_argument("--lead"); joint.add_argument("--deputy"); joint.add_argument("--artifact-sha256"); joint.add_argument("--result-file", type=Path); joint.add_argument("--agent"); joint.add_argument("--role", choices=("lead", "deputy", "cross_platform", "catfish", "package_reviewer")); joint.add_argument("--review-file", type=Path); joint.set_defaults(func=coord_joint_case)
     adversarial = commands.add_parser("coord-adversarial"); adversarial.add_argument("action", choices=("review", "status")); adversarial.add_argument("--task", required=True); adversarial.add_argument("--submission", required=True); adversarial.add_argument("--agent"); adversarial.add_argument("--role", choices=("ideator", "falsifier", "replicator", "bias_auditor", "referee")); adversarial.add_argument("--review-file", type=Path); adversarial.set_defaults(func=coord_adversarial)
