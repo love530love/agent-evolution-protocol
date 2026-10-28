@@ -1059,6 +1059,38 @@ def coord_wake_status(args: argparse.Namespace) -> None:
     print(json.dumps({"queue": count("wake_queue"), "done": count("wake_done"), "failed": count("wake_failed"), "pending": count("wake_pending"), "log_tail": tail}, ensure_ascii=False, indent=2))
 
 
+def coord_wake_cancel(args: argparse.Namespace) -> None:
+    """Cancel only an unconsumed wake request; never retract adapter input."""
+    root = coord_root(args)
+    if not isinstance(args.reason, str) or not args.reason.strip():
+        raise ProtocolError("cancel reason is required")
+    if not re.fullmatch(r"[0-9]{8}T[0-9]{12}Z-[0-9a-f]{8}", args.id):
+        raise ProtocolError("invalid wake ID")
+    queued = coord_file(root, "wake_queue", f"{args.id}.json")
+    if not queued.is_file():
+        if coord_file(root, "wake_pending", f"{args.id}.json").exists():
+            raise ProtocolError("wake already executed; pending acceptance cannot be cancelled automatically")
+        if coord_file(root, "wake_done", f"{args.id}.json").exists() or coord_file(root, "wake_failed", f"{args.id}.json").exists():
+            raise ProtocolError("wake already consumed; preserve its audit history")
+        raise ProtocolError("wake request not found")
+    event = read_json(queued)
+    if event.get("id") != args.id:
+        raise ProtocolError("wake identity mismatch")
+    failed = coord_file(root, "wake_failed", f"{args.id}.json")
+    failed.parent.mkdir(parents=True, exist_ok=True)
+    # Rename the queue entry first: a consumer sees either the original item or
+    # the failed/cancelled item, never a half-written cancellation record.
+    try:
+        os.replace(queued, failed)
+    except OSError as exc:
+        raise ProtocolError("wake changed during cancellation; inspect wake status before retrying") from exc
+    atomic_write_json(failed, {**event, "cancelled": True, "cancelled_by": args.actor,
+                               "cancel_reason": args.reason.strip(), "cancelled_at": utc_now()})
+    print(json.dumps({"id": args.id, "state": "CANCELLED_BEFORE_CONSUMPTION",
+                      "adapter_executed": False, "execution_cancelled": False,
+                      "reason": args.reason.strip()}, ensure_ascii=False, indent=2))
+
+
 def coord_task_state(args: argparse.Namespace) -> None:
     root = coord_root(args)
     who = valid_agent(args.agent)
@@ -2476,6 +2508,7 @@ def build_parser() -> argparse.ArgumentParser:
     session = commands.add_parser("coord-session-set"); session.add_argument("--agent", required=True); session.add_argument("--mode", choices=("sticky", "manual", "spawn-allowed"), default="sticky"); session.add_argument("--thread-id"); session.add_argument("--new-session-policy", choices=SESSION_POLICIES, default="forbid-by-default"); session.add_argument("--handoff-style", choices=HANDOFF_STYLES, default="digest-first"); session.add_argument("--notes"); session.set_defaults(func=coord_session_set)
     wake = commands.add_parser("coord-wake"); wake.add_argument("--from", dest="sender", required=True); wake.add_argument("--to", required=True); wake.add_argument("--task", required=True); wake.add_argument("--reason", required=True); wake.add_argument("--budget", choices=WAKE_BUDGETS, default="one-shot"); wake.add_argument("--entrypoint"); wake.add_argument("--requires-user-auth", action="store_true"); wake.add_argument("--dry-run", action="store_true"); wake.add_argument("--allow-new-session", action="store_true"); wake.add_argument("--claim-timeout-seconds", type=int, default=600); wake.add_argument("--deliver-text"); wake.set_defaults(func=coord_wake)
     wake_status = commands.add_parser("coord-wake-status"); wake_status.add_argument("--tail", type=int, default=10); wake_status.set_defaults(func=coord_wake_status)
+    wake_cancel = commands.add_parser("coord-wake-cancel"); wake_cancel.add_argument("--id", required=True); wake_cancel.add_argument("--actor", required=True); wake_cancel.add_argument("--reason", required=True); wake_cancel.set_defaults(func=coord_wake_cancel)
     archive = commands.add_parser("coord-archive-stale"); archive.add_argument("--older-than-hours", type=float, default=24); archive.add_argument("--archive-name", default="archived-stale"); archive.add_argument("--all", action="store_true"); archive.set_defaults(func=coord_archive_stale)
     onboarding = commands.add_parser("coord-onboarding"); onboarding.add_argument("--agent", required=True); onboarding.set_defaults(func=coord_onboarding)
     retry = commands.add_parser("coord-guided-retry"); retry.add_argument("--attempted-action", required=True); retry.add_argument("--error", required=True); retry.add_argument("--risk-level", choices=RISK_LEVELS, default="medium"); retry.add_argument("--goal"); retry.set_defaults(func=coord_guided_retry)
