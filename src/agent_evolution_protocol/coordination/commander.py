@@ -13,6 +13,8 @@ so "we sent it" is never inferred from "we ran a command".
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from copy import deepcopy
+from hashlib import sha256
 import json
 import os
 import re
@@ -35,7 +37,7 @@ CEASE_AFTER_FAILURES = 3
 REINFORCE_AFTER_MINUTES = 20  # 主订单停火或久未ACK后，允许候选agent补位
 
 # DEPOSITED -> WINDOW_FOUND -> INPUT_SUBMITTED -> MESSAGE_VISIBLE -> AGENT_ACK
-ORDER_STATES = ("DEPOSITED", "DEFERRED", "WINDOW_FOUND", "INPUT_SUBMITTED", "MESSAGE_VISIBLE", "AGENT_ACK", "CEASED", "FAILED", "RETIRED")
+ORDER_STATES = ("DEPOSITED", "DEFERRED", "DISPATCHING", "WINDOW_FOUND", "INPUT_SUBMITTED", "MESSAGE_VISIBLE", "AGENT_ACK", "CEASED", "FAILED", "RETIRED")
 
 
 def provider_readback(provider: str, event_id: str, raw: dict) -> dict:
@@ -91,7 +93,7 @@ def now() -> str:
 def submit_order(root: Path, *, target: str, task: str, text: str, sender: str,
                  priority: str = "normal", event_id: str = "", allow_launch: bool = False,
                  transport: str = "auto", expires_minutes: int = 120,
-                 candidates: str = "") -> dict:
+                 candidates: str = "", source_wake: dict | None = None) -> dict:
     """Queue a directive for one client. Nothing is sent until a tick runs.
 
     ``candidates`` is a comma/space separated list of backup agents. When the
@@ -104,6 +106,8 @@ def submit_order(root: Path, *, target: str, task: str, text: str, sender: str,
         raise ValueError("invalid agent name")
     if not text.strip():
         raise ValueError("text is required")
+    if source_wake is not None and not isinstance(source_wake, dict):
+        raise ValueError("source_wake must be an object")
     order_id = now().replace(":", "").replace(".", "") + "-" + uuid4().hex[:8]
     event = event_id or ("EVT-" + uuid4().hex[:10].upper())
     body = text if ACK_TOKEN in text else f"{text.rstrip()}\n\n[{ACK_TOKEN}:{event}]"
@@ -117,6 +121,10 @@ def submit_order(root: Path, *, target: str, task: str, text: str, sender: str,
     }
     if event not in body:
         raise ValueError("event id must appear in the message so read-back can verify it")
+    if source_wake is not None:
+        # Persist provenance with the first order write, not in a second update
+        # that could be lost if the wake ingress crashes between writes.
+        payload["source_wake"] = deepcopy(source_wake)
     _atomic(_root(root) / "inbox" / f"{order_id}.json", payload)
     return payload
 
@@ -334,6 +342,32 @@ def _cdp_port_owned_by_anchor(port: int, anchor_pid: int) -> bool:
     return False
 
 
+def _dispatch_lock(root: Path, order_id: str):
+    from .battle_orders import _task_writer_lock
+    if not isinstance(order_id, str) or not order_id:
+        raise ValueError("valid order id required")
+    # Never use a caller-controlled ID as a directory component.
+    key = "commander-dispatch-" + sha256(order_id.encode("utf-8")).hexdigest()
+    return _task_writer_lock(Path(root), key)
+
+
+def _persisted_order(root: Path, order_id: str) -> dict:
+    current = next((row for row in _orders(root) if row.get("id") == order_id), None)
+    if current is None:
+        raise ValueError("persisted order missing or unreadable; no input attempted")
+    return current
+
+
+def _mark_dispatching(root: Path, order: dict) -> dict:
+    """Fence a first send without manufacturing a user-visible attempt."""
+    fenced = deepcopy(order)
+    fenced["state"] = "DISPATCHING"
+    fenced["updated_at"] = now()
+    _atomic(_state_path(root, fenced["id"]), fenced)
+    _atomic(_root(root) / "inbox" / f"{fenced['id']}.json", fenced)
+    return fenced
+
+
 def dispatch(root: Path, *, order: dict) -> dict:
     if str(order.get("task", "")).startswith("improvement:"):
         from .battle_orders import _task_writer_lock
@@ -346,7 +380,32 @@ def dispatch(root: Path, *, order: dict) -> dict:
                 # old recipient. Return durable progress without replaying input.
                 return current
             return _dispatch(root, order=order)
-    return _dispatch(root, order=order)
+    with _dispatch_lock(root, order.get("id")):
+        current = _persisted_order(root, order["id"])
+        if current != order:
+            return current
+        if current.get("state") != "DEPOSITED" or any(
+                attempt.get("state") not in {"DEPOSITED", "DEFERRED", "DISPATCHING"}
+                for attempt in current.get("attempts", [])):
+            return current
+        if datetime.now(timezone.utc) > datetime.fromisoformat(current["expires_at"]):
+            return _record_attempt(root, order, state="FAILED", note="EXPIRED")
+        # Keep the lock through delivery and durably fence process death before
+        # touching discovery/launch/transport. A later caller must not replay a
+        # send just because the final adapter receipt was never written.
+        order = _mark_dispatching(root, order)
+        try:
+            result = _dispatch(root, order=order)
+        except Exception as exc:
+            return _record_attempt(root, order, state="CEASED",
+                                   receipt={"status": "DISPATCH_ERROR", "error": str(exc)},
+                                   note="DISPATCH_UNCONFIRMED: inspect before any retry")
+        if result.get("state") == "DEPOSITED":
+            # Launch is pre-input work, but readiness needs explicit rechecking;
+            # do not repeatedly launch the client from subsequent ticks.
+            return _record_attempt(root, result, state="DEFERRED",
+                                   note="CLIENT_LAUNCHED: explicitly resume after readiness")
+        return result
 
 
 def _dispatch(root: Path, *, order: dict) -> dict:
@@ -583,13 +642,19 @@ def resume_deferred(root: Path, *, order_id: str) -> dict:
     Never resume CEASED/WINDOW_FOUND/INPUT_SUBMITTED: those may already have
     reached the target. A caller should first resolve the recorded prerequisite.
     """
-    order = next((row for row in _orders(root) if row.get("id") == order_id), None)
-    if order is None:
-        raise ValueError("unknown order")
-    if order.get("state") != "DEFERRED":
-        raise ValueError("only DEFERRED pre-input orders can be resumed")
-    if datetime.now(timezone.utc) > datetime.fromisoformat(order["expires_at"]):
-        return _record_attempt(root, order, state="FAILED", note="EXPIRED")
+    with _dispatch_lock(root, order_id):
+        order = _persisted_order(root, order_id)
+        if order.get("state") != "DEFERRED":
+            raise ValueError("only DEFERRED pre-input orders can be resumed")
+        if datetime.now(timezone.utc) > datetime.fromisoformat(order["expires_at"]):
+            return _record_attempt(root, order, state="FAILED", note="EXPIRED")
+        if not str(order.get("task", "")).startswith("improvement:"):
+            if any(attempt.get("state") not in {"DEPOSITED", "DEFERRED", "DISPATCHING"}
+                   for attempt in order.get("attempts", [])):
+                raise ValueError("delivery history is uncertain; cannot resume automatically")
+            _record_attempt(root, order, state="DEPOSITED", note="EXPLICIT_PREINPUT_RESUME")
+    # Release the non-reentrant order lock before dispatch reacquires it and
+    # verifies this exact durable revision; another consumer may have won.
     return dispatch(root, order=order)
 
 

@@ -12,6 +12,7 @@ $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 if (-not $CoordRoot) { $CoordRoot = Join-Path $repoRoot 'coordination' }
 if (-not $BridgeRoot) { $BridgeRoot = Join-Path $repoRoot 'src\agent_evolution_protocol\coordination' }
 $CoordRoot = [IO.Path]::GetFullPath($CoordRoot)
+if (-not $PSBoundParameters.ContainsKey('BridgeRoot')) { $BridgeRoot = $CoordRoot }
 $BridgeRoot = [IO.Path]::GetFullPath($BridgeRoot)
 $python = (Get-Command $Python -ErrorAction Stop).Source
 $env:PYTHONPATH = (Join-Path $repoRoot 'src') + [IO.Path]::PathSeparator + $env:PYTHONPATH
@@ -53,7 +54,7 @@ function Invoke-CampaignTick {
   $tick = ($tickRaw | Out-String | ConvertFrom-Json)
   foreach ($warning in $tick.warnings) { Write-Warning ($warning.stage + ': ' + $warning.error) }
   if (-not $MailboxOnly) {
-    & $python -m agent_evolution_protocol.coordination.wake_daemon --once | Out-Null
+    & $python -m agent_evolution_protocol.coordination.wake_daemon --coord-root $CoordRoot --once | Out-Null
     if ($LASTEXITCODE -ne 0) { Write-Warning 'One or more wake adapters failed; mailbox remains the durable source.' }
   }
 }

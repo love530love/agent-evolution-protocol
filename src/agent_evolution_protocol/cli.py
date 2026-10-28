@@ -41,6 +41,7 @@ from agent_evolution_protocol.coordination import client_registry
 from agent_evolution_protocol.coordination import transcript_bus
 from agent_evolution_protocol.coordination import transport_cdp
 from agent_evolution_protocol.coordination import commander
+from agent_evolution_protocol.coordination import wake_ingress
 from agent_evolution_protocol.coordination import orca_adapter
 from agent_evolution_protocol.coordination import dependency_candidate
 from agent_evolution_protocol.coordination import dependency_audit
@@ -1066,7 +1067,23 @@ def coord_wake(args: argparse.Namespace) -> None:
         "deliver_text": getattr(args, "deliver_text", "") or "",
     }
     atomic_write_json(coord_file(root, "wake_queue", f"{wid}.json"), event)
+    if getattr(args, "dispatch", False):
+        try:
+            event["desktop_delivery"] = wake_ingress.dispatch_wake(root, wid, apply=True)
+        except (OSError, ValueError) as exc:
+            raise ProtocolError(f"wake {wid} persisted; inspect before retrying: {exc}") from exc
+    else:
+        event["next_action"] = f"aep --coord-root \"{root.resolve()}\" coord-wake-dispatch --id {wid} --apply"
     print(json.dumps(event, ensure_ascii=False, indent=2))
+
+
+def coord_wake_dispatch(args: argparse.Namespace) -> None:
+    try:
+        result = wake_ingress.dispatch_wake(coord_root(args), args.id, apply=args.apply,
+                                            retry_deferred=args.retry_deferred)
+    except (OSError, ValueError) as exc:
+        raise ProtocolError(str(exc)) from exc
+    print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
 def coord_wake_status(args: argparse.Namespace) -> None:
@@ -1078,39 +1095,23 @@ def coord_wake_status(args: argparse.Namespace) -> None:
     tail = []
     if log_path.exists():
         tail = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()[-args.tail:] if line.strip()]
-    print(json.dumps({"queue": count("wake_queue"), "done": count("wake_done"), "failed": count("wake_failed"), "pending": count("wake_pending"), "log_tail": tail}, ensure_ascii=False, indent=2))
+    receipts = []
+    for path in sorted(coord_file(root, "wake_receipts").glob("*.json"))[-args.tail:]:
+        receipts.append(read_json(path))
+    print(json.dumps({"coord_root": str(root.resolve()), "queue": count("wake_queue"),
+                      "processing": count("wake_processing"), "done": count("wake_done"),
+                      "failed": count("wake_failed"), "pending": count("wake_pending"),
+                      "receipts": receipts, "log_tail": tail,
+                      "note": "done is not agent ACK; inspect receipt.state and commander order"}, ensure_ascii=False, indent=2))
 
 
 def coord_wake_cancel(args: argparse.Namespace) -> None:
     """Cancel only an unconsumed wake request; never retract adapter input."""
-    root = coord_root(args)
-    if not isinstance(args.reason, str) or not args.reason.strip():
-        raise ProtocolError("cancel reason is required")
-    if not re.fullmatch(r"[0-9]{8}T[0-9]{12}Z-[0-9a-f]{8}", args.id):
-        raise ProtocolError("invalid wake ID")
-    queued = coord_file(root, "wake_queue", f"{args.id}.json")
-    if not queued.is_file():
-        if coord_file(root, "wake_pending", f"{args.id}.json").exists():
-            raise ProtocolError("wake already executed; pending acceptance cannot be cancelled automatically")
-        if coord_file(root, "wake_done", f"{args.id}.json").exists() or coord_file(root, "wake_failed", f"{args.id}.json").exists():
-            raise ProtocolError("wake already consumed; preserve its audit history")
-        raise ProtocolError("wake request not found")
-    event = read_json(queued)
-    if event.get("id") != args.id:
-        raise ProtocolError("wake identity mismatch")
-    failed = coord_file(root, "wake_failed", f"{args.id}.json")
-    failed.parent.mkdir(parents=True, exist_ok=True)
-    # Rename the queue entry first: a consumer sees either the original item or
-    # the failed/cancelled item, never a half-written cancellation record.
     try:
-        os.replace(queued, failed)
-    except OSError as exc:
-        raise ProtocolError("wake changed during cancellation; inspect wake status before retrying") from exc
-    atomic_write_json(failed, {**event, "cancelled": True, "cancelled_by": args.actor,
-                               "cancel_reason": args.reason.strip(), "cancelled_at": utc_now()})
-    print(json.dumps({"id": args.id, "state": "CANCELLED_BEFORE_CONSUMPTION",
-                      "adapter_executed": False, "execution_cancelled": False,
-                      "reason": args.reason.strip()}, ensure_ascii=False, indent=2))
+        result = wake_ingress.cancel(coord_root(args), args.id, actor=args.actor, reason=args.reason)
+    except (OSError, ValueError) as exc:
+        raise ProtocolError(str(exc)) from exc
+    print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
 def coord_task_state(args: argparse.Namespace) -> None:
@@ -2531,6 +2532,12 @@ def build_parser() -> argparse.ArgumentParser:
     chat_ack = commands.add_parser("coord-chat-ack"); chat_ack.add_argument("--agent", required=True); chat_ack.add_argument("--through", required=True); chat_ack.set_defaults(func=coord_chat_ack)
     session = commands.add_parser("coord-session-set"); session.add_argument("--agent", required=True); session.add_argument("--mode", choices=("sticky", "manual", "spawn-allowed"), default="sticky"); session.add_argument("--thread-id"); session.add_argument("--new-session-policy", choices=SESSION_POLICIES, default="forbid-by-default"); session.add_argument("--handoff-style", choices=HANDOFF_STYLES, default="digest-first"); session.add_argument("--notes"); session.set_defaults(func=coord_session_set)
     wake = commands.add_parser("coord-wake"); wake.add_argument("--from", dest="sender", required=True); wake.add_argument("--to", required=True); wake.add_argument("--task", required=True); wake.add_argument("--reason", required=True); wake.add_argument("--budget", choices=WAKE_BUDGETS, default="one-shot"); wake.add_argument("--entrypoint"); wake.add_argument("--requires-user-auth", action="store_true"); wake.add_argument("--dry-run", action="store_true"); wake.add_argument("--allow-new-session", action="store_true"); wake.add_argument("--claim-timeout-seconds", type=int, default=600); wake.add_argument("--deliver-text"); wake.set_defaults(func=coord_wake)
+    wake.add_argument("--dispatch", action="store_true", help="hand only this wake to commander now")
+    wake_dispatch = commands.add_parser("coord-wake-dispatch", help="preview/dispatch one queued wake; never tick unrelated orders")
+    wake_dispatch.add_argument("--id", required=True)
+    wake_dispatch.add_argument("--apply", action="store_true")
+    wake_dispatch.add_argument("--retry-deferred", action="store_true", help="explicit retry of a proven pre-input deferral")
+    wake_dispatch.set_defaults(func=coord_wake_dispatch)
     wake_status = commands.add_parser("coord-wake-status"); wake_status.add_argument("--tail", type=int, default=10); wake_status.set_defaults(func=coord_wake_status)
     wake_cancel = commands.add_parser("coord-wake-cancel"); wake_cancel.add_argument("--id", required=True); wake_cancel.add_argument("--actor", required=True); wake_cancel.add_argument("--reason", required=True); wake_cancel.set_defaults(func=coord_wake_cancel)
     archive = commands.add_parser("coord-archive-stale"); archive.add_argument("--older-than-hours", type=float, default=24); archive.add_argument("--archive-name", default="archived-stale"); archive.add_argument("--all", action="store_true"); archive.set_defaults(func=coord_archive_stale)

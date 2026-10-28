@@ -125,7 +125,7 @@ def recent_success(agent: str, task: str, now: float) -> str | None:
     return None
 
 
-def consume(path: Path, *, dry_run: bool = False) -> int:
+def _consume_unlocked(path: Path, *, dry_run: bool = False) -> int:
     now = time.monotonic()
     try:
         event = read_json(path)
@@ -203,6 +203,29 @@ def consume(path: Path, *, dry_run: bool = False) -> int:
     return 0 if completed.returncode == 0 else completed.returncode
 
 
+def consume(path: Path, *, dry_run: bool = False) -> int:
+    """Consume one event under the same per-event lock as scoped ingress.
+
+    The source is re-read after acquiring the lock; cancellation can therefore
+    win before an adapter starts. The lock is released only after the lifecycle
+    rename, preventing a second daemon from sending the same event.
+    """
+    try:
+        try:
+            from .wake_ingress import wake_lock, valid_event_id
+        except ImportError:  # direct source-file loader used by legacy tests
+            from agent_evolution_protocol.coordination.wake_ingress import wake_lock, valid_event_id
+        event_id = valid_event_id(path.stem)
+        with wake_lock(QUEUE.parent, event_id):
+            if not path.is_file():
+                return 0
+            return _consume_unlocked(path, dry_run=dry_run)
+    except ValueError:
+        # Preserve legacy tests/diagnostics for malformed filenames; no adapter
+        # is invoked for an unscoped path.
+        return _consume_unlocked(path, dry_run=dry_run)
+
+
 def queue_items() -> list[Path]:
     QUEUE.mkdir(parents=True, exist_ok=True)
     priority = {"urgent": 0, "high": 1, "normal": 2, "low": 3}
@@ -226,10 +249,23 @@ def main() -> int:
     mode.add_argument("--watch", action="store_true", help="watch queue until interrupted")
     parser.add_argument("--interval", type=float, default=2.0)
     parser.add_argument("--dry-run", action="store_true", help="audit without executing adapters")
+    parser.add_argument("--coord-root", type=Path, help="explicit coordination root (required for unattended use)")
     args = parser.parse_args()
 
     if args.interval <= 0:
         parser.error("--interval must be positive")
+
+    global ROOT, QUEUE, DONE, FAILED, PENDING, LOG, ADAPTERS
+    if args.coord_root:
+        ROOT = Path(args.coord_root).resolve()
+        QUEUE = ROOT / "wake_queue"
+        DONE = ROOT / "wake_done"
+        FAILED = ROOT / "wake_failed"
+        PENDING = ROOT / "wake_pending"
+        LOG = ROOT / "wake_log.jsonl"
+        ADAPTERS = ROOT / "wake_adapters"
+    else:
+        parser.error("--coord-root is required; refusing to consume the source checkout queue")
 
     while True:
         rc = 0

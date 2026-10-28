@@ -25,3 +25,8 @@ python -m agent_evolution_protocol coord-send --from codex --to qoder --topic IN
 每次紧急广播都要给每位队友单独记录：信箱 ID、桌面状态、原会话 ACK、记忆修改证据。任何一项缺失须明确标记为未验证；离线队友归队后仍需补读和回 ACK。
 
 2026-10-16：新增[桌面 MCP 备用能力层](DESKTOP_MCP_PROVIDERS.md)。`DEFERRED` 订单回执可附经过工具发现的备用定位计划；`CEASED` 只附先核验提示。该层目前提供注册、依赖检查、MCP 工具发现和计划，不执行界面输入，也不自动恢复订单。
+
+2026-10-29：唤醒请求与 commander 订单已通过 scoped ingress 接通。`coord-wake` 仍只负责写入指定 `--coord-root`；使用
+`coord-wake-dispatch --id <wake-id>` 只预览这一条，必须显式加 `--apply` 才会创建唯一 commander 订单并尝试原会话投递。重复执行会按事件 ID 复用原订单；`DEFERRED` 只能再加 `--retry-deferred` 明确恢复。`coord-wake-status` 的 `done` 只表示生命周期文件已归档，不等于目标 ACK。
+
+旧 `wake_daemon` 现在也必须传 `--coord-root`，并与取消操作共用每事件锁；未指定根目录会拒绝运行，避免从源码目录误消费。后台脚本必须把同一协作根显式传给 daemon。异常中断、`DISPATCHING`、`CEASED` 或已输入但未读回的订单禁止自动重放。
