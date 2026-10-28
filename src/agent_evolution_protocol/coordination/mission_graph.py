@@ -1,6 +1,9 @@
 """Small dependency-aware mission graph for resumable agent operations."""
 from __future__ import annotations
 from typing import Any
+import json
+from datetime import datetime, timezone
+from pathlib import Path
 
 STATES = {"pending", "ready", "working", "done", "failed", "paused"}
 
@@ -28,3 +31,37 @@ def transition(graph: dict[str, Any], node_id: str, state: str) -> dict[str, Any
     if state in {"working", "done"} and node_id not in ready_nodes(graph): raise ValueError("dependencies are not complete")
     node["state"] = state
     return graph
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+def save(path: Path, graph: dict[str, Any], *, event: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Atomically persist graph and append an optional event for crash recovery."""
+    validate(graph)
+    path = Path(path); path.parent.mkdir(parents=True, exist_ok=True)
+    payload = dict(graph)
+    payload["schema"] = "aep-mission-graph-v1"
+    payload["updated_at"] = _now()
+    if event:
+        events_path = path.with_suffix(path.suffix + ".events.jsonl")
+        with events_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps({"at": _now(), **event}, ensure_ascii=False, sort_keys=True) + "\n")
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    temporary.replace(path)
+    return payload
+
+def load(path: Path) -> dict[str, Any]:
+    """Load and validate a persisted graph; reject corrupt state."""
+    path = Path(path)
+    graph = json.loads(path.read_text(encoding="utf-8"))
+    validate(graph)
+    return graph
+
+def recover_events(path: Path) -> list[dict[str, Any]]:
+    events_path = Path(path).with_suffix(Path(path).suffix + ".events.jsonl")
+    if not events_path.exists(): return []
+    events = []
+    for line in events_path.read_text(encoding="utf-8").splitlines():
+        if line.strip(): events.append(json.loads(line))
+    return events
