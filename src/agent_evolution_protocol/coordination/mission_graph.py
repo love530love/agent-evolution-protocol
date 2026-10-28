@@ -65,3 +65,12 @@ def recover_events(path: Path) -> list[dict[str, Any]]:
     for line in events_path.read_text(encoding="utf-8").splitlines():
         if line.strip(): events.append(json.loads(line))
     return events
+
+def advance(path: Path, node_id: str, outcome: str, *, actor: str = "") -> dict[str, Any]:
+    """Apply an ACK/failure result and persist the next ready nodes."""
+    if outcome not in {"ack", "failed", "paused"}: raise ValueError("outcome must be ack, failed or paused")
+    graph = load(path)
+    state = {"ack": "done", "failed": "failed", "paused": "paused"}[outcome]
+    transition(graph, node_id, state)
+    ready = ready_nodes(graph)
+    return save(path, graph, event={"kind": "mission-advance", "node": node_id, "outcome": outcome, "actor": actor, "ready": ready})
