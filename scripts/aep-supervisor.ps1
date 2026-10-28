@@ -3,6 +3,8 @@ $ErrorActionPreference = "Stop"
 $env:PYTHONIOENCODING = "utf-8"
 $env:PYTHONUTF8 = "1"
 $OutputEncoding = [Console]::OutputEncoding
+$mutex = New-Object Threading.Mutex($false, "Global\AEP-Supervisor")
+if (-not $mutex.WaitOne(0)) { Write-Output "AEP supervisor already running; exiting duplicate instance."; exit 0 }
 $root = (Resolve-Path (Join-Path $PSScriptRoot ".." )).Path
 $ticks = 0
 while (($MaxTicks -eq 0) -or ($ticks -lt $MaxTicks)) {
@@ -10,3 +12,4 @@ while (($MaxTicks -eq 0) -or ($ticks -lt $MaxTicks)) {
   $ticks++
   Start-Sleep -Seconds ([Math]::Max(5, $IntervalSeconds))
 }
+$mutex.ReleaseMutex(); $mutex.Dispose()
