@@ -25,10 +25,14 @@ def main():
     raw = tokenizer.decode(output[0][inputs["input_ids"].shape[-1]:], skip_special_tokens=True)
     match = re.search(r"\{.*?\}", raw, re.S)
     if not match:
-        print(json.dumps(safe_fallback(raw, reason="no JSON object in model output"), ensure_ascii=False)); return
+        result = safe_fallback(raw, reason="no JSON object in model output")
+        result["rule_fallback"] = {"intent": "inspect the collaboration inbox", "operation": "read", "confidence": 0.5, "reason": "deterministic fallback after invalid model output"}
+        print(json.dumps(result, ensure_ascii=False)); return
     try:
         print(json.dumps({"status": "MODEL_PROPOSAL_VALID", "proposal": validate_proposal(match.group(0)), "cuda": True}, ensure_ascii=False, indent=2))
     except ValueError as exc:
-        print(json.dumps(safe_fallback(raw, reason=str(exc)), ensure_ascii=False))
+        result = safe_fallback(raw, reason=str(exc))
+        result["rule_fallback"] = {"intent": "inspect the collaboration inbox", "operation": "read", "confidence": 0.5, "reason": "deterministic fallback after contract rejection"}
+        print(json.dumps(result, ensure_ascii=False))
 
 if __name__ == "__main__": main()
