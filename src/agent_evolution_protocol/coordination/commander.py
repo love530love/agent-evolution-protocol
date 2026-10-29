@@ -212,7 +212,8 @@ def _uia_deliver(root: Path, agent: str, text: str, event_id: str, *,
     if ocr:
         cmd += ["-OcrVerify"]
     try:
-        done = subprocess.run(cmd, text=True, capture_output=True, timeout=timeout + 90, check=False)
+        done = subprocess.run(cmd, text=True, encoding="utf-8", errors="replace",
+                              capture_output=True, timeout=timeout + 90, check=False)
     except Exception as exc:  # noqa: BLE001
         return {"status": "ADAPTER_ERROR", "error": str(exc), "task_delivered": False}
     report = None
@@ -269,7 +270,8 @@ def _capture_uia(root: Path, agent: str, *, timeout: int = 20) -> tuple[str, str
     if profile.get("exe"):
         cmd += ["-ExpectedPath", profile["exe"]]
     try:
-        subprocess.run(cmd, text=True, capture_output=True, timeout=timeout + 90, check=False)
+        subprocess.run(cmd, text=True, encoding="utf-8", errors="replace",
+                       capture_output=True, timeout=timeout + 90, check=False)
     except Exception:  # noqa: BLE001
         return "", "uia"
     try:
