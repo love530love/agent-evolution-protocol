@@ -43,6 +43,7 @@ from agent_evolution_protocol.coordination import transport_cdp
 from agent_evolution_protocol.coordination import commander
 from agent_evolution_protocol.coordination import wake_ingress
 from agent_evolution_protocol.coordination import orca_adapter
+from agent_evolution_protocol.coordination import clawchat_transport
 from agent_evolution_protocol.coordination import dependency_candidate
 from agent_evolution_protocol.coordination import dependency_audit
 from agent_evolution_protocol.coordination import dependency_inventory
@@ -2408,10 +2409,21 @@ def coord_commander(args: argparse.Namespace) -> None:
         except ValueError as exc:
             raise ProtocolError(str(exc)) from exc
         print(json.dumps(result, ensure_ascii=False, indent=2))
+
         return
     if action == "watch":
         raise SystemExit(commander.watch(root, interval=args.interval, max_ticks=args.max_ticks))
     print(json.dumps(commander.status(root, tail=args.limit), ensure_ascii=False, indent=2))
+
+
+def coord_clawchat(args: argparse.Namespace) -> None:
+    body = args.text if args.text is not None else Path(args.text_file).read_text(encoding="utf-8")
+    message = clawchat_transport.envelope(event_id=args.event_id, sender=args.sender,
+        target=args.target, room=args.room, task=args.task or "", text=body)
+    result = clawchat_transport.send(clawchat_transport.ClawChatConfig(
+        host=args.host, port=args.port, room=args.room, timeout=args.timeout),
+        message, execute=bool(args.execute))
+    print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -2563,6 +2575,7 @@ def build_parser() -> argparse.ArgumentParser:
     transcript = commands.add_parser("coord-transcript"); transcript.add_argument("action", choices=("publish", "read", "awareness", "digest")); transcript.add_argument("--agent"); transcript.add_argument("--text"); transcript.add_argument("--file"); transcript.add_argument("--source"); transcript.add_argument("--title"); transcript.add_argument("--after"); transcript.add_argument("--limit", type=int, default=100); transcript.add_argument("--tail", type=int, default=6); transcript.add_argument("--markdown", action="store_true"); transcript.set_defaults(func=coord_transcript)
 
     cdp_cmd = commands.add_parser("coord-cdp"); cdp_cmd.add_argument("action", choices=("scan", "targets", "read", "send")); cdp_cmd.add_argument("--port", type=int, default=9222); cdp_cmd.add_argument("--title"); cdp_cmd.add_argument("--text"); cdp_cmd.add_argument("--text-file"); cdp_cmd.add_argument("--event-id"); cdp_cmd.add_argument("--out-file"); cdp_cmd.add_argument("--preview-chars", type=int, default=600); cdp_cmd.add_argument("--timeout", type=int, default=10); cdp_cmd.set_defaults(func=coord_cdp)
+    claw = commands.add_parser("coord-clawchat"); claw.add_argument("--host", default="127.0.0.1"); claw.add_argument("--port", type=int, default=0); claw.add_argument("--room", default="workspace"); claw.add_argument("--sender", required=True); claw.add_argument("--target", required=True); claw.add_argument("--task"); claw.add_argument("--event-id", required=True); claw.add_argument("--text"); claw.add_argument("--text-file"); claw.add_argument("--timeout", type=float, default=5); claw.add_argument("--execute", action="store_true"); claw.set_defaults(func=coord_clawchat)
 
     cmdr = commands.add_parser("coord-commander"); cmdr.add_argument("action", choices=("submit", "perceive", "tick", "ack", "status", "watch", "resume-deferred")); cmdr.add_argument("--target"); cmdr.add_argument("--order-id"); cmdr.add_argument("--sender", default="human"); cmdr.add_argument("--task"); cmdr.add_argument("--text"); cmdr.add_argument("--text-file"); cmdr.add_argument("--event-id"); cmdr.add_argument("--priority", choices=("urgent", "normal", "low"), default="normal"); cmdr.add_argument("--transport", default="auto"); cmdr.add_argument("--expires-minutes", type=int, default=120); cmdr.add_argument("--allow-launch", action="store_true"); cmdr.add_argument("--no-perceive", action="store_true"); cmdr.add_argument("--agent"); cmdr.add_argument("--limit", type=int, default=20); cmdr.add_argument("--interval", type=float, default=30); cmdr.add_argument("--max-ticks", type=int, default=0); cmdr.set_defaults(func=coord_commander)
     return parser
