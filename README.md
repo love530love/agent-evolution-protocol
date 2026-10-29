@@ -61,7 +61,7 @@ aep --coord-root .tools/acceptance coord-improvement self-test
 
 This preserves a machine-readable report and evidence under a unique run directory. It does not change production policy or certify real Agent delivery/ACK. CI covers Ubuntu/Windows and Python 3.10/3.12.
 
-[总体系与能力状态](docs/SYSTEM_OVERVIEW.zh-CN.md) · [协同推理工作流](docs/COLLABORATIVE_REASONING_FRAMEWORK.zh-CN.md) · [v0.3.1 发布说明](docs/releases/v0.3.1.md)
+[总体系与能力状态](docs/SYSTEM_OVERVIEW.zh-CN.md) · [协同推理工作流](docs/COLLABORATIVE_REASONING_FRAMEWORK.zh-CN.md) · [v0.4.0 发布说明](docs/releases/v0.4.0.md)
 
 An evidence-driven governance protocol for multi-agent systems that need diversity without coordination collapse.
 
