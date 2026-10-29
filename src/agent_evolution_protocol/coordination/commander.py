@@ -29,6 +29,7 @@ from agent_evolution_protocol.coordination import transcript_bus as bus
 from agent_evolution_protocol.coordination import transport_cdp as cdp
 from agent_evolution_protocol.coordination import ui_fallback
 from agent_evolution_protocol.coordination import desktop_providers
+from agent_evolution_protocol.coordination import desktop_health
 from agent_evolution_protocol.coordination.provider_readback import receipt as make_readback, accepted as readback_accepted
 
 SAFE_AGENT = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
@@ -448,7 +449,17 @@ def _dispatch(root: Path, *, order: dict) -> dict:
         return _record_attempt(root, order, state="DEFERRED",
                                note="UNREGISTERED_CLIENT: register a verified client profile before delivery")
     client = None
-    for row in registry.discover(root, target)["clients"]:
+    try:
+        discovered = registry.discover(root, target)
+        desktop_health.record(root, component="native-window-enumeration", status="READY")
+    except Exception as exc:
+        health = desktop_health.record(root, component="native-window-enumeration",
+                                       status="TIMEOUT" if "timeout" in str(exc).lower() else "ERROR",
+                                       error=str(exc))
+        return _record_attempt(root, order, state="DEFERRED",
+                               receipt={"desktop_health": health},
+                               note="DESKTOP_ENUM_DEGRADED: use browser/CDP or recover the desktop helper before explicit resume")
+    for row in discovered["clients"]:
         if row["agent"] == target:
             client = row
             break

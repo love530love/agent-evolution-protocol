@@ -30,3 +30,5 @@ python -m agent_evolution_protocol coord-send --from codex --to qoder --topic IN
 `coord-wake-dispatch --id <wake-id>` 只预览这一条，必须显式加 `--apply` 才会创建唯一 commander 订单并尝试原会话投递。重复执行会按事件 ID 复用原订单；`DEFERRED` 只能再加 `--retry-deferred` 明确恢复。`coord-wake-status` 的 `done` 只表示生命周期文件已归档，不等于目标 ACK。
 
 旧 `wake_daemon` 现在也必须传 `--coord-root`，并与取消操作共用每事件锁；未指定根目录会拒绝运行，避免从源码目录误消费。后台脚本必须把同一协作根显式传给 daemon。异常中断、`DISPATCHING`、`CEASED` 或已输入但未读回的订单禁止自动重放。
+
+桌面枚举和浏览器桥接属于不同健康域。原生窗口枚举超时会写入协作根的 `desktop_health.json`，连续两次超时进入 `DEGRADED` 熔断，并把订单置为 `DEFERRED`；它不会被当成 Agent 离线，也不会自动重复点击。恢复后重新记录 `READY`，再通过 `resume-deferred` 显式继续。浏览器/CDP 若能证明目标标签页和会话锚点，可独立于原生枚举工作。
