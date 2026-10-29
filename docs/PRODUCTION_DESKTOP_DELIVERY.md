@@ -19,3 +19,13 @@ pwsh -File scripts/register-qoder-cn.ps1 -CoordRoot K:\PythonProjects5\agent-evo
 - `AGENT_ACK`：还需要目标 Agent 按事件 ID 回执，不能由桌面截图代替。
 
 任何缺失都会停止并保留事件 ID，便于显式恢复，不自动重复投递。
+
+上线前可运行预检：
+
+```powershell
+pwsh -File scripts/desktop-preflight.ps1 `
+  -CoordRoot K:\PythonProjects5\agent-evolution-protocol\coordination `
+  -Agent qoder_cn -RequireAnchor
+```
+
+预检失败意味着当前窗口或锚点不满足无人值守条件，应先重新注册/锚定，不应直接重试投递。
