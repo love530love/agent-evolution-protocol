@@ -28,7 +28,7 @@ Windows 前台切换也有独立证据：执行器会把当前线程临时附加
 
 ```powershell
 pwsh -File src/agent_evolution_protocol/coordination/wake_adapters/uia_session.ps1 `
-  -Agent qoder_cn -ProcessName Qoder -ExpectedPath 'D:\Program\Qoder IDE\Qoder.exe' `
+  -Agent qoder_cn -ProcessName 'Qoder CN' -ExpectedPath 'D:\Programs\QoderCN\Qoder CN\.qoder-versions\0.4.11\Qoder CN.exe' `
   -ExpectedTitle 'FlagGems-sglang' -Mode deliver -SessionLabel 'FlagGems-sglang' `
   -EventId 'WAKE-...' -Text '... WAKE-...' -OcrVerify
 ```
@@ -40,14 +40,28 @@ pwsh -File src/agent_evolution_protocol/coordination/wake_adapters/uia_session.p
 
 ## 多 Agent 会话锚点
 
+### Qoder 双客户端身份（必须分开）
+
+国际版 Qoder 与国内版 Qoder CN 是两个不同的桌面客户端，不能用标题
+`Qoder` 的子串匹配来代替身份判断。注册和唤醒时同时使用精确窗口标题、进程名和
+可执行文件路径：
+
+| agent | 窗口标题（精确） | 进程/可执行文件 |
+| --- | --- | --- |
+| `qoder` | `Qoder` | `Qoder.exe` / `D:\Programs\Qoder\Qoder.exe` |
+| `qoder_cn` | `Qoder CN` | `Qoder CN.exe` / `D:\Programs\QoderCN\Qoder CN\.qoder-versions\0.4.11\Qoder CN.exe` |
+
+`qoder` 的匹配不能命中 `Qoder CN`，`qoder_cn` 的匹配也不能命中 `Qoder`。
+若进程路径或标题无法同时核实，保持 `UNRESOLVED`，不得发送。
+
 每个 Agent 的 `coordination/clients/anchors/<agent>.json` 至少记录：
 
 ```json
 {
   "agent": "qoder_cn",
   "provider": "uia",
-  "process_name": "Qoder",
-  "expected_path": "D:\\Program\\Qoder IDE\\Qoder.exe",
+  "process_name": "Qoder CN",
+  "expected_path": "D:\\Programs\\QoderCN\\Qoder CN\\.qoder-versions\\0.4.11\\Qoder CN.exe",
   "expected_title": "FlagGems-sglang",
   "session_label": "FlagGems-sglang",
   "session_id": "optional-provider-session-id",

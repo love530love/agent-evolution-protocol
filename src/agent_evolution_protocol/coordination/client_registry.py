@@ -39,8 +39,18 @@ BUILTIN: dict[str, dict] = {
         "process": "Qoder",
         "exe": r"D:\Programs\Qoder\Qoder.exe",
         "window_titles": ["Qoder"],
+        "window_titles_exact": True,
         "electron": True,
         "transports": ["cdp", "uia", "ocr-paste"],
+    },
+    "qoder_cn": {
+        "display": "Qoder CN",
+        "process": "Qoder CN",
+        "exe": r"D:\Programs\QoderCN\Qoder CN\.qoder-versions\0.4.11\Qoder CN.exe",
+        "window_titles": ["Qoder CN"],
+        "window_titles_exact": True,
+        "electron": True,
+        "transports": ["uia", "ocr-paste", "cdp"],
     },
     "chatgpt": {
         "display": "ChatGPT",
@@ -178,9 +188,15 @@ def known(root: Path) -> list[str]:
 
 def matches(profile_row: dict, window: dict) -> bool:
     title = str(window.get("title", "")).lower()
+    exact = bool(profile_row.get("window_titles_exact"))
     for wanted in profile_row.get("window_titles", []):
-        if wanted.lower() in title:
+        wanted_lower = wanted.lower()
+        if (wanted_lower == title) if exact else (wanted_lower in title):
             return True
+    # Exact-title profiles must not fall through to the legacy substring
+    # process check: ``Qoder`` is a substring of ``Qoder CN``.
+    if exact:
+        return False
     process = (profile_row.get("process") or "").lower()
     if process and process in str(window.get("title", "")).lower():
         return True

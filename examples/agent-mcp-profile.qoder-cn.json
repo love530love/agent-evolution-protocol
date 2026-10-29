@@ -4,8 +4,9 @@
   "client": {
     "kind": "desktop",
     "session_id": "",
-    "process": "Qoder",
-    "window_title": "Qoder CN"
+    "process": "Qoder CN",
+    "window_title": "Qoder CN",
+    "executable": "D:/Programs/QoderCN/Qoder CN/.qoder-versions/0.4.11/Qoder CN.exe"
   },
   "workspace_id": "",
   "servers": [
@@ -34,7 +35,8 @@
   "capabilities": ["locate_session", "wake", "dispatch", "readback", "rea"],
   "locator": {
     "transports": ["native_api", "desktop_mcp", "uia", "cdp", "mailbox"],
-    "window_titles": ["Qoder CN", "Qoder"],
+    "window_titles": ["Qoder CN"],
+    "window_titles_exact": true,
     "session_id": ""
   },
   "launch": {
