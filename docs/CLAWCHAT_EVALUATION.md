@@ -4,6 +4,8 @@
 
 “ClawChat”存在多个同名项目，不能直接把名称当作唯一依赖。最相关的 `cbd/clawchat` 已更名为 Cowchat；旧仓库仅保留 v0.3.x 兼容代码。其协议是本地 TCP/Unix socket + NDJSON，提供房间、投票、决策记录和领导者选举，任何能写 JSON Lines 的 Agent 都可接入。
 
+确实存在图形界面版本：`ngmaloney/clawchat` 是 Electron 桌面客户端，支持 Windows/macOS/Linux、WebSocket、流式回复、多会话、Markdown、附件和自动重连。它更像 OpenClaw/Claude Code 的桌面前端，不是 Cowchat 本地房间服务器的同一实现。
+
 另一个 `alexrudloff/clawchat` 是跨机器的 P2P 加密聊天，适合跨网络 Agent 网格，不适合作为本机核心总线。
 
 ## 与 AEP 的互补
@@ -37,3 +39,4 @@
 - <https://github.com/cbd/clawchat>
 - <https://github.com/cowboyinc/cowchat>
 - <https://github.com/alexrudloff/clawchat>
+- <https://github.com/ngmaloney/clawchat>
