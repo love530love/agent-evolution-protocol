@@ -201,6 +201,30 @@ function Get-ElementText {
   return (($chunks | Where-Object { $_ -and $_.Trim() }) -join ' | ')
 }
 
+function Get-OverlayEvidence {
+  param([System.Windows.Automation.AutomationElement]$Root)
+  if (-not $Root) { return @{} }
+  $names = @()
+  try {
+    $all = $Root.FindAll([System.Windows.Automation.TreeScope]::Subtree,
+      [System.Windows.Automation.Condition]::TrueCondition)
+    foreach ($element in $all) {
+      try { $n = [string]$element.Current.Name } catch { continue }
+      if ($n) { $names += $n }
+    }
+  } catch { return @{} }
+  $joined = ($names -join ' ')
+  $hit = $names | Where-Object { $_ -match '失败|错误|异常|确认|确定要|重试|已保存|通知|提示|tooltip|toast|alert|dialog|modal' } | Select-Object -First 1
+  if (-not $hit) { return @{} }
+  $kind = if ($hit -match '失败|错误|异常|alert') { 'alert' }
+    elseif ($hit -match '确认|确定要|popconfirm') { 'popconfirm' }
+    elseif ($hit -match 'dialog|modal|对话框') { 'modal' }
+    elseif ($hit -match '已保存|通知|toast') { 'toast' }
+    else { 'tooltip' }
+  $actions = @($names | Where-Object { $_ -match '重试|确定|取消|关闭|Retry|Confirm|Cancel|Close' } | Select-Object -First 8)
+  return @{ overlay_type = $kind; overlay_title = [string]$hit; overlay_text = $joined.Substring(0, [Math]::Min(500, $joined.Length)); overlay_actions = $actions; overlay_source = 'uia' }
+}
+
 function Get-TextElements {
   param($Root)
   $types = @(
@@ -768,6 +792,7 @@ if ($selection) {
   }
 }
 $delivered = [bool]($visible -and $composerCleared)
+$overlayEvidence = Get-OverlayEvidence -Root ([System.Windows.Automation.AutomationElement]::FromHandle($window.Hwnd))
 if ($OutFile -and $capturedText) {
   $dir = Split-Path -Parent $OutFile
   if ($dir) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
@@ -801,4 +826,9 @@ Write-Report @{
   capture_path        = $(if ($OutFile -and $capturedText) { [IO.Path]::GetFullPath($OutFile) } else { '' })
   task_delivered      = $delivered
   method              = 'uia-deliver'
+  overlay_type        = $overlayEvidence.overlay_type
+  overlay_title       = $overlayEvidence.overlay_title
+  overlay_text        = $overlayEvidence.overlay_text
+  overlay_actions     = $overlayEvidence.overlay_actions
+  overlay_source      = $overlayEvidence.overlay_source
 }
