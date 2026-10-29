@@ -49,7 +49,7 @@ def provider_readback(provider: str, event_id: str, raw: dict) -> dict:
         state, ack = "AGENT_ACK", True
     elif raw.get("task_delivered") is True:
         state, ack = "MESSAGE_VISIBLE", False
-    elif raw.get("status") in {"NO_RECEIPT", "ADAPTER_ERROR", "ADAPTER_MISSING", "PROFILE_DELIVERY_FAILED"}:
+    elif raw.get("status") in {"NO_RECEIPT", "ADAPTER_ERROR", "ADAPTER_MISSING", "PROFILE_DELIVERY_FAILED", "SEND_CONTROL_NOT_FOUND", "send-control-not-found", "input-not-confirmed"}:
         state, ack = "FAILED", False
     else:
         state, ack = "INPUT_SUBMITTED", False
@@ -205,6 +205,8 @@ def _uia_deliver(root: Path, agent: str, text: str, event_id: str, *,
         # The exact PID was selected from a unique/anchored visible window;
         # permit unknown path only with that PID constraint in place.
         cmd += ["-ExpectedPid", str(expected_pid), "-AllowUnknownPath"]
+    if profile.get("session_label"):
+        cmd += ["-SessionLabel", str(profile["session_label"])]
     if profile.get("window_titles"):
         pass
     if ocr:
@@ -508,7 +510,7 @@ def _dispatch(root: Path, *, order: dict) -> dict:
     # A missing/failed adapter receipt proves neither typing nor sending.
     # Even when the adapter reports a submitted input, never retry blindly:
     # it may have reached the agent without a readable echo.
-    if receipt.get("status") in ("NO_RECEIPT", "ADAPTER_ERROR", "ADAPTER_MISSING", "PROFILE_DELIVERY_FAILED") or receipt.get("returncode", 0) != 0:
+    if receipt.get("status") in ("NO_RECEIPT", "ADAPTER_ERROR", "ADAPTER_MISSING", "PROFILE_DELIVERY_FAILED", "SEND_CONTROL_NOT_FOUND", "send-control-not-found", "input-not-confirmed") or receipt.get("returncode", 0) != 0:
         return _record_attempt(root, order, state="CEASED", transport=transport, receipt=receipt,
                                note="DELIVERY_UNPROVEN: adapter failed; manual diagnosis required")
     return _record_attempt(root, order, state="CEASED", transport=transport, receipt=receipt,

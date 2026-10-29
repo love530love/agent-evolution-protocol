@@ -129,7 +129,8 @@ def _validate(agent: str) -> str:
 def register(root: Path, *, agent: str, display: str = "", process: str = "",
              exe: str = "", window_titles: list[str] | None = None,
              electron: bool = True, transports: list[str] | None = None,
-             launch_args: list[str] | None = None, notes: str = "") -> dict:
+             launch_args: list[str] | None = None, notes: str = "",
+             session_label: str = "") -> dict:
     _validate(agent)
     titles = [item for item in (window_titles or []) if item.strip()]
     if not titles and not process:
@@ -144,6 +145,7 @@ def register(root: Path, *, agent: str, display: str = "", process: str = "",
         "transports": transports or ["uia", "ocr-paste"],
         "launch_args": list(launch_args or []),
         "notes": notes.strip(),
+        "session_label": session_label.strip(),
         "registered_at": datetime.now(timezone.utc).isoformat(),
     }
     _write_json(Path(root) / "clients" / f"{agent}.json", payload)

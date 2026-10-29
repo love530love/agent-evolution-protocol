@@ -346,6 +346,93 @@ function Select-InputElement {
   }
 }
 
+function Invoke-SessionSwitch {
+  param([IntPtr]$Hwnd, $Root, [string]$Label)
+  if (-not $Label.Trim()) { return $false }
+  # Prefer a named accessibility item. Conversation rows in Electron clients
+  # are often exposed to UIA even when their screenshot text is truncated.
+  $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+  $queue = New-Object System.Collections.Queue
+  $queue.Enqueue($Root)
+  while ($queue.Count -gt 0) {
+    $element = $queue.Dequeue()
+    try {
+      if ([string]$element.Current.Name -eq $Label.Trim()) {
+        try { $pattern = $element.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern); $pattern.Invoke(); Start-Sleep -Milliseconds 700; return $true } catch { }
+        $box = $element.Current.BoundingRectangle
+        if (-not $box.IsEmpty -and $box.Width -gt 0 -and $box.Height -gt 0) {
+          Invoke-AepClick -X ([int]($box.Left + $box.Width / 2)) -Y ([int]($box.Top + $box.Height / 2))
+          Start-Sleep -Milliseconds 700
+          return $true
+        }
+      }
+      $child = $walker.GetFirstChild($element)
+      while ($child) { $queue.Enqueue($child); $child = $walker.GetNextSibling($child) }
+    } catch { }
+  }
+  $rect = New-Object AepUiWindow+RECT
+  if (-not [AepUiWindow]::GetWindowRect($Hwnd, [ref]$rect)) { throw 'WINDOW_RECT_UNAVAILABLE' }
+  $scan = Get-WindowOcrText -Hwnd $Hwnd
+  $hits = @($scan.Lines | Where-Object {
+    $_.Text -and $_.Text.Trim() -eq $Label.Trim() -and
+    $_.X -lt (($rect.Right - $rect.Left) * 0.42) -and
+    $_.Y -lt (($rect.Bottom - $rect.Top) * 0.82)
+  })
+  if ($hits.Count -eq 0) { throw "SESSION_LABEL_NOT_FOUND: $Label" }
+  if ($hits.Count -ne 1) { throw "SESSION_LABEL_NOT_UNIQUE: $($hits.Count)" }
+  $hit = $hits[0]
+  Invoke-AepClick -X ([int]($rect.Left + $hit.X + $hit.W / 2)) -Y ([int]($rect.Top + $hit.Y + $hit.H / 2))
+  Start-Sleep -Milliseconds 700
+  return $true
+}
+
+function Invoke-SendControl {
+  param($Root, [IntPtr]$Hwnd)
+  $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+  $queue = New-Object System.Collections.Queue
+  $queue.Enqueue($Root)
+  while ($queue.Count -gt 0) {
+    $element = $queue.Dequeue()
+    try {
+      $type = $element.Current.ControlType
+      $name = [string]$element.Current.Name
+      if ($type -eq [System.Windows.Automation.ControlType]::Button -and
+          ($name.Trim() -in @('发送', 'Send', '发送消息', 'Send message'))) {
+        try {
+          $pattern = $element.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+          $pattern.Invoke()
+          Start-Sleep -Milliseconds 350
+          return 'uia-button'
+        } catch { }
+        try {
+          if ($element.Current.IsEnabled -and -not $element.Current.IsOffscreen) {
+            $box = $element.Current.BoundingRectangle
+            if ($box.Width -gt 0 -and $box.Height -gt 0) {
+              Invoke-AepClick -X ([int]($box.Left + $box.Width / 2)) -Y ([int]($box.Top + $box.Height / 2))
+              return 'uia-button-click'
+            }
+          }
+        } catch { }
+      }
+      $child = $walker.GetFirstChild($element)
+      while ($child) { $queue.Enqueue($child); $child = $walker.GetNextSibling($child) }
+    } catch { }
+  }
+  # Some Electron builds expose the send arrow only to OCR. Exact labels are
+  # accepted; geometry is never guessed from a generic bottom-right point.
+  $scan = Get-WindowOcrText -Hwnd $Hwnd
+  $rect = New-Object AepUiWindow+RECT
+  if ([AepUiWindow]::GetWindowRect($Hwnd, [ref]$rect)) {
+    $hits = @($scan.Lines | Where-Object { $_.Text.Trim() -in @('发送', 'Send') -and $_.Y -gt (($rect.Bottom - $rect.Top) * 0.75) })
+    if ($hits.Count -eq 1) {
+      $hit = $hits[0]
+      Invoke-AepClick -X ([int]($rect.Left + $hit.X + $hit.W / 2)) -Y ([int]($rect.Top + $hit.Y + $hit.H / 2))
+      return 'ocr-button'
+    }
+  }
+  return ''
+}
+
 $windows = Get-TargetWindows
 $launched = $false
 if ($windows.Count -eq 0) {
@@ -359,6 +446,12 @@ $window = $windows[0]
 
 $root = [System.Windows.Automation.AutomationElement]::FromHandle($window.Hwnd)
 if (-not $root) { throw 'UIA_ROOT_MISSING: window has no automation element' }
+
+if ($Mode -eq 'deliver' -and $SessionLabel.Trim()) {
+  [void](Invoke-SessionSwitch -Hwnd $window.Hwnd -Root $root -Label $SessionLabel)
+  $root = [System.Windows.Automation.AutomationElement]::FromHandle($window.Hwnd)
+  if (-not $root) { throw 'UIA_ROOT_MISSING_AFTER_SESSION_SWITCH' }
+}
 
 $transcript = Get-VisibleTranscript -Root $root -CapChars $MaxCaptureChars
 $selection = Select-InputElement -Root $root -Soft
@@ -616,7 +709,32 @@ if ($selection -and -not $inputVerified) {
   return
 }
 
-[System.Windows.Forms.SendKeys]::SendWait($SendKey)
+Start-Sleep -Milliseconds 500
+$rootForSend = [System.Windows.Automation.AutomationElement]::FromHandle($window.Hwnd)
+if (-not $rootForSend) { throw 'UIA_ROOT_MISSING_BEFORE_SEND' }
+$sendMethod = Invoke-SendControl -Root $rootForSend -Hwnd $window.Hwnd
+if (-not $sendMethod) {
+  # ValuePattern can update the visual editor without firing the web app's
+  # input event. Re-type once through the focused control so the send button
+  # state is recomputed, then reacquire the UIA tree and look for the button.
+  if ($selection -and $focused) {
+    try { [System.Windows.Forms.Clipboard]::SetText($Text) } catch { Set-Clipboard -Value $Text }
+    [System.Windows.Forms.SendKeys]::SendWait('^a')
+    [System.Windows.Forms.SendKeys]::SendWait('^v')
+    Start-Sleep -Milliseconds 500
+    $rootForSend = [System.Windows.Automation.AutomationElement]::FromHandle($window.Hwnd)
+    if ($rootForSend) { $sendMethod = Invoke-SendControl -Root $rootForSend -Hwnd $window.Hwnd }
+  }
+}
+if (-not $sendMethod) {
+  Write-Report @{
+    status = 'send-control-not-found'; pid = $window.Pid; title = $window.Title
+    write_method = $writeMethod; input_focused = $focused; input_verified = $inputVerified
+    send_method = ''; activation = $ActivationEvidence; task_delivered = $false
+    method = 'uia-deliver'
+  }
+  return
+}
 
 $deadline = [DateTime]::UtcNow.AddSeconds($ReadBackTimeoutSeconds)
 $visible = $false
@@ -634,13 +752,29 @@ while ([DateTime]::UtcNow -lt $deadline) {
     if ($ocr.Text -and $ocr.Text.Contains($EventId)) { $visible = $true; $capturedText = $ocr.Text; break }
   }
 }
+
+# A transcript hit is insufficient if the event id is still sitting in the
+# composer. Require the composer to be cleared after the explicit send action.
+$composerCleared = $false
+if ($selection) {
+  $verifyRoot = [System.Windows.Automation.AutomationElement]::FromHandle($window.Hwnd)
+  if ($verifyRoot) {
+    $verifySelection = Select-InputElement -Root $verifyRoot -Soft
+    if ($verifySelection) {
+      try { $remaining = [string]$verifySelection.Element.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value } catch { $remaining = '' }
+      if (-not $remaining) { $remaining = Get-ElementText -Element $verifySelection.Element }
+      $composerCleared = -not ($remaining -and $remaining.Contains($EventId))
+    } else { $composerCleared = $true }
+  }
+}
+$delivered = [bool]($visible -and $composerCleared)
 if ($OutFile -and $capturedText) {
   $dir = Split-Path -Parent $OutFile
   if ($dir) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
   [IO.File]::WriteAllText($OutFile, $capturedText, [System.Text.UTF8Encoding]::new($false))
 }
 
-$status = if ($visible) { 'message-visible' }
+$status = if ($delivered) { 'message-visible' }
 elseif ($inputVerified) { 'submitted-unconfirmed' }
 elseif ($writeMethod -eq 'clipboard-paste-unverified-input') { 'pasted-unverified' }
 else { 'uncertain' }
@@ -658,11 +792,13 @@ Write-Report @{
   input_verified      = $inputVerified
   readback_polls      = $polls
   ocr_used            = $ocrUsed
+  send_method         = $sendMethod
+  composer_cleared    = $composerCleared
   activation          = $ActivationEvidence
   input_found         = [bool]$selection
   input_candidate_count = $(if ($selection) { $selection.CandidateCount } else { 0 })
   input_ambiguous     = $(if ($selection) { $selection.Ambiguous } else { $false })
   capture_path        = $(if ($OutFile -and $capturedText) { [IO.Path]::GetFullPath($OutFile) } else { '' })
-  task_delivered      = $visible
+  task_delivered      = $delivered
   method              = 'uia-deliver'
 }
