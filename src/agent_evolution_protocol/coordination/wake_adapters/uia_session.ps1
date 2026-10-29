@@ -129,8 +129,17 @@ function Write-Report {
 }
 
 function Get-TargetWindows {
-  $all = @(Get-Process -Name $ProcessName -ErrorAction SilentlyContinue |
-    Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero })
+  # A verified anchor PID is stronger than a stale display/process-name guess.
+  # Electron clients commonly expose a branded window while the owning process
+  # name is versioned or helper-specific (for example Qoder CN).
+  if ($ExpectedPid -gt 0) {
+    $all = @(Get-Process -Id $ExpectedPid -ErrorAction SilentlyContinue |
+      Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero })
+  }
+  else {
+    $all = @(Get-Process -Name $ProcessName -ErrorAction SilentlyContinue |
+      Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero })
+  }
   $kept = @()
   foreach ($proc in $all) {
     if ($ExpectedPid -gt 0 -and $proc.Id -ne $ExpectedPid) { continue }
