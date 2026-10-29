@@ -31,6 +31,9 @@ from agent_evolution_protocol.coordination.legion_ledger import record as record
 from agent_evolution_protocol.coordination import governance
 from agent_evolution_protocol.coordination import reasoning_contract
 from agent_evolution_protocol.coordination import desktop_providers
+from agent_evolution_protocol.coordination import agent_mcp_registry
+from agent_evolution_protocol.coordination import desktop_runner
+from agent_evolution_protocol.coordination import desktop_ipc
 from agent_evolution_protocol.coordination import improvement
 from agent_evolution_protocol.coordination import improvement_spool
 from agent_evolution_protocol.coordination import improvement_work
@@ -905,6 +908,98 @@ def coord_desktop(args: argparse.Namespace) -> None:
     print(json.dumps(result, ensure_ascii=False, indent=2))
     if args.action == "probe" and result["status"] != "TOOLS_DISCOVERED":
         raise SystemExit(2)
+
+
+def coord_agent_mcp(args: argparse.Namespace) -> None:
+    """Manage per-Agent MCP bundles without claiming delivery or ACK."""
+    try:
+        if args.action == "register":
+            if not args.profile_file:
+                raise ValueError("register requires --profile-file")
+            result = agent_mcp_registry.register(
+                coord_root(args), json.loads(args.profile_file.read_text(encoding="utf-8")),
+                replace=not args.no_replace,
+            )
+        elif args.action == "inventory":
+            result = agent_mcp_registry.inventory(coord_root(args))
+        elif args.action == "render-config":
+            if not args.agent or not args.workspace_id:
+                raise ValueError("render-config requires --agent and --workspace-id")
+            result = agent_mcp_registry.render_config(coord_root(args), args.agent, args.workspace_id,
+                                                      coord_root=str(coord_root(args)))
+        else:
+            if not args.agent or not args.workspace_id or not args.operation:
+                raise ValueError("plan requires --agent, --workspace-id and --operation")
+            result = agent_mcp_registry.plan_dispatch(coord_root(args), args.agent, args.workspace_id,
+                                                      args.operation, session_id=args.session_id or "")
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise ProtocolError(str(exc)) from exc
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    if args.action == "plan" and result.get("status") not in {"READY_TO_DISPATCH", "SESSION_BINDING_REQUIRED"}:
+        raise SystemExit(2)
+
+
+def coord_desktop_runner(args: argparse.Namespace) -> None:
+    """Plan/launch/wait for a GUI Agent in the interactive user session."""
+    try:
+        root = coord_root(args)
+        if not args.agent:
+            raise ValueError("desktop-runner requires --agent")
+        if args.action == "launch":
+            result = desktop_runner.launch(root, args.agent, apply=args.apply,
+                                           allow_launch=args.allow_launch,
+                                           debug_port=args.debug_port,
+                                           extra_args=args.extra_args)
+        elif args.action == "wait":
+            result = desktop_runner.wait_for_ready(root, args.agent, timeout=args.timeout,
+                                                   poll_interval=args.poll_interval)
+        else:
+            result = desktop_runner.ensure_session(root, args.agent, apply=args.apply,
+                                                   allow_launch=args.allow_launch,
+                                                   timeout=args.timeout,
+                                                   poll_interval=args.poll_interval,
+                                                   debug_port=args.debug_port)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise ProtocolError(str(exc)) from exc
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+def coord_desktop_ipc(args: argparse.Namespace) -> None:
+    """Persist/recover Supervisor ↔ Desktop Runner events and receipts."""
+    try:
+        root = coord_root(args)
+        if not args.workspace_id or not args.agent:
+            raise ValueError("desktop-ipc requires --workspace-id and --agent")
+        if args.action == "publish":
+            if not args.session_id or not args.event_id:
+                raise ValueError("publish requires --session-id and --event-id")
+            payload = json.loads(args.payload_json) if args.payload_json else {}
+            result = desktop_ipc.publish(root, workspace_id=args.workspace_id, agent=args.agent,
+                                         session_id=args.session_id, event_id=args.event_id,
+                                         kind=args.kind, payload=payload)
+        elif args.action == "state":
+            if not args.session_id or not args.status:
+                raise ValueError("state requires --session-id and --status")
+            evidence = json.loads(args.evidence_json) if args.evidence_json else {}
+            result = desktop_ipc.set_state(root, workspace_id=args.workspace_id, agent=args.agent,
+                                           session_id=args.session_id, status=args.status,
+                                           reason=args.reason or "", event_id=args.event_id or "",
+                                           evidence=evidence)
+        elif args.action == "read":
+            result = desktop_ipc.read_events(root, workspace_id=args.workspace_id, agent=args.agent,
+                                             session_id=args.session_id or "", limit=args.limit)
+        elif args.action == "ack":
+            if not args.event_id or not args.status:
+                raise ValueError("ack requires --event-id and --status")
+            evidence = json.loads(args.evidence_json) if args.evidence_json else {}
+            result = desktop_ipc.acknowledge(root, event_id=args.event_id, status=args.status,
+                                             evidence=evidence)
+        else:
+            result = desktop_ipc.recover(root, workspace_id=args.workspace_id, agent=args.agent,
+                                         session_id=args.session_id or "")
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise ProtocolError(str(exc)) from exc
+    print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
 def coord_capability_plan(args: argparse.Namespace) -> None:
@@ -2532,6 +2627,9 @@ def build_parser() -> argparse.ArgumentParser:
     changes.set_defaults(func=coord_improvement)
     reasoning = commands.add_parser("coord-reasoning"); reasoning.add_argument("action", choices=("create", "status")); reasoning.add_argument("--request-file", type=Path); reasoning.add_argument("--task"); reasoning.set_defaults(func=coord_reasoning)
     desktop = commands.add_parser("coord-desktop"); desktop.add_argument("action", choices=("register", "inventory", "probe", "plan", "export-config")); desktop.add_argument("--profile-file", type=Path); desktop.add_argument("--provider"); desktop.add_argument("--operation", choices=sorted(desktop_providers.OPERATIONS)); desktop.add_argument("--previous-state", default="NOT_STARTED"); desktop.add_argument("--timeout", type=int, default=30); desktop.add_argument("--details", action="store_true"); desktop.set_defaults(func=coord_desktop)
+    agent_mcp = commands.add_parser("coord-agent-mcp"); agent_mcp.add_argument("action", choices=("register", "inventory", "render-config", "plan")); agent_mcp.add_argument("--profile-file", type=Path); agent_mcp.add_argument("--agent"); agent_mcp.add_argument("--workspace-id"); agent_mcp.add_argument("--operation", choices=sorted(agent_mcp_registry.OPERATIONS)); agent_mcp.add_argument("--session-id"); agent_mcp.add_argument("--no-replace", action="store_true"); agent_mcp.set_defaults(func=coord_agent_mcp)
+    desktop_runner_cmd = commands.add_parser("coord-desktop-runner"); desktop_runner_cmd.add_argument("action", choices=("launch", "wait", "ensure")); desktop_runner_cmd.add_argument("--agent", required=True); desktop_runner_cmd.add_argument("--apply", action="store_true"); desktop_runner_cmd.add_argument("--allow-launch", action="store_true"); desktop_runner_cmd.add_argument("--debug-port", type=int, default=0); desktop_runner_cmd.add_argument("--extra-args", nargs="*", default=[]); desktop_runner_cmd.add_argument("--timeout", type=float, default=30.0); desktop_runner_cmd.add_argument("--poll-interval", type=float, default=0.25); desktop_runner_cmd.set_defaults(func=coord_desktop_runner)
+    desktop_ipc_cmd = commands.add_parser("coord-desktop-ipc"); desktop_ipc_cmd.add_argument("action", choices=("publish", "state", "read", "ack", "recover")); desktop_ipc_cmd.add_argument("--workspace-id", required=True); desktop_ipc_cmd.add_argument("--agent", required=True); desktop_ipc_cmd.add_argument("--session-id"); desktop_ipc_cmd.add_argument("--event-id"); desktop_ipc_cmd.add_argument("--kind", choices=sorted(desktop_ipc.EVENT_KIND), default="runner_command"); desktop_ipc_cmd.add_argument("--status", choices=sorted(desktop_ipc.STATUS)); desktop_ipc_cmd.add_argument("--reason"); desktop_ipc_cmd.add_argument("--payload-json"); desktop_ipc_cmd.add_argument("--evidence-json"); desktop_ipc_cmd.add_argument("--limit", type=int, default=100); desktop_ipc_cmd.set_defaults(func=coord_desktop_ipc)
     capability_plan = commands.add_parser("coord-capability-plan"); capability_plan.add_argument("--intent", required=True); capability_plan.add_argument("--operation", choices=sorted(capability_bridge.OPERATIONS), required=True); capability_plan.add_argument("--manifest", type=Path); capability_plan.add_argument("--allow-high-risk", action="store_true"); capability_plan.set_defaults(func=coord_capability_plan)
     process = commands.add_parser("coord-process-probe"); process.add_argument("--pid", type=int, required=True); process.set_defaults(func=coord_process_probe)
     capability = commands.add_parser("coord-capabilities"); capability.add_argument("action", choices=("declare", "match")); capability.add_argument("--agent"); capability.add_argument("--chips", nargs="*", default=[]); capability.add_argument("--compilers", nargs="*", default=[]); capability.add_argument("--strengths", nargs="*", default=[]); capability.add_argument("--evidence", nargs="*", default=[]); capability.add_argument("--ttl-minutes", type=int, default=30); capability.add_argument("--chip"); capability.add_argument("--compiler"); capability.add_argument("--strength"); capability.set_defaults(func=coord_capabilities)

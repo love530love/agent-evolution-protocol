@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-evolution-protocol.local/schemas/workspace-snapshot-v1.schema.json",
+  "title": "Persistent Federation Workspace Snapshot v1",
+  "type": "object",
+  "required": ["schema", "workspace_id", "version", "anchored_request", "dag", "intelligence", "artifacts"],
+  "properties": {
+    "schema": {"const": "aep-workspace-snapshot-v1"},
+    "workspace_id": {"type": "string", "minLength": 8},
+    "version": {"type": "integer", "minimum": 1},
+    "parent_snapshot": {"type": ["string", "null"]},
+    "anchored_request": {"type": "object", "required": ["text", "acceptance"], "properties": {"text": {"type": "string"}, "acceptance": {"type": "array"}}, "additionalProperties": true},
+    "dag": {"type": "object", "required": ["nodes"], "properties": {"nodes": {"type": "array"}}, "additionalProperties": true},
+    "intelligence": {"type": "object"},
+    "artifacts": {"type": "array"},
+    "sessions": {"type": "array"},
+    "policy_version": {"type": "string"}
+  },
+  "additionalProperties": true
+}

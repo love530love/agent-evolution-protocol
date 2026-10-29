@@ -9,6 +9,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+$env:PYTHONIOENCODING = 'utf-8'
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $env:PYTHONPATH = (Join-Path $repoRoot 'src') + [IO.Path]::PathSeparator + $env:PYTHONPATH
 $python = (Get-Command python -ErrorAction Stop).Source

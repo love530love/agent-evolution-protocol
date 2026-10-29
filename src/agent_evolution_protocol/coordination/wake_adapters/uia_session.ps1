@@ -18,6 +18,8 @@ param(
   [string]$SessionLabel = '',
   [ValidateRange(1, 300)][int]$ReadBackTimeoutSeconds = 20,
   [string]$SendKey = '{ENTER}',
+  [double]$SendButtonXRatio = 0,
+  [double]$SendButtonYRatio = 0,
   [ValidateRange(1, 50)][int]$MaxInputCandidates = 6,
   [ValidateRange(1000, 4000000)][int]$MaxCaptureChars = 400000
 )
@@ -48,6 +50,11 @@ using System.Runtime.InteropServices;
 public static class AepUiWindow {
   [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr processId);
+  [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+  [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
   [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
   [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
@@ -59,6 +66,39 @@ public static class AepUiWindow {
 '@
 $null = [AepUiWindow]::SetProcessDPIAware()
 
+function Set-AepForegroundWindow {
+  param([IntPtr]$Hwnd, [int]$ShowMode = 9)
+  if ($Hwnd -eq [IntPtr]::Zero) { return $false }
+  [void][AepUiWindow]::ShowWindowAsync($Hwnd, $ShowMode)
+  $current = [AepUiWindow]::GetCurrentThreadId()
+  $targetThread = [AepUiWindow]::GetWindowThreadProcessId($Hwnd, [IntPtr]::Zero)
+  $foreground = [AepUiWindow]::GetForegroundWindow()
+  $foregroundThread = if ($foreground -ne [IntPtr]::Zero) {
+    [AepUiWindow]::GetWindowThreadProcessId($foreground, [IntPtr]::Zero)
+  } else { 0 }
+  $attachedTarget = $false
+  $attachedForeground = $false
+  if ($targetThread -and $current -and $targetThread -ne $current) {
+    $attachedTarget = [AepUiWindow]::AttachThreadInput($current, $targetThread, $true)
+  }
+  if ($foregroundThread -and $current -and $foregroundThread -ne $current -and
+      $foregroundThread -ne $targetThread) {
+    $attachedForeground = [AepUiWindow]::AttachThreadInput($current, $foregroundThread, $true)
+  }
+  try {
+    [void][AepUiWindow]::BringWindowToTop($Hwnd)
+    $ok = [AepUiWindow]::SetForegroundWindow($Hwnd)
+  } finally {
+    if ($attachedForeground) { [void][AepUiWindow]::AttachThreadInput($current, $foregroundThread, $false) }
+    if ($attachedTarget) { [void][AepUiWindow]::AttachThreadInput($current, $targetThread, $false) }
+  }
+  if ($ok) {
+    Start-Sleep -Milliseconds 120
+    $ok = ([AepUiWindow]::GetForegroundWindow() -eq $Hwnd)
+  }
+  return $ok
+}
+
 function Invoke-AepClick {
   param([int]$X, [int]$Y)
   [AepUiWindow]::SetCursorPos($X, $Y) | Out-Null
@@ -67,6 +107,59 @@ function Invoke-AepClick {
   Start-Sleep -Milliseconds 80
   [AepUiWindow]::mouse_event(0x0004, 0, 0, 0, [IntPtr]::Zero)
   Start-Sleep -Milliseconds 200
+}
+
+function Find-AepPurpleControl {
+  param([IntPtr]$Hwnd)
+  $rect = New-Object AepUiWindow+RECT
+  if (-not [AepUiWindow]::GetWindowRect($Hwnd, [ref]$rect)) { return $null }
+  $width = $rect.Right - $rect.Left
+  $height = $rect.Bottom - $rect.Top
+  if ($width -le 0 -or $height -le 0) { return $null }
+  $bitmap = New-Object System.Drawing.Bitmap($width, $height)
+  $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+  try {
+    $graphics.CopyFromScreen($rect.Left, $rect.Top, 0, 0, $bitmap.Size)
+    $minX = $width; $minY = $height; $maxX = -1; $maxY = -1; $count = 0
+    # CodeBuddy's enabled send control is purple. Restrict the scan to the
+    # lower-right composer band and use a coarse grid to avoid OCR/coordinate
+    # drift when the task panel height changes.
+    for ($y = [int]($height * 0.62); $y -lt $height; $y += 2) {
+      for ($x = [int]($width * 0.40); $x -lt $width; $x += 2) {
+        $c = $bitmap.GetPixel($x, $y)
+        if ($c.B -ge 190 -and $c.R -ge 70 -and $c.R -le 160 -and
+            $c.G -ge 35 -and $c.G -le 125 -and $c.B -gt ($c.R + 70)) {
+          $count++
+          if ($x -lt $minX) { $minX = $x }; if ($x -gt $maxX) { $maxX = $x }
+          if ($y -lt $minY) { $minY = $y }; if ($y -gt $maxY) { $maxY = $y }
+        }
+      }
+    }
+  } finally {
+    $graphics.Dispose(); $bitmap.Dispose()
+  }
+  if ($count -lt 40 -or $maxX -lt $minX -or $maxY -lt $minY) { return $null }
+  return [pscustomobject]@{
+    X = [int](($minX + $maxX) / 2)
+    Y = [int](($minY + $maxY) / 2)
+    Count = $count
+    Bounds = "$minX,$minY-$maxX,$maxY"
+  }
+}
+
+function Invoke-AepScrollComposer {
+  param([IntPtr]$Hwnd)
+  $rect = New-Object AepUiWindow+RECT
+  if (-not [AepUiWindow]::GetWindowRect($Hwnd, [ref]$rect)) { return $false }
+  $x = [int](($rect.Left + $rect.Right) / 2)
+  $y = [int](($rect.Top + $rect.Bottom) / 2)
+  [AepUiWindow]::SetCursorPos($x, $y) | Out-Null
+  # One bounded burst; the next OCR observation decides whether it helped.
+  # mouse_event exposes wheel delta as an unsigned DWORD; encode -1200 as
+  # its two's-complement representation instead of relying on a narrowing cast.
+  [AepUiWindow]::mouse_event(0x0800, 0, 0, [uint32]4294966096, [IntPtr]::Zero)
+  Start-Sleep -Milliseconds 350
+  return $true
 }
 
 # Composer placeholders seen in real clients. A hit is evidence of where the
@@ -108,7 +201,16 @@ function Get-WindowOcrText {
     $text = [string]$decoded.Text
     $lines = @($decoded.Lines)
   } catch { $text = ''; $lines = @(); $ocrError = $_.Exception.Message }
-  finally { if ($shot -and (Test-Path -LiteralPath $shot)) { Remove-Item -LiteralPath $shot -Force -ErrorAction SilentlyContinue } }
+  finally {
+    # Diagnostics are opt-in. Production runs keep the old no-retention
+    # behavior; a bounded directory lets an operator inspect an OCR miss.
+    $keepDir = $env:AEP_OCR_SHOT_DIR
+    if ($shot -and (Test-Path -LiteralPath $shot) -and $keepDir) {
+      New-Item -ItemType Directory -Force -Path $keepDir | Out-Null
+      Copy-Item -LiteralPath $shot -Destination (Join-Path $keepDir ([IO.Path]::GetFileName($shot))) -Force
+    }
+    if ($shot -and (Test-Path -LiteralPath $shot)) { Remove-Item -LiteralPath $shot -Force -ErrorAction SilentlyContinue }
+  }
   return [pscustomobject]@{ Text = [string]$text; Error = [string]$ocrError; Lines = , $lines }
 }
 
@@ -507,11 +609,16 @@ if ($Mode -eq 'select-ocr') {
   $rect = New-Object AepUiWindow+RECT
   if (-not [AepUiWindow]::GetWindowRect($window.Hwnd, [ref]$rect)) { throw 'WINDOW_RECT_UNAVAILABLE' }
   $screen = [System.Windows.Forms.Screen]::FromHandle($window.Hwnd).Bounds
-  if ($rect.Left -lt $screen.Left -or $rect.Top -lt $screen.Top -or
-      $rect.Right -gt $screen.Right -or $rect.Bottom -gt $screen.Bottom) {
+  $clipLeft = [Math]::Max(0, $screen.Left - $rect.Left)
+  $clipTop = [Math]::Max(0, $screen.Top - $rect.Top)
+  $clipRight = [Math]::Max(0, $rect.Right - $screen.Right)
+  $clipBottom = [Math]::Max(0, $rect.Bottom - $screen.Bottom)
+  $minorClip = ($clipLeft -le 32 -and $clipTop -le 32 -and $clipRight -le 32 -and $clipBottom -le 32)
+  if (($clipLeft -gt 0 -or $clipTop -gt 0 -or $clipRight -gt 0 -or $clipBottom -gt 0) -and
+      -not ($minorClip -and $env:AEP_ALLOW_MINOR_CLIPPING -eq '1')) {
     throw 'WINDOW_NOT_FULLY_VISIBLE'
   }
-  $ActivationEvidence.foreground = [AepUiWindow]::SetForegroundWindow($window.Hwnd)
+  $ActivationEvidence.foreground = Set-AepForegroundWindow -Hwnd $window.Hwnd -ShowMode 9
   if (-not $ActivationEvidence.foreground) { throw 'WINDOW_FOCUS_DENIED' }
   Start-Sleep -Milliseconds 350
   $ocr = Get-WindowOcrText -Hwnd $window.Hwnd
@@ -530,6 +637,13 @@ if ($Mode -eq 'select-ocr') {
 
 if ($Mode -eq 'capture') {
   if (-not $OutFile) { throw 'OUTFILE_REQUIRED: capture mode needs -OutFile' }
+  # Capture must be tied to the selected HWND.  Without re-activation a
+  # background Electron window can yield a screenshot of whichever app is
+  # currently foreground, creating a false transcript.
+  [void][AepUiWindow]::ShowWindowAsync($window.Hwnd, 9)
+  if (-not (Set-AepForegroundWindow -Hwnd $window.Hwnd -ShowMode 9)) { throw 'WINDOW_FOCUS_DENIED: capture target was not foreground' }
+  Start-Sleep -Milliseconds 250
+  if ($env:AEP_SCROLL_COMPOSER -eq '1') { [void](Invoke-AepScrollComposer -Hwnd $window.Hwnd) }
   $source = 'uia-tree'
   $body = $transcript.Text
   # Electron clients expose no accessibility tree; fall back to built-in OCR so
@@ -564,13 +678,18 @@ if ($Mode -eq 'compose') {
   if (-not $Text.Contains($EventId)) { throw 'EVENT_ID_NOT_IN_TEXT: the message must carry its own event id' }
   if ($RequireComposerHint -and -not $ComposerHint.Trim()) { throw 'COMPOSER_HINT_REQUIRED: safe OCR mode requires an exact hint' }
 
-  $ActivationEvidence.show_window = [AepUiWindow]::ShowWindowAsync($window.Hwnd, 9)
-  $ActivationEvidence.foreground = [AepUiWindow]::SetForegroundWindow($window.Hwnd)
+  $showMode = if ($env:AEP_MAXIMIZE_WINDOW -eq '1') { 3 } else { 9 }
+  $ActivationEvidence.show_window = [AepUiWindow]::ShowWindowAsync($window.Hwnd, $showMode)
+  $ActivationEvidence.foreground = Set-AepForegroundWindow -Hwnd $window.Hwnd -ShowMode $showMode
   $ActivationEvidence.window_alive = [AepUiWindow]::IsWindow($window.Hwnd)
   if (-not $ActivationEvidence.foreground) { throw 'WINDOW_FOCUS_DENIED: Windows rejected foreground activation' }
   Start-Sleep -Milliseconds 400
 
   $scan = Get-WindowOcrText -Hwnd $window.Hwnd
+  if ($env:AEP_SCROLL_COMPOSER -eq '1') {
+    [void](Invoke-AepScrollComposer -Hwnd $window.Hwnd)
+    $scan = Get-WindowOcrText -Hwnd $window.Hwnd
+  }
   $hit = $null
   $hintsToUse = if ($RequireComposerHint) { @($ComposerHint) } else { $ComposerHints }
   foreach ($hint in $hintsToUse) {
@@ -586,8 +705,13 @@ if ($Mode -eq 'compose') {
     if (-not [AepUiWindow]::GetWindowRect($window.Hwnd, [ref]$rectCheck)) { throw 'WINDOW_RECT_UNAVAILABLE' }
     $windowHeight = $rectCheck.Bottom - $rectCheck.Top
     $screen = [System.Windows.Forms.Screen]::FromHandle($window.Hwnd).Bounds
-    if ($rectCheck.Left -lt $screen.Left -or $rectCheck.Top -lt $screen.Top -or
-        $rectCheck.Right -gt $screen.Right -or $rectCheck.Bottom -gt $screen.Bottom) {
+    $clipLeft = [Math]::Max(0, $screen.Left - $rectCheck.Left)
+    $clipTop = [Math]::Max(0, $screen.Top - $rectCheck.Top)
+    $clipRight = [Math]::Max(0, $rectCheck.Right - $screen.Right)
+    $clipBottom = [Math]::Max(0, $rectCheck.Bottom - $screen.Bottom)
+    $minorClip = ($clipLeft -le 32 -and $clipTop -le 32 -and $clipRight -le 32 -and $clipBottom -le 32)
+    if (($clipLeft -gt 0 -or $clipTop -gt 0 -or $clipRight -gt 0 -or $clipBottom -gt 0) -and
+        -not ($minorClip -and $env:AEP_ALLOW_MINOR_CLIPPING -eq '1')) {
       throw 'WINDOW_NOT_FULLY_VISIBLE: refusing OCR click on clipped window'
     }
     if ($windowHeight -le 0 -or $hit.Y -lt [int]($windowHeight * 0.55)) {
@@ -635,7 +759,29 @@ if ($Mode -eq 'compose') {
     return
   }
 
-  [System.Windows.Forms.SendKeys]::SendWait($SendKey)
+  $sendButtonMethod = 'enter'
+  $sendButtonEvidence = $null
+  if ($env:AEP_SEND_BUTTON_COLOR -eq '1') {
+    $sendButtonEvidence = Find-AepPurpleControl -Hwnd $window.Hwnd
+    if ($sendButtonEvidence) {
+      $sendRect = New-Object AepUiWindow+RECT
+      if (-not [AepUiWindow]::GetWindowRect($window.Hwnd, [ref]$sendRect)) { throw 'WINDOW_RECT_UNAVAILABLE: send button' }
+      $sendX = [int]$sendButtonEvidence.X + [int]$sendRect.Left
+      $sendY = [int]$sendButtonEvidence.Y + [int]$sendRect.Top
+      Invoke-AepClick -X $sendX -Y $sendY
+      $sendButtonMethod = 'purple-pixel-control'
+    }
+  }
+  if (-not $sendButtonEvidence -and $SendButtonXRatio -gt 0 -and $SendButtonYRatio -gt 0) {
+    $sendRect = New-Object AepUiWindow+RECT
+    if (-not [AepUiWindow]::GetWindowRect($window.Hwnd, [ref]$sendRect)) { throw 'WINDOW_RECT_UNAVAILABLE: send button' }
+    $sendX = [int]($sendRect.Left + (($sendRect.Right - $sendRect.Left) * $SendButtonXRatio))
+    $sendY = [int]($sendRect.Top + (($sendRect.Bottom - $sendRect.Top) * $SendButtonYRatio))
+    Invoke-AepClick -X $sendX -Y $sendY
+    $sendButtonMethod = 'profile-ratio'
+  } elseif (-not $sendButtonEvidence) {
+    [System.Windows.Forms.SendKeys]::SendWait($SendKey)
+  }
   $deadline = [DateTime]::UtcNow.AddSeconds($ReadBackTimeoutSeconds)
   $visible = $false
   $polls = 0
@@ -652,16 +798,46 @@ if ($Mode -eq 'compose') {
     [IO.File]::WriteAllText($OutFile, $body, [System.Text.UTF8Encoding]::new($false))
   }
 
+  # OCR can see the pasted event before the click as well as after it.  A
+  # transcript hit alone therefore does not prove that the send control was
+  # activated.  Require the composer placeholder to reappear, or at least
+  # prove that the event is not in the lower composer band.  This prevents the
+  # old false-positive "message-visible" result when a geometry click missed.
+  $composerCleared = $false
+  $eventInComposer = $false
+  $verifyScan = Get-WindowOcrText -Hwnd $window.Hwnd
+  if ($ComposerHint -and @($verifyScan.Lines | Where-Object {
+        $_.Text -and $_.Text.Contains($ComposerHint)
+      }).Count -gt 0) {
+    $composerCleared = $true
+  }
+  $verifyRect = New-Object AepUiWindow+RECT
+  if ([AepUiWindow]::GetWindowRect($window.Hwnd, [ref]$verifyRect)) {
+    $verifyHeight = $verifyRect.Bottom - $verifyRect.Top
+    $lowerBand = [int]($verifyHeight * 0.72)
+    foreach ($line in @($verifyScan.Lines)) {
+      if ($line.Text -and $line.Text.Contains($EventId) -and [int]$line.Y -ge $lowerBand) {
+        $eventInComposer = $true
+        break
+      }
+    }
+  }
+  $delivered = [bool]($visible -and $composerCleared -and -not $eventInComposer)
+
   Write-Report @{
-    status            = $(if ($RequireComposerHint) { 'submitted-unconfirmed' } elseif ($visible) { 'message-visible' } else { 'submitted-unconfirmed' })
+    status            = $(if ($RequireComposerHint) { 'submitted-unconfirmed' } elseif ($delivered) { 'message-visible' } else { 'submitted-unconfirmed' })
     pid               = $window.Pid
     title             = $window.Title
     path              = $window.Path
     click             = @{ x = $clickX; y = $clickY; confidence = $confidence; hint = $(if ($hit) { $hintUsed } else { '' }) }
     composer_verified = $inComposer
+    composer_cleared  = $composerCleared
+    event_in_composer = $eventInComposer
     readback_polls    = $polls
     capture_path      = $(if ($OutFile -and $body) { [IO.Path]::GetFullPath($OutFile) } else { '' })
-    task_delivered    = $(if ($RequireComposerHint) { $false } else { $visible })
+    send_button_method = $sendButtonMethod
+    send_button_evidence = $sendButtonEvidence
+    task_delivered    = $(if ($RequireComposerHint) { $false } else { $delivered })
     method            = 'uia-compose'
   }
   return
@@ -675,7 +851,7 @@ if (-not $EventId -or -not $Text.Trim()) { throw 'DELIVER_PAYLOAD_MISSING: deliv
 if (-not $Text.Contains($EventId)) { throw 'EVENT_ID_NOT_IN_TEXT: the message must carry its own event id so read-back can be verified' }
 
 $ActivationEvidence.show_window = [AepUiWindow]::ShowWindowAsync($window.Hwnd, 9)
-$ActivationEvidence.foreground = [AepUiWindow]::SetForegroundWindow($window.Hwnd)
+$ActivationEvidence.foreground = Set-AepForegroundWindow -Hwnd $window.Hwnd -ShowMode 9
 $ActivationEvidence.window_alive = [AepUiWindow]::IsWindow($window.Hwnd)
 if (-not $ActivationEvidence.foreground) {
   throw 'WINDOW_FOCUS_DENIED: Windows rejected foreground activation; nothing was typed'

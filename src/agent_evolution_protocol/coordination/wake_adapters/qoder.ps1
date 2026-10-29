@@ -18,7 +18,7 @@ if ($padFlowId -and -not ($allowNewSession -or $policy -eq 'allow')) {
   & $pad -WakeFile $WakeFile -Agent qoder -WorkflowId $padFlowId
   return
 }
-if (-not (Test-Path -LiteralPath $exe)) {
+if ($allowNewSession -and -not (Test-Path -LiteralPath $exe)) {
   throw "Qoder executable not found: $exe"
 }
 if ($allowNewSession -or $policy -eq 'allow') {
@@ -29,7 +29,11 @@ if ($allowNewSession -or $policy -eq 'allow') {
   $probe = Join-Path $PSScriptRoot 'existing_window.ps1'
   # Qoder runs elevated, so Process.Path is often unreadable. Match on process
   # name plus window title and record that the executable path was not verified.
-  $windowEvidence = & $probe -Agent qoder -ProcessName Qoder -ExpectedPath $exe -ExpectedTitle Qoder -AllowUnknownPath | ConvertFrom-Json
+  # Versioned Qoder installations move their executable.  For an existing,
+  # sticky session the unique process-name/title pair is sufficient to focus;
+  # path equality remains required whenever a fresh launch was authorised.
+  $allowAnyPath = -not (Test-Path -LiteralPath $exe)
+  $windowEvidence = & $probe -Agent qoder -ProcessName Qoder -ExpectedPath $exe -ExpectedTitle Qoder -AllowUnknownPath -AllowAnyPath:$allowAnyPath | ConvertFrom-Json
   $method = 'existing-window-focus'
 
   $uia = Join-Path $PSScriptRoot 'uia_session.ps1'

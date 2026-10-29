@@ -1,0 +1,53 @@
+{
+  "agent": "qoder_cn",
+  "display_name": "Qoder CN",
+  "client": {
+    "kind": "desktop",
+    "session_id": "",
+    "process": "Qoder",
+    "window_title": "Qoder CN"
+  },
+  "workspace_id": "",
+  "servers": [
+    {
+      "name": "aep",
+      "command": "python",
+      "args": ["-m", "agent_evolution_protocol.mcp_server"],
+      "provider": "aep-federation",
+      "capabilities": ["locate_session", "wake", "dispatch", "readback", "filesystem"]
+    },
+    {
+      "name": "windows",
+      "command": "dotnet",
+      "args": ["C:/path/to/Sbroenne.WindowsMcp.exe"],
+      "provider": "sbroenne/mcp-windows",
+      "capabilities": ["locate_session", "wake", "dispatch", "readback", "screenshot"]
+    },
+    {
+      "name": "rea",
+      "command": "rea",
+      "args": [],
+      "provider": "morluto/rea",
+      "capabilities": ["rea"]
+    }
+  ],
+  "capabilities": ["locate_session", "wake", "dispatch", "readback", "rea"],
+  "locator": {
+    "transports": ["native_api", "desktop_mcp", "uia", "cdp", "mailbox"],
+    "window_titles": ["Qoder CN", "Qoder"],
+    "session_id": ""
+  },
+  "launch": {
+    "executable": "",
+    "args": []
+  },
+  "fallbacks": ["native_api", "aep_mcp", "desktop_mcp", "uia", "cdp", "mailbox"],
+  "priority": 10,
+  "metadata": {
+    "replace_with_local_paths": true,
+    "rea_is_evidence_tool": true
+  },
+  "acceptance": {
+    "required": ["window_unique", "session_bound", "message_visible", "agent_ack", "readback_evidence"]
+  }
+}

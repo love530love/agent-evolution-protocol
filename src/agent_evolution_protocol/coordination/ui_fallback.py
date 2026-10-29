@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import sys
 from typing import Protocol
 from uuid import uuid4
 
@@ -27,6 +28,9 @@ EVENT = re.compile(r"^[A-Za-z0-9_-]{4,96}$")
 BASE = Path(__file__).resolve().parent
 UIA = BASE / "wake_adapters" / "uia_session.ps1"
 SELECT_SESSION = BASE / "wake_adapters" / "uia_select_session.ps1"
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 
 class RelayError(RuntimeError):
@@ -86,14 +90,28 @@ class PowerShellUiaDriver:
         if not self.pwsh:
             raise RelayError("PowerShell 7 (pwsh.exe) is required")
 
-    def _run(self, script: Path, args: list[str], timeout: int = 45) -> dict:
+    @staticmethod
+    def _ui_env(profile: dict) -> dict[str, str]:
+        """Pass opt-in visual recovery flags without changing the host shell."""
+        env = os.environ.copy()
+        if profile.get("scroll_composer"):
+            env["AEP_SCROLL_COMPOSER"] = "1"
+        if profile.get("maximize_window"):
+            env["AEP_MAXIMIZE_WINDOW"] = "1"
+        if profile.get("send_button_color") == "purple":
+            env["AEP_SEND_BUTTON_COLOR"] = "1"
+        return env
+
+    def _run(self, script: Path, args: list[str], timeout: int = 45,
+             env: dict[str, str] | None = None) -> dict:
         completed = subprocess.run([self.pwsh, "-NoProfile", "-ExecutionPolicy", "Bypass",
-                                    "-File", str(script), *args], text=True, capture_output=True,
-                                   timeout=timeout, check=False)
+                                    "-File", str(script), *args], text=True, encoding="utf-8",
+                                   errors="replace", capture_output=True, timeout=timeout,
+                                   check=False, env=env)
         if completed.returncode != 0:
             detail = (completed.stderr or completed.stdout)[-1200:]
             raise RelayError(f"UI_SCRIPT_FAILED:{detail}")
-        for line in reversed(completed.stdout.splitlines()):
+        for line in reversed((completed.stdout or "").splitlines()):
             try:
                 value = json.loads(line)
             except json.JSONDecodeError:
@@ -130,7 +148,8 @@ class PowerShellUiaDriver:
         with tempfile.TemporaryDirectory(prefix="aep-ui-capture-") as folder:
             out = Path(folder) / "conversation.txt"
             self._run(UIA, self._target(profile) + ["-Mode", "capture", "-OcrVerify",
-                                                    "-OutFile", str(out)], timeout=75)
+                                                    "-OutFile", str(out)], timeout=75,
+                      env=self._ui_env(profile))
             return out.read_text(encoding="utf-8")
 
     def select_session(self, profile: dict) -> dict:
@@ -149,9 +168,12 @@ class PowerShellUiaDriver:
     def deliver(self, profile: dict, message: str, event_id: str) -> dict:
         args = self._target(profile) + ["-Mode", "compose" if profile["transport"] == "ocr" else "deliver",
                 "-Text", message, "-EventId", event_id, "-ReadBackTimeoutSeconds", "5"]
-        if profile["transport"] == "ocr":
+        if profile["transport"] == "ocr" and profile.get("strict_composer_hint", False):
             args += ["-RequireComposerHint", "-ComposerHint", profile["composer_hint"]]
-        return self._run(UIA, args, timeout=75)
+        if profile.get("send_button_x_ratio") and profile.get("send_button_y_ratio"):
+            args += ["-SendButtonXRatio", str(profile["send_button_x_ratio"]),
+                     "-SendButtonYRatio", str(profile["send_button_y_ratio"])]
+        return self._run(UIA, args, timeout=75, env=self._ui_env(profile))
 
 
 @contextmanager

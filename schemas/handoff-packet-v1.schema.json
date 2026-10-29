@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-evolution-protocol.local/schemas/handoff-packet-v1.schema.json",
+  "title": "AEP Handoff Packet v1",
+  "type": "object",
+  "required": ["schema", "event_id", "workspace_id", "from_agent", "to_agent", "snapshot_ref", "next_action", "evidence"],
+  "properties": {
+    "schema": {"const": "aep-handoff-packet-v1"},
+    "event_id": {"type": "string", "minLength": 8},
+    "workspace_id": {"type": "string", "minLength": 8},
+    "from_agent": {"type": "string", "minLength": 1},
+    "to_agent": {"type": "string", "minLength": 1},
+    "snapshot_ref": {"type": "string", "minLength": 1},
+    "next_action": {"type": "string", "minLength": 1},
+    "evidence": {"type": "array", "items": {"type": "string"}},
+    "reply_due_at": {"type": ["string", "null"], "format": "date-time"}
+  },
+  "additionalProperties": true
+}

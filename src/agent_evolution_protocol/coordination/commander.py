@@ -33,6 +33,7 @@ from agent_evolution_protocol.coordination import desktop_health
 from agent_evolution_protocol.coordination import overlay_audit
 from agent_evolution_protocol.coordination.overlay_detector import classify
 from agent_evolution_protocol.coordination.provider_readback import receipt as make_readback, accepted as readback_accepted
+from agent_evolution_protocol.coordination.workspace_identity import validate_workspace_id
 
 SAFE_AGENT = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 ACK_TOKEN = "AEP-ACK"
@@ -96,7 +97,8 @@ def now() -> str:
 def submit_order(root: Path, *, target: str, task: str, text: str, sender: str,
                  priority: str = "normal", event_id: str = "", allow_launch: bool = False,
                  transport: str = "auto", expires_minutes: int = 120,
-                 candidates: str = "", source_wake: dict | None = None) -> dict:
+                 candidates: str = "", source_wake: dict | None = None,
+                 workspace_id: str = "") -> dict:
     """Queue a directive for one client. Nothing is sent until a tick runs.
 
     ``candidates`` is a comma/space separated list of backup agents. When the
@@ -111,6 +113,8 @@ def submit_order(root: Path, *, target: str, task: str, text: str, sender: str,
         raise ValueError("text is required")
     if source_wake is not None and not isinstance(source_wake, dict):
         raise ValueError("source_wake must be an object")
+    if workspace_id:
+        validate_workspace_id(workspace_id)
     order_id = now().replace(":", "").replace(".", "") + "-" + uuid4().hex[:8]
     event = event_id or ("EVT-" + uuid4().hex[:10].upper())
     body = text if ACK_TOKEN in text else f"{text.rstrip()}\n\n[{ACK_TOKEN}:{event}]"
@@ -128,6 +132,8 @@ def submit_order(root: Path, *, target: str, task: str, text: str, sender: str,
         # Persist provenance with the first order write, not in a second update
         # that could be lost if the wake ingress crashes between writes.
         payload["source_wake"] = deepcopy(source_wake)
+    if workspace_id:
+        payload["workspace_id"] = workspace_id
     _atomic(_root(root) / "inbox" / f"{order_id}.json", payload)
     return payload
 

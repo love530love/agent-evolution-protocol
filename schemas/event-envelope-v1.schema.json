@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-evolution-protocol.local/schemas/event-envelope-v1.schema.json",
+  "title": "AEP Event Envelope v1",
+  "type": "object",
+  "required": ["schema", "event_id", "workspace_id", "kind", "at", "actor", "payload"],
+  "properties": {
+    "schema": {"const": "aep-event-envelope-v1"},
+    "event_id": {"type": "string", "minLength": 8},
+    "workspace_id": {"type": "string", "minLength": 8},
+    "kind": {"type": "string", "minLength": 1},
+    "at": {"type": "string", "format": "date-time"},
+    "actor": {"type": "string", "minLength": 1},
+    "parent_event_id": {"type": ["string", "null"]},
+    "payload": {"type": "object"}
+  },
+  "additionalProperties": true
+}

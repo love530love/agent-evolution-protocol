@@ -34,4 +34,6 @@ python -m agent_evolution_protocol.coordination.team_dispatch ack --root 'K:\Pyt
 
 拒绝则将 `ack` 换成 `decline` 并写明原因。回复会写回发起者信箱及共享日志；如果发起者有适配器，也会被尝试唤醒。归队、已读与任务 ACK 分开记录。默认禁止新建会话，也不允许转发请求自动上传、覆盖文件或获取超出原任务的权限。中继最多一跳，不能循环转派。
 
+如果目标 Agent 能做分析但只具备文件/终端能力，优先使用[可验证接单闭环](EVIDENCE_BACKED_AGENT_HANDOFF.zh-CN.md)：它会把实际分析正文、摘要与 SHA-256 绑定到 ACK，避免只有一句“已收到”的空回执。
+
 本地所有 Agent 共享同一操作系统账户和工作区，在线信号及会话 ID 是**协作一致性校验，不是抵御恶意本地 Agent 的密码学身份认证**。要跨不互信主体使用，需另加每客户端独立凭证或 OS 权限隔离。

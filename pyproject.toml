@@ -19,6 +19,7 @@ classifiers = [
 [project.scripts]
 agent-evolution = "agent_evolution_protocol.cli:main"
 aep = "agent_evolution_protocol.cli:main"
+aep-mcp-server = "agent_evolution_protocol.mcp_server:main"
 
 [project.optional-dependencies]
 desktop = ["mcp==1.30.0; python_version >= '3.10'"]

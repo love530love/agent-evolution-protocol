@@ -10,6 +10,7 @@ build/
 
 src/agent_evolution_protocol/coordination/realtime/token.txt
 src/agent_evolution_protocol/coordination/realtime/*.txt
+src/agent_evolution_protocol/coordination/realtime/*.log
 
 src/agent_evolution_protocol/coordination/sessions/
 src/agent_evolution_protocol/coordination/wake_done/
@@ -39,3 +40,14 @@ src/agent_evolution_protocol/coordination/pad_receipts/
 /coordination/
 src/agent_evolution_protocol/coordination/messages/
 .models/
+
+# Runtime state produced by local Agent/desktop acceptance. Keep it local;
+# source schemas, adapters, tests and docs remain versioned.
+/.workbuddy/
+/.workbuddy-ai/
+/battle_events/
+/clients/
+/commander/
+/transcript_bus/
+/tmp-mission-test/
+/desktop_health.json

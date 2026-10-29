@@ -28,6 +28,9 @@
 - [会话亲和机制](docs/coordination/MULTI_AGENT_SESSION_AFFINITY.md)
 - [反平庸/反坍缩协议](docs/coordination/MULTI_AGENT_ANTI_COLLAPSE_PROTOCOL.md)
 - [红皇后—鲶鱼—创造性破坏复盘](docs/coordination/RED_QUEEN_CATFISH_CREATIVE_DESTRUCTION_RETROSPECTIVE_20260928.md)
+- [每 Agent MCP Bundle 与会话感知派工](docs/AGENT_MCP_BUNDLES.zh-CN.md)
+- [桌面主控、无头增强的生产架构](docs/DESKTOP_PRIMARY_HEADLESS_AUGMENTATION.zh-CN.md)
+- [桌面主控、无头增强验收清单](docs/acceptance/DESKTOP_PRIMARY_HEADLESS_ACCEPTANCE_20261029.md)
 
 参考代码位于 `src/agent_evolution_protocol/coordination/`。设计原则是：普通消息只留言，
 不会启动模型；只有显式 wake request 才进入可审计的唤醒队列，并通过 adapter 触达具体桌面 Agent。
