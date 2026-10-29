@@ -30,6 +30,8 @@ from agent_evolution_protocol.coordination import transport_cdp as cdp
 from agent_evolution_protocol.coordination import ui_fallback
 from agent_evolution_protocol.coordination import desktop_providers
 from agent_evolution_protocol.coordination import desktop_health
+from agent_evolution_protocol.coordination import overlay_audit
+from agent_evolution_protocol.coordination.overlay_detector import classify
 from agent_evolution_protocol.coordination.provider_readback import receipt as make_readback, accepted as readback_accepted
 
 SAFE_AGENT = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
@@ -153,6 +155,22 @@ def _record_attempt(root: Path, order: dict, *, state: str, transport: str = "",
             pass
     attempt = {"at": now(), "state": state, "transport": transport,
                "receipt": receipt or {}, "note": note}
+    raw = receipt or {}
+    # Adapters may provide a normalized overlay observation. Persist it in a
+    # separate append-only stream without making audit failure affect delivery.
+    if raw.get("overlay_type") or raw.get("overlay_title"):
+        try:
+            observed = classify(control_type=str(raw.get("overlay_type", "")),
+                                title=str(raw.get("overlay_title", "")),
+                                text=str(raw.get("overlay_text", "")),
+                                actions=raw.get("overlay_actions", []),
+                                source=str(raw.get("overlay_source", transport)))
+            overlay_audit.record(Path(root), observed, agent=order["target"],
+                                 action=str(raw.get("overlay_action", "")),
+                                 verified=bool(raw.get("overlay_verified", False)),
+                                 event_id=order.get("event_id", ""))
+        except (OSError, TypeError, ValueError):
+            pass
     order.setdefault("attempts", []).append(attempt)
     order["state"] = state
     order["updated_at"] = now()
