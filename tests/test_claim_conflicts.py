@@ -200,5 +200,100 @@ class RemediationTests(unittest.TestCase):
         self.assertEqual(plan["status"], "CLEAN")
 
 
+class LeaseTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_legacy_claim_expires_after_ttl(self):
+        write_claim(self.root, "T-OLD", "alpha", ["src/pkg"], at="2026-10-27T00:00:00+00:00")
+        report = cc.analyze(self.root, now="2026-10-30T12:00:00+00:00", ttl_hours=48)
+        expired = [row for row in report["conflicts"] if row["kind"] == "expired_claim"]
+        self.assertEqual(len(expired), 1)
+        self.assertEqual(expired[0]["severity"], "warning")
+        self.assertEqual(report["expired_claims"], ["T-OLD"])
+        self.assertEqual(report["status"], "CLEAN")
+
+    def test_expired_claim_no_longer_blocks_a_new_task(self):
+        write_claim(self.root, "T-OLD", "alpha", ["src"], at="2026-10-27T00:00:00+00:00")
+        result = cc.gate(self.root, agent="beta", task="T-NEW", paths=["src/pkg/mod.py"],
+                         now="2026-10-30T12:00:00+00:00", ttl_hours=48)
+        self.assertEqual(result["status"], "ALLOWED")
+        self.assertEqual([row["task"] for row in result["ignored_expired"]], ["T-OLD"])
+
+    def test_live_claim_still_blocks(self):
+        write_claim(self.root, "T-OLD", "alpha", ["src"], at="2026-10-30T09:00:00+00:00")
+        result = cc.gate(self.root, agent="beta", task="T-NEW", paths=["src/pkg/mod.py"],
+                         now="2026-10-30T12:00:00+00:00", ttl_hours=48)
+        self.assertEqual(result["status"], "BLOCKED")
+        self.assertEqual(result["ignored_expired"], [])
+
+    def test_declared_expiry_overrides_assumed(self):
+        folder = self.root / "claims" / "T-OLD"
+        folder.mkdir(parents=True)
+        (folder / "owner.json").write_text(json.dumps({
+            "task": "T-OLD", "agent": "alpha", "at": "2026-10-01T00:00:00+00:00",
+            "expires_at": "2026-12-01T00:00:00+00:00", "paths": ["src"]}), encoding="utf-8")
+        result = cc.gate(self.root, agent="beta", task="T-NEW", paths=["src/a.py"],
+                         now="2026-10-30T12:00:00+00:00", ttl_hours=48)
+        self.assertEqual(result["status"], "BLOCKED")
+
+    def test_claim_stamps_an_expiry(self):
+        result = cc.claim(self.root, agent="beta", task="T-NEW", paths=["./src//pkg/mod.py"],
+                          ttl_hours=6, now="2026-10-30T12:00:00+00:00")
+        self.assertTrue(result["claimed"])
+        self.assertEqual(result["paths"], ["src/pkg/mod.py"])
+        owner = json.loads((self.root / "claims" / "T-NEW" / "owner.json").read_text(encoding="utf-8"))
+        self.assertEqual(owner["expires_at"], "2026-10-30T18:00:00+00:00")
+        self.assertEqual(owner["gate"]["status"], "ALLOWED")
+
+    def test_claim_refuses_a_live_conflict_and_creates_nothing(self):
+        write_claim(self.root, "T-OLD", "alpha", ["src/pkg"], at="2026-10-30T09:00:00+00:00")
+        result = cc.claim(self.root, agent="beta", task="T-NEW", paths=["src/pkg/mod.py"],
+                          now="2026-10-30T12:00:00+00:00")
+        self.assertFalse(result["claimed"])
+        self.assertEqual(result["reason"], "scope_conflict")
+        self.assertFalse((self.root / "claims" / "T-NEW").exists())
+
+    def test_claim_refuses_an_existing_task_id(self):
+        write_claim(self.root, "T-DUP", "alpha", ["src/a"], at="2026-10-30T09:00:00+00:00")
+        result = cc.claim(self.root, agent="beta", task="T-DUP", paths=["src/b"],
+                          now="2026-10-30T12:00:00+00:00")
+        self.assertFalse(result["claimed"])
+        self.assertEqual(result["reason"], "task_already_claimed")
+        self.assertEqual(result["owner"]["agent"], "alpha")
+
+    def test_claim_validates_ids_and_scope(self):
+        with self.assertRaises(ValueError):
+            cc.claim(self.root, agent="bad agent", task="T", paths=["a"])
+        with self.assertRaises(ValueError):
+            cc.claim(self.root, agent="beta", task="T", paths=[])
+        with self.assertRaises(ValueError):
+            cc.claim(self.root, agent="beta", task="T", paths=["../escape"])
+
+    def test_renew_requires_owner_and_extends(self):
+        cc.claim(self.root, agent="beta", task="T-NEW", paths=["src/a"],
+                 ttl_hours=2, now="2026-10-30T12:00:00+00:00")
+        with self.assertRaises(ValueError):
+            cc.renew(self.root, agent="alpha", task="T-NEW", ttl_hours=2,
+                     now="2026-10-30T13:00:00+00:00")
+        result = cc.renew(self.root, agent="beta", task="T-NEW", ttl_hours=2,
+                          now="2026-10-30T13:00:00+00:00")
+        self.assertEqual(result["expires_at"], "2026-10-30T15:00:00+00:00")
+
+    def test_renew_missing_claim_raises(self):
+        with self.assertRaises(ValueError):
+            cc.renew(self.root, agent="beta", task="T-NONE", ttl_hours=2)
+
+    def test_expired_claim_is_flagged_in_remediation(self):
+        write_claim(self.root, "T-OLD", "alpha", ["src"], at="2026-10-27T00:00:00+00:00")
+        plan = cc.remediation(self.root, now="2026-10-30T12:00:00+00:00", ttl_hours=48)
+        actions = [row["action"] for row in plan["actions"] if row["task"] == "T-OLD"]
+        self.assertIn("release_or_renew_expired_claim", actions)
+
+
 if __name__ == "__main__":
     unittest.main()
