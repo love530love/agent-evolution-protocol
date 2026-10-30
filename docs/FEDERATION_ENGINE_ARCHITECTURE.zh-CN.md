@@ -45,7 +45,7 @@
 | 文件 | 职责 | 关键约束 |
 | --- | --- | --- |
 | `federation/store.py` | 原子写、事件链 | `os.replace` 原子落盘；`seq` 连续、`prev_sha256` 链接、内容哈希；篡改可检出 |
-| `federation/snapshot.py` | 三区快照 | anchor 只读（改动即 `ANCHOR_MUTATED`）；快照自哈希；版本可回溯 |
+| `federation/snapshot.py` | 三区快照 | `anchored_request` 只读（改动即 `ANCHOR_MUTATED`）；快照自哈希；版本可回溯 |
 | `federation/handoff.py` | 接管包 | 只引用 `snapshot_digest`；目标 Agent 必须自称并持能力；重定向即 `HANDOFF_DIGEST_MISMATCH` |
 | `federation/diagnosis.py` | 故障分类 | 10 类信号 → (层, 类别, 动作)；未知即 escalate；retry 有预算 |
 | `federation/evolution.py` | 策略库 | proposed/promoted/retired；晋升是证据的纯函数；只追加历史 |
