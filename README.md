@@ -137,6 +137,7 @@ multi-agent coordination:
 - [optional OCTO real-time integration](docs/coordination/OCTO_INTEGRATION.md)
 - [REA evidence capability for the agent team](docs/coordination/REA_CAPABILITY.md)
 - [Per-Agent MCP bundles and session-aware dispatch](docs/AGENT_MCP_BUNDLES.zh-CN.md)
+- [Third-party execution ecosystem and acceptance gates](docs/THIRD_PARTY_EXECUTION_ECOSYSTEM.zh-CN.md)
 - [Desktop-primary / headless-augmentation production architecture](docs/DESKTOP_PRIMARY_HEADLESS_AUGMENTATION.zh-CN.md)
 - [Desktop-primary / headless-augmentation acceptance checklist](docs/acceptance/DESKTOP_PRIMARY_HEADLESS_ACCEPTANCE_20261029.md)
 - [session affinity](docs/coordination/MULTI_AGENT_SESSION_AFFINITY.md)
@@ -162,6 +163,8 @@ The `aep` command is an alias for `agent-evolution` and exposes both planes:
 - governance plane: `init`, `commit`, `reveal`, `challenge`, `threat`, `decide`, `audit`;
 - coordination plane: `doctor`, `workspace-init`, `inspect`, `route`, `join`, `coord-status`, `coord-digest`, `coord-send`, `coord-wake`, `coord-wake-status`, `coord-archive-stale`, `coord-session-set`, `coord-claim`, `coord-release`, `coord-task-state`, `coord-onboarding`, `coord-guided-retry`;
 - recovery kernel: `kernel-status`, `kernel-lease-acquire`, `kernel-lease-release`, `kernel-op-reserve`, `kernel-op-transition`, `kernel-session-bind`, `kernel-continuation-plan`, `kernel-checkpoint`.
+
+Optional execution providers are cataloged read-only with `aep coord-provider-catalog`; cataloging never installs or trusts a provider. Promote a row only after probe, session binding and task acceptance.
 
 The coordination CLI is local-file based and does not call models. It is meant
 to make onboarding deterministic: a new agent reads the current digest and

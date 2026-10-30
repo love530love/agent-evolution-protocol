@@ -32,6 +32,7 @@ from agent_evolution_protocol.coordination import governance
 from agent_evolution_protocol.coordination import reasoning_contract
 from agent_evolution_protocol.coordination import desktop_providers
 from agent_evolution_protocol.coordination import agent_mcp_registry
+from agent_evolution_protocol.coordination import execution_provider_catalog
 from agent_evolution_protocol.coordination import desktop_runner
 from agent_evolution_protocol.coordination import desktop_ipc
 from agent_evolution_protocol.coordination import improvement
@@ -937,6 +938,21 @@ def coord_agent_mcp(args: argparse.Namespace) -> None:
     print(json.dumps(result, ensure_ascii=False, indent=2))
     if args.action == "plan" and result.get("status") not in {"READY_TO_DISPATCH", "SESSION_BINDING_REQUIRED"}:
         raise SystemExit(2)
+
+
+def coord_provider_catalog(args: argparse.Namespace) -> None:
+    """List optional execution providers without installing or probing them."""
+    try:
+        rows = execution_provider_catalog.inventory(args.catalog, layer=args.layer or "", status=args.status or "")
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise ProtocolError(str(exc)) from exc
+    print(json.dumps({
+        "providers": rows,
+        "count": len(rows),
+        "read_only": True,
+        "execution_started": False,
+        "next": "register a capability bundle, probe in isolation, then pass session and task acceptance",
+    }, ensure_ascii=False, indent=2))
 
 
 def coord_desktop_runner(args: argparse.Namespace) -> None:
@@ -2628,6 +2644,7 @@ def build_parser() -> argparse.ArgumentParser:
     reasoning = commands.add_parser("coord-reasoning"); reasoning.add_argument("action", choices=("create", "status")); reasoning.add_argument("--request-file", type=Path); reasoning.add_argument("--task"); reasoning.set_defaults(func=coord_reasoning)
     desktop = commands.add_parser("coord-desktop"); desktop.add_argument("action", choices=("register", "inventory", "probe", "plan", "export-config")); desktop.add_argument("--profile-file", type=Path); desktop.add_argument("--provider"); desktop.add_argument("--operation", choices=sorted(desktop_providers.OPERATIONS)); desktop.add_argument("--previous-state", default="NOT_STARTED"); desktop.add_argument("--timeout", type=int, default=30); desktop.add_argument("--details", action="store_true"); desktop.set_defaults(func=coord_desktop)
     agent_mcp = commands.add_parser("coord-agent-mcp"); agent_mcp.add_argument("action", choices=("register", "inventory", "render-config", "plan")); agent_mcp.add_argument("--profile-file", type=Path); agent_mcp.add_argument("--agent"); agent_mcp.add_argument("--workspace-id"); agent_mcp.add_argument("--operation", choices=sorted(agent_mcp_registry.OPERATIONS)); agent_mcp.add_argument("--session-id"); agent_mcp.add_argument("--no-replace", action="store_true"); agent_mcp.set_defaults(func=coord_agent_mcp)
+    provider_catalog = commands.add_parser("coord-provider-catalog", help="list optional third-party execution providers (read-only)"); provider_catalog.add_argument("--catalog", type=Path); provider_catalog.add_argument("--layer"); provider_catalog.add_argument("--status", choices=sorted(execution_provider_catalog.STATUSES)); provider_catalog.set_defaults(func=coord_provider_catalog)
     desktop_runner_cmd = commands.add_parser("coord-desktop-runner"); desktop_runner_cmd.add_argument("action", choices=("launch", "wait", "ensure")); desktop_runner_cmd.add_argument("--agent", required=True); desktop_runner_cmd.add_argument("--apply", action="store_true"); desktop_runner_cmd.add_argument("--allow-launch", action="store_true"); desktop_runner_cmd.add_argument("--debug-port", type=int, default=0); desktop_runner_cmd.add_argument("--extra-args", nargs="*", default=[]); desktop_runner_cmd.add_argument("--timeout", type=float, default=30.0); desktop_runner_cmd.add_argument("--poll-interval", type=float, default=0.25); desktop_runner_cmd.set_defaults(func=coord_desktop_runner)
     desktop_ipc_cmd = commands.add_parser("coord-desktop-ipc"); desktop_ipc_cmd.add_argument("action", choices=("publish", "state", "read", "ack", "recover")); desktop_ipc_cmd.add_argument("--workspace-id", required=True); desktop_ipc_cmd.add_argument("--agent", required=True); desktop_ipc_cmd.add_argument("--session-id"); desktop_ipc_cmd.add_argument("--event-id"); desktop_ipc_cmd.add_argument("--kind", choices=sorted(desktop_ipc.EVENT_KIND), default="runner_command"); desktop_ipc_cmd.add_argument("--status", choices=sorted(desktop_ipc.STATUS)); desktop_ipc_cmd.add_argument("--reason"); desktop_ipc_cmd.add_argument("--payload-json"); desktop_ipc_cmd.add_argument("--evidence-json"); desktop_ipc_cmd.add_argument("--limit", type=int, default=100); desktop_ipc_cmd.set_defaults(func=coord_desktop_ipc)
     capability_plan = commands.add_parser("coord-capability-plan"); capability_plan.add_argument("--intent", required=True); capability_plan.add_argument("--operation", choices=sorted(capability_bridge.OPERATIONS), required=True); capability_plan.add_argument("--manifest", type=Path); capability_plan.add_argument("--allow-high-risk", action="store_true"); capability_plan.set_defaults(func=coord_capability_plan)

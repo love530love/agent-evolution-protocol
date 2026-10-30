@@ -1,0 +1,151 @@
+{
+  "schema": "aep-execution-provider-catalog-v1",
+  "purpose": "optional third-party execution providers; catalog entries are not installed or trusted automatically",
+  "providers": [
+    {
+      "id": "browser_use",
+      "repository": "https://github.com/browser-use/browser-use",
+      "layer": "browser",
+      "integration": "skill+connector",
+      "runtime": ["python", "playwright"],
+      "capabilities": ["browser", "locate_session", "dispatch", "readback"],
+      "strengths": ["DOM-aware browser control", "reusable Python/CLI integration"],
+      "limitations": ["browser scope only", "requires an anchored browser profile"],
+      "acceptance": ["same-tab target", "event id in page/session readback", "independent result evidence"],
+      "status": "candidate"
+    },
+    {
+      "id": "skyvern",
+      "repository": "https://github.com/Skyvern-AI/skyvern",
+      "layer": "browser",
+      "integration": "connector",
+      "runtime": ["python", "browser"],
+      "capabilities": ["browser", "readback", "screenshot"],
+      "strengths": ["long browser workflows", "persistent session concepts"],
+      "limitations": ["needs provider/session verification", "enterprise features vary by deployment"],
+      "acceptance": ["session pool identity", "form side effect receipt", "checkpoint recovery"],
+      "status": "candidate"
+    },
+    {
+      "id": "lavague",
+      "repository": "https://github.com/lavague-ai/LaVague",
+      "layer": "browser",
+      "integration": "skill+connector",
+      "runtime": ["python", "selenium", "playwright"],
+      "capabilities": ["browser", "readback"],
+      "strengths": ["world-model/action-engine separation", "spec-to-test workflows"],
+      "limitations": ["generated actions still require AEP evidence gates"],
+      "acceptance": ["action trace", "same-session replay", "negative-path test"],
+      "status": "candidate"
+    },
+    {
+      "id": "ui_tars_desktop",
+      "repository": "https://github.com/bytedance/UI-TARS-desktop",
+      "layer": "desktop_visual",
+      "integration": "app+connector",
+      "runtime": ["desktop", "browser", "vision-model"],
+      "capabilities": ["launch_program", "locate_session", "wake", "dispatch", "readback", "screenshot"],
+      "strengths": ["visual desktop actions", "multi-surface workflow"],
+      "limitations": ["vision actions need action receipt and rate limits", "model/runtime availability varies"],
+      "acceptance": ["window anchor", "action trace", "post-action screenshot", "same-event readback"],
+      "status": "candidate"
+    },
+    {
+      "id": "ufo2",
+      "repository": "https://github.com/microsoft/UFO",
+      "layer": "desktop_windows",
+      "integration": "app+connector",
+      "runtime": ["windows", "python", "vision-model"],
+      "capabilities": ["launch_program", "locate_session", "dispatch", "readback", "screenshot"],
+      "strengths": ["Windows-focused desktop planning", "multi-agent GUI decomposition"],
+      "limitations": ["Windows session and model prerequisites"],
+      "acceptance": ["interactive session anchor", "foreground/action evidence", "recovery checkpoint"],
+      "status": "candidate"
+    },
+    {
+      "id": "agent_s2",
+      "repository": "https://github.com/simular-ai/Agent-S",
+      "layer": "desktop_visual",
+      "integration": "connector",
+      "runtime": ["python", "vision-model"],
+      "capabilities": ["locate_session", "dispatch", "readback", "screenshot"],
+      "strengths": ["hierarchical planning", "desktop benchmark orientation"],
+      "limitations": ["benchmark success does not prove provider ACK"],
+      "acceptance": ["bounded action plan", "same-session result", "failure classification"],
+      "status": "candidate"
+    },
+    {
+      "id": "self_operating_computer",
+      "repository": "https://github.com/OthersideAI/self-operating-computer",
+      "layer": "desktop_visual",
+      "integration": "connector",
+      "runtime": ["python", "vision-model"],
+      "capabilities": ["screenshot", "dispatch", "readback"],
+      "strengths": ["simple screenshot-to-action baseline", "local model experiments"],
+      "limitations": ["coarse visual targeting", "must remain behind AEP evidence gates"],
+      "acceptance": ["action coordinate evidence", "post-action screenshot", "no blind retry"],
+      "status": "candidate"
+    },
+    {
+      "id": "open_interpreter",
+      "repository": "https://github.com/OpenInterpreter/open-interpreter",
+      "layer": "terminal_execution",
+      "integration": "skill+connector",
+      "runtime": ["python", "shell"],
+      "capabilities": ["launch_program", "filesystem", "readback", "rea"],
+      "strengths": ["terminal/file/code execution", "local model compatibility"],
+      "limitations": ["command side effects require workspace lease and evidence"],
+      "acceptance": ["command transcript", "exit code", "artifact checksum", "replayable environment"],
+      "status": "candidate"
+    },
+    {
+      "id": "openhands",
+      "repository": "https://github.com/All-Hands-AI/OpenHands",
+      "layer": "code_engineering",
+      "integration": "app+connector",
+      "runtime": ["python", "cli", "browser", "vm-or-local"],
+      "capabilities": ["filesystem", "browser", "dispatch", "readback"],
+      "strengths": ["engineering workflow", "multi-agent/team orchestration"],
+      "limitations": ["backend isolation and model credentials vary"],
+      "acceptance": ["workspace diff", "tests", "artifact manifest", "handoff checkpoint"],
+      "status": "candidate"
+    },
+    {
+      "id": "openadapt",
+      "repository": "https://github.com/OpenAdaptAI/OpenAdapt",
+      "layer": "desktop_replay",
+      "integration": "skill+connector",
+      "runtime": ["python", "desktop"],
+      "capabilities": ["screenshot", "dispatch", "readback"],
+      "strengths": ["demonstration-to-replay automation", "low-model repeat runs"],
+      "limitations": ["recording must be bound to an explicit workspace and app profile"],
+      "acceptance": ["recording provenance", "replay checksum", "exception fallback"],
+      "status": "candidate"
+    },
+    {
+      "id": "appium_mcp",
+      "repository": "https://github.com/appium/appium",
+      "layer": "mobile",
+      "integration": "mcp+connector",
+      "runtime": ["node", "android", "ios"],
+      "capabilities": ["locate_session", "dispatch", "readback", "screenshot"],
+      "strengths": ["mobile device and simulator control", "CI-friendly automation"],
+      "limitations": ["device provisioning and signing remain external prerequisites"],
+      "acceptance": ["device/session id", "app state screenshot", "test artifact and logs"],
+      "source_note": "Appium is the upstream automation engine; the MCP adapter is deployment-specific and must be registered separately.",
+      "status": "candidate"
+    },
+    {
+      "id": "rea",
+      "repository": "https://github.com/morluto/rea",
+      "layer": "reverse_engineering",
+      "integration": "mcp+connector",
+      "runtime": ["python", "cli"],
+      "capabilities": ["rea", "readback"],
+      "strengths": ["local artifact and runtime probing", "evidence-oriented reverse engineering"],
+      "limitations": ["probe results require a reproducible target and human-readable evidence"],
+      "acceptance": ["target identity", "probe transcript", "reproducible finding and artifact hash"],
+      "status": "candidate"
+    }
+  ]
+}
