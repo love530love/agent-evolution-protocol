@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-evolution-protocol.local/schemas/agent-capability-bundle-v1.schema.json",
+  "title": "AEP Agent Capability Bundle v1",
+  "type": "object",
+  "required": ["schema", "agent", "client", "servers", "skills", "connectors", "capabilities", "locator", "fallbacks", "acceptance"],
+  "properties": {
+    "schema": {"const": "aep-agent-capability-bundle-v1"},
+    "agent": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,63}$"},
+    "display_name": {"type": "string"},
+    "workspace_id": {"type": "string"},
+    "client": {"type": "object"},
+    "servers": {"type": "array", "items": {"type": "object"}},
+    "skills": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "entrypoint", "enabled", "capabilities"],
+        "properties": {
+          "name": {"type": "string"},
+          "entrypoint": {"type": "string"},
+          "version": {"type": "string"},
+          "parameters": {"type": "object"},
+          "enabled": {"type": "boolean"},
+          "capabilities": {"type": "array", "items": {"type": "string"}},
+          "notes": {"type": "string"}
+        },
+        "additionalProperties": true
+      }
+    },
+    "connectors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "kind", "transport", "enabled", "workspace_scoped", "session_scoped", "capabilities"],
+        "properties": {
+          "name": {"type": "string"},
+          "kind": {"enum": ["app", "native", "browser", "a2a", "mcp", "cli", "webhook", "clawchat"]},
+          "transport": {"enum": ["stdio", "http", "sse", "ws", "uia", "cdp", "file", "named-pipe"]},
+          "endpoint": {"type": "string"},
+          "command": {"type": "string"},
+          "args": {"type": "array", "items": {"type": "string"}},
+          "cwd": {"type": "string"},
+          "env": {"type": "object"},
+          "auth_ref": {"type": "string"},
+          "enabled": {"type": "boolean"},
+          "workspace_scoped": {"type": "boolean"},
+          "session_scoped": {"type": "boolean"},
+          "capabilities": {"type": "array", "items": {"type": "string"}}
+        },
+        "additionalProperties": true
+      }
+    },
+    "capabilities": {"type": "array", "items": {"type": "string"}},
+    "locator": {"type": "object"},
+    "launch": {"type": "object"},
+    "fallbacks": {"type": "array", "items": {"type": "string"}},
+    "priority": {"type": "integer", "minimum": 0, "maximum": 1000},
+    "acceptance": {"type": "object"},
+    "observability": {"type": "object"},
+    "metadata": {"type": "object"}
+  },
+  "additionalProperties": true
+}

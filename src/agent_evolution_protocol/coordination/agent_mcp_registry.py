@@ -27,11 +27,18 @@ CAPABILITIES = {
 OPERATIONS = {"launch", "locate", "wake", "dispatch", "readback", "browser", "rea", "mcp_probe"}
 CHANNELS = {"native_api", "aep_mcp", "desktop_mcp", "uia", "cdp", "clawchat", "mailbox"}
 PROFILE_FIELDS = {
-    "agent", "display_name", "client", "workspace_id", "servers", "capabilities",
+    "schema", "agent", "display_name", "client", "workspace_id", "servers", "capabilities",
     "locator", "launch", "fallbacks", "priority", "metadata", "acceptance",
-    "registered_at",
+    "skills", "connectors", "observability", "registered_at",
 }
 SERVER_FIELDS = {"name", "command", "args", "cwd", "env", "enabled", "provider", "capabilities"}
+SKILL_FIELDS = {"name", "entrypoint", "version", "parameters", "enabled", "capabilities", "notes"}
+CONNECTOR_FIELDS = {
+    "name", "kind", "transport", "endpoint", "command", "args", "cwd", "env",
+    "auth_ref", "enabled", "workspace_scoped", "session_scoped", "capabilities",
+}
+CONNECTOR_KINDS = {"app", "native", "browser", "a2a", "mcp", "cli", "webhook", "clawchat"}
+CONNECTOR_TRANSPORTS = {"stdio", "http", "sse", "ws", "uia", "cdp", "file", "named-pipe"}
 
 
 def _now() -> str:
@@ -81,10 +88,82 @@ def _server(server: Any) -> dict[str, Any]:
     }
 
 
+def _skill(skill: Any) -> dict[str, Any]:
+    if not isinstance(skill, dict) or set(skill) - SKILL_FIELDS:
+        raise ValueError("invalid Agent skill fields")
+    name = _valid_name(skill.get("name"), "skill.name")
+    entrypoint = skill.get("entrypoint")
+    if not isinstance(entrypoint, str) or not entrypoint.strip():
+        raise ValueError("skill.entrypoint is required")
+    parameters = skill.get("parameters", {})
+    if not isinstance(parameters, dict):
+        raise ValueError("skill.parameters must be an object")
+    capabilities = _string_list(skill.get("capabilities", []), "skill.capabilities")
+    return {
+        "name": name,
+        "entrypoint": entrypoint.strip(),
+        "version": str(skill.get("version", "")),
+        "parameters": dict(parameters),
+        "enabled": bool(skill.get("enabled", True)),
+        "capabilities": capabilities,
+        "notes": str(skill.get("notes", "")),
+    }
+
+
+def _connector(connector: Any) -> dict[str, Any]:
+    if not isinstance(connector, dict) or set(connector) - CONNECTOR_FIELDS:
+        raise ValueError("invalid Agent connector fields")
+    name = _valid_name(connector.get("name"), "connector.name")
+    kind = connector.get("kind", "app")
+    if kind not in CONNECTOR_KINDS:
+        raise ValueError("invalid connector.kind")
+    transport = connector.get("transport", "stdio")
+    if transport not in CONNECTOR_TRANSPORTS:
+        raise ValueError("invalid connector.transport")
+    endpoint = connector.get("endpoint", "")
+    command = connector.get("command", "")
+    if endpoint and not isinstance(endpoint, str):
+        raise ValueError("connector.endpoint must be a string")
+    if command and not isinstance(command, str):
+        raise ValueError("connector.command must be a string")
+    args = _string_list(connector.get("args", []), "connector.args")
+    cwd = connector.get("cwd", "")
+    if cwd and (not isinstance(cwd, str) or not Path(cwd).is_absolute()):
+        raise ValueError("connector.cwd must be an absolute path when provided")
+    env = connector.get("env", {})
+    if not isinstance(env, dict) or any(
+        not isinstance(k, str) or not k or "=" in k or "\0" in k or
+        not isinstance(v, str) or "\0" in v for k, v in env.items()
+    ):
+        raise ValueError("connector.env must be a string map")
+    capabilities = _string_list(connector.get("capabilities", []), "connector.capabilities")
+    auth_ref = connector.get("auth_ref", "")
+    if auth_ref and (not isinstance(auth_ref, str) or "=" in auth_ref):
+        raise ValueError("connector.auth_ref must name an external secret reference")
+    return {
+        "name": name,
+        "kind": kind,
+        "transport": transport,
+        "endpoint": endpoint,
+        "command": command,
+        "args": args,
+        "cwd": cwd,
+        "env": dict(env),
+        "auth_ref": auth_ref,
+        "enabled": bool(connector.get("enabled", True)),
+        "workspace_scoped": bool(connector.get("workspace_scoped", True)),
+        "session_scoped": bool(connector.get("session_scoped", False)),
+        "capabilities": capabilities,
+    }
+
+
 def validate_profile(profile: Any) -> dict[str, Any]:
     """Validate and normalize a per-Agent MCP profile without executing it."""
     if not isinstance(profile, dict) or set(profile) - PROFILE_FIELDS:
         raise ValueError("invalid Agent MCP profile fields")
+    schema = profile.get("schema", "aep-agent-capability-bundle-v1")
+    if schema != "aep-agent-capability-bundle-v1":
+        raise ValueError("invalid Agent capability bundle schema")
     agent = _valid_name(profile.get("agent"), "agent")
     client = profile.get("client", {})
     if not isinstance(client, dict):
@@ -107,6 +186,20 @@ def validate_profile(profile: Any) -> dict[str, Any]:
     names = [item["name"] for item in normalized_servers]
     if len(names) != len(set(names)):
         raise ValueError("MCP server names must be unique per Agent")
+    skills = profile.get("skills", [])
+    if not isinstance(skills, list) or len(skills) > 64:
+        raise ValueError("skills must be a list with at most 64 entries")
+    normalized_skills = [_skill(item) for item in skills]
+    skill_names = [item["name"] for item in normalized_skills]
+    if len(skill_names) != len(set(skill_names)):
+        raise ValueError("skill names must be unique per Agent")
+    connectors = profile.get("connectors", [])
+    if not isinstance(connectors, list) or len(connectors) > 64:
+        raise ValueError("connectors must be a list with at most 64 entries")
+    normalized_connectors = [_connector(item) for item in connectors]
+    connector_names = [item["name"] for item in normalized_connectors]
+    if len(connector_names) != len(set(connector_names)):
+        raise ValueError("connector names must be unique per Agent")
     capabilities = _string_list(profile.get("capabilities", []), "capabilities")
     unknown = set(capabilities) - CAPABILITIES
     if unknown:
@@ -131,11 +224,14 @@ def validate_profile(profile: Any) -> dict[str, Any]:
     if isinstance(priority, bool) or not isinstance(priority, int) or not 0 <= priority <= 1000:
         raise ValueError("priority must be an integer between 0 and 1000")
     return {
+        "schema": schema,
         "agent": agent,
         "display_name": str(profile.get("display_name", agent)),
         "client": client,
         "workspace_id": workspace_id,
         "servers": normalized_servers,
+        "skills": normalized_skills,
+        "connectors": normalized_connectors,
         "capabilities": capabilities,
         "locator": locator,
         "launch": launcher,
@@ -143,6 +239,7 @@ def validate_profile(profile: Any) -> dict[str, Any]:
         "priority": priority,
         "metadata": dict(profile.get("metadata", {})) if isinstance(profile.get("metadata", {}), dict) else {},
         "acceptance": dict(profile.get("acceptance", {})) if isinstance(profile.get("acceptance", {}), dict) else {},
+        "observability": dict(profile.get("observability", {})) if isinstance(profile.get("observability", {}), dict) else {},
     }
 
 
@@ -185,6 +282,8 @@ def inventory(root: Path) -> dict[str, Any]:
                     missing.append(server["cwd"])
             rows.append({"agent": profile["agent"], "status": "DEPENDENCY_MISSING" if missing else "REGISTERED",
                          "missing": missing, "server_count": len(profile["servers"]),
+                         "skill_count": len(profile["skills"]),
+                         "connector_count": len(profile["connectors"]),
                          "capabilities": profile["capabilities"], "fallbacks": profile["fallbacks"]})
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             rows.append({"agent": path.stem, "status": "INVALID", "error": str(exc)})
@@ -211,7 +310,10 @@ def render_config(root: Path, agent: str, workspace_id: str, *, coord_root: str 
         row["env"] = env
         servers[server["name"]] = row
     return {"agent": profile["agent"], "workspace_id": workspace_id,
-            "mcpServers": servers, "execution_started": False,
+            "mcpServers": servers,
+            "skills": profile["skills"],
+            "connectors": profile["connectors"],
+            "execution_started": False,
             "note": "Import this config into the Agent client, then bind the reported session and run an ACK acceptance."}
 
 
@@ -235,5 +337,7 @@ def plan_dispatch(root: Path, agent: str, workspace_id: str, operation: str, *, 
     return {"status": "READY_TO_DISPATCH", "agent": agent, "workspace_id": workspace_id,
             "operation": operation, "session_id": bound, "channels": channels,
             "server_candidates": [s["name"] for s in profile["servers"] if s["enabled"]],
+            "skill_candidates": [s["name"] for s in profile["skills"] if s["enabled"]],
+            "connector_candidates": [c["name"] for c in profile["connectors"] if c["enabled"]],
             "execution_started": False,
             "next": "acquire the workspace/session lease, execute one channel, read back, then require same-event ACK"}

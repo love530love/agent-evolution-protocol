@@ -31,6 +31,7 @@ from agent_evolution_protocol.coordination import ui_fallback
 from agent_evolution_protocol.coordination import desktop_providers
 from agent_evolution_protocol.coordination import desktop_health
 from agent_evolution_protocol.coordination import overlay_audit
+from agent_evolution_protocol.coordination import dispatch_contract
 from agent_evolution_protocol.coordination.overlay_detector import classify
 from agent_evolution_protocol.coordination.provider_readback import receipt as make_readback, accepted as readback_accepted
 from agent_evolution_protocol.coordination.workspace_identity import validate_workspace_id
@@ -115,16 +116,34 @@ def submit_order(root: Path, *, target: str, task: str, text: str, sender: str,
         raise ValueError("source_wake must be an object")
     if workspace_id:
         validate_workspace_id(workspace_id)
-    order_id = now().replace(":", "").replace(".", "") + "-" + uuid4().hex[:8]
+    order_id = now().replace(":", "").replace(".", "").replace("+", "") + "-" + uuid4().hex[:8]
     event = event_id or ("EVT-" + uuid4().hex[:10].upper())
     body = text if ACK_TOKEN in text else f"{text.rstrip()}\n\n[{ACK_TOKEN}:{event}]"
+    created_at = now()
+    expires_at = datetime.fromtimestamp(time.time() + expires_minutes * 60, timezone.utc).isoformat()
+    dispatch = dispatch_contract.build(
+        order_id=order_id,
+        event_id=event,
+        workspace_id=workspace_id,
+        sender=sender,
+        target=target,
+        task=task or "GENERAL",
+        instruction=body,
+        priority=priority,
+        created_at=created_at,
+        expires_at=expires_at,
+        session_mode="sticky",
+        allow_new_session=False,
+        legacy_compat=not bool(workspace_id),
+    )
     payload = {
         "id": order_id, "event_id": event, "target": target, "sender": sender,
-        "task": task, "priority": priority, "text": body, "allow_launch": allow_launch,
-        "transport": transport, "state": "DEPOSITED", "created_at": now(),
-        "expires_at": datetime.fromtimestamp(time.time() + expires_minutes * 60, timezone.utc).isoformat(),
+        "task": task or "GENERAL", "priority": priority, "text": body, "allow_launch": allow_launch,
+        "transport": transport, "state": "DEPOSITED", "created_at": created_at,
+        "expires_at": expires_at,
         "attempts": [], "ack": None,
         "candidates": _parse_candidates(candidates), "children": [], "parent": None,
+        "dispatch": dispatch,
     }
     if event not in body:
         raise ValueError("event id must appear in the message so read-back can verify it")

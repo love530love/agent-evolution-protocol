@@ -14,6 +14,8 @@ def test_federation_schema_assets_are_valid_json_and_have_ids():
     assert {p.name for p in paths} == {
         "event-envelope-v1.schema.json",
         "handoff-packet-v1.schema.json",
+        "dispatch-envelope-v1.schema.json",
+        "agent-capability-bundle-v1.schema.json",
         "task-envelope-v2.schema.json",
         "workspace-snapshot-v1.schema.json",
     }

@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-evolution-protocol.local/schemas/dispatch-envelope-v1.schema.json",
+  "title": "AEP Dispatch Envelope v1",
+  "type": "object",
+  "required": [
+    "schema", "order_id", "event_id", "workspace_id", "sender", "target",
+    "task", "instruction", "priority", "created_at", "expires_at",
+    "session_policy", "preconditions", "acceptance", "evidence_required",
+    "retry_policy", "stop_conditions"
+  ],
+  "properties": {
+    "schema": {"const": "aep-dispatch-envelope-v1"},
+    "order_id": {"type": "string", "minLength": 8},
+    "event_id": {"type": "string", "minLength": 8},
+    "workspace_id": {"type": "string", "minLength": 8},
+    "sender": {"type": "string", "minLength": 1},
+    "target": {"type": "string", "minLength": 1},
+    "task": {"type": "string", "minLength": 1},
+    "instruction": {"type": "string", "minLength": 1},
+    "objective": {"type": "string", "minLength": 1},
+    "priority": {"enum": ["urgent", "normal", "low"]},
+    "created_at": {"type": "string", "format": "date-time"},
+    "expires_at": {"type": "string", "format": "date-time"},
+    "parent_event_id": {"type": ["string", "null"]},
+    "session_policy": {
+      "type": "object",
+      "required": ["mode", "allow_new_session", "same_workspace"],
+      "properties": {
+        "mode": {"enum": ["sticky", "anchor-required", "new-session"]},
+        "allow_new_session": {"type": "boolean"},
+        "same_workspace": {"type": "boolean"},
+        "session_id": {"type": "string"},
+        "conversation_id": {"type": "string"},
+        "model_marker": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "preconditions": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+    "acceptance": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+    "evidence_required": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+    "retry_policy": {
+      "type": "object",
+      "required": ["max_attempts", "retry_only_preinput", "same_event_id"],
+      "properties": {
+        "max_attempts": {"type": "integer", "minimum": 1},
+        "retry_only_preinput": {"type": "boolean"},
+        "same_event_id": {"type": "boolean"}
+      },
+      "additionalProperties": true
+    },
+    "stop_conditions": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+    "side_effects": {"type": "array", "items": {"type": "string"}},
+    "legacy_compat": {"type": "boolean"}
+  },
+  "additionalProperties": true
+}

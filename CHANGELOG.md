@@ -5,6 +5,9 @@
 - Added Qoder execution-gate replay: read-only busy/ready probing before input,
   strict multi-placeholder composer matching, client-specific accent-button
   detection, and explicit `AGENT_BUSY` / `ACTIVITY_UNCONFIRMED` receipts.
+- Added `aep-dispatch-envelope-v1`, strict dispatch validation, schema-backed
+  session/retry/evidence rules, and the reusable dispatch standard for all
+  adapters and Agent handoffs.
 - Added the Qoder failure review, federation execution roadmap, and a reusable
   Agent operator contract for sharing session/ACK/Red Queen-Catfish rules.
 - Added a Chinese beginner introduction covering design intent, conceptual roots, a complete round, common misconceptions, and a first-run walkthrough.

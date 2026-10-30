@@ -1,0 +1,100 @@
+{
+  "schema": "aep-agent-capability-bundle-v1",
+  "agent": "qoder",
+  "display_name": "Qoder",
+  "client": {
+    "kind": "desktop",
+    "process": "Qoder",
+    "window_title": "Qoder",
+    "session_id": ""
+  },
+  "workspace_id": "",
+  "servers": [
+    {
+      "name": "aep",
+      "command": "python",
+      "args": ["-m", "agent_evolution_protocol.mcp_server"],
+      "provider": "aep-federation",
+      "capabilities": ["locate_session", "wake", "dispatch", "readback", "filesystem"]
+    },
+    {
+      "name": "windows-uia",
+      "command": "dotnet",
+      "args": ["C:/Tools/mcp-windows/Sbroenne.WindowsMcp.exe"],
+      "provider": "sbroenne/mcp-windows",
+      "capabilities": ["locate_session", "wake", "dispatch", "readback", "screenshot"]
+    },
+    {
+      "name": "rea",
+      "command": "rea",
+      "args": [],
+      "provider": "morluto/rea",
+      "capabilities": ["rea"]
+    }
+  ],
+  "skills": [
+    {
+      "name": "qoder-original-session",
+      "entrypoint": "skills/aep-agent-onboarding/SKILL.md",
+      "version": "aep-local",
+      "capabilities": ["locate_session", "wake", "dispatch", "readback"],
+      "notes": "复用原会话；发送前必须通过 ready probe。"
+    },
+    {
+      "name": "qoder-result-readback",
+      "entrypoint": "docs/DISPATCH_STANDARD.zh-CN.md",
+      "version": "aep-v1",
+      "capabilities": ["readback", "filesystem"]
+    }
+  ],
+  "connectors": [
+    {
+      "name": "qoder-desktop",
+      "kind": "app",
+      "transport": "uia",
+      "command": "pwsh.exe",
+      "args": ["-NoProfile", "-File", "src/agent_evolution_protocol/coordination/wake_adapters/uia_session.ps1"],
+      "workspace_scoped": true,
+      "session_scoped": true,
+      "capabilities": ["locate_session", "wake", "dispatch", "readback", "screenshot"]
+    },
+    {
+      "name": "qoder-cdp",
+      "kind": "browser",
+      "transport": "cdp",
+      "workspace_scoped": true,
+      "session_scoped": true,
+      "capabilities": ["locate_session", "readback"]
+    },
+    {
+      "name": "rea-evidence",
+      "kind": "native",
+      "transport": "stdio",
+      "command": "rea",
+      "workspace_scoped": true,
+      "session_scoped": false,
+      "capabilities": ["rea"]
+    }
+  ],
+  "capabilities": ["locate_session", "wake", "dispatch", "readback", "rea", "screenshot"],
+  "locator": {
+    "transports": ["native_api", "aep_mcp", "desktop_mcp", "uia", "cdp", "mailbox"],
+    "window_titles": ["Qoder"],
+    "window_titles_exact": true,
+    "session_id": ""
+  },
+  "fallbacks": ["native_api", "aep_mcp", "desktop_mcp", "uia", "cdp", "mailbox"],
+  "priority": 10,
+  "acceptance": {
+    "required": ["window_unique", "session_bound", "ready_observed", "message_visible", "agent_ack", "readback_evidence"]
+  },
+  "observability": {
+    "activity_probe": "uia+ocr",
+    "readback": "same-session-event-id",
+    "unknown_state": "deferred"
+  },
+  "metadata": {
+    "rea_is_evidence_tool": true,
+    "no_new_session_by_default": true
+  }
+}

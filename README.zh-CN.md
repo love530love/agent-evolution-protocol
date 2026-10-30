@@ -31,6 +31,7 @@
 - [每 Agent MCP Bundle 与会话感知派工](docs/AGENT_MCP_BUNDLES.zh-CN.md)
 - [桌面主控、无头增强的生产架构](docs/DESKTOP_PRIMARY_HEADLESS_AUGMENTATION.zh-CN.md)
 - [Qoder 派工失败复盘与联邦执行升级方案](docs/FAILURE_REVIEW_QODER_20261030.zh-CN.md)
+- [派工标准 v1](docs/DISPATCH_STANDARD.zh-CN.md)
 - [Agent 执行与协作契约模板](templates/AGENT_OPERATOR_CONTRACT.zh-CN.md)
 - [桌面主控、无头增强验收清单](docs/acceptance/DESKTOP_PRIMARY_HEADLESS_ACCEPTANCE_20261029.md)
 

@@ -22,6 +22,26 @@ Agent profile
  └─ native adapter          厂商 API、CLI、ClawChat 或本地文件信箱
 ```
 
+从 v1 起，Bundle 不再只有 MCP server，还包含三类可执行资产：
+
+- `servers`：MCP/stdio/http 等工具进程；
+- `skills`：Agent 特化的工作流入口、参数和验收提示；
+- `connectors`：应用级连接器，负责启动、会话定位、回读或 REA 取证。
+
+统一 Schema：`schemas/agent-capability-bundle-v1.schema.json`。
+本地示例：`examples/capability-bundle.qoder.json`。
+
+Bundle 的职责边界是：
+
+```text
+Skill       = 怎么做
+Connector   = 通过什么应用/通道做
+MCP Server  = 能调用哪些底层工具
+AEP Kernel  = 是否允许做、在哪个会话做、如何证明做成
+```
+
+因此，特化包可以大胆提供能力，但不能自行把“启动成功”“输入成功”升级成“已接单”；最终证据仍由 AEP Kernel 统一判定。
+
 工作区通过 `AEP_WORKSPACE_ID` 和 `AEP_AGENT_ID` 注入每个 MCP Server。这样同一个
 服务器进程不能把一个工作区的任务误写入另一个工作区。
 
@@ -59,6 +79,17 @@ python -m agent_evolution_protocol --coord-root .\coordination coord-agent-mcp p
   --agent qoder_cn --workspace-id W-0123456789abcdef01234567 `
   --operation dispatch --session-id qoder-session-001
 ```
+
+### 特化 Capability Bundle
+
+```powershell
+python -m agent_evolution_protocol --coord-root .\coordination `
+  coord-agent-mcp register --profile-file .\examples\capability-bundle.qoder.json
+```
+
+登记后可通过 `inventory` 查看每个 Agent 的 MCP server、skill、connector 数量；通过
+`render-config` 生成带 `AEP_WORKSPACE_ID`、`AEP_AGENT_ID` 的配置，再单独执行
+session bind 和 ACK 验收。
 
 `render-config` 的输出需要由对应 Agent 客户端导入。AEP 不会猜测厂商配置文件路径，
 也不会因配置生成而声称已唤醒 Agent；真实发送必须继续走 `coord-wake`、`coord-commander`

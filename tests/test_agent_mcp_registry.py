@@ -62,3 +62,42 @@ def test_invalid_server_capability_is_rejected():
     row["servers"][0]["capabilities"] = ["teleport"]
     with pytest.raises(ValueError, match="unknown server capabilities"):
         agent_mcp_registry.validate_profile(row)
+
+
+def test_capability_bundle_supports_agent_specific_skills_and_connectors(tmp_path):
+    row = profile("qoder")
+    row["skills"] = [{
+        "name": "original-session",
+        "entrypoint": "skills/aep-agent-onboarding/SKILL.md",
+        "version": "1",
+        "capabilities": ["locate_session", "dispatch"],
+    }]
+    row["connectors"] = [{
+        "name": "desktop-uia",
+        "kind": "app",
+        "transport": "uia",
+        "command": "pwsh.exe",
+        "workspace_scoped": True,
+        "session_scoped": True,
+        "capabilities": ["locate_session", "wake", "dispatch", "readback"],
+    }]
+    normalized = agent_mcp_registry.validate_profile(row)
+    assert normalized["skills"][0]["name"] == "original-session"
+    assert normalized["connectors"][0]["transport"] == "uia"
+    root = tmp_path / "coord"
+    agent_mcp_registry.register(root, row)
+    inv = agent_mcp_registry.inventory(root)
+    assert inv["profiles"][0]["skill_count"] == 1
+    assert inv["profiles"][0]["connector_count"] == 1
+
+
+def test_connector_cannot_embed_secret_values():
+    row = profile()
+    row["connectors"] = [{
+        "name": "bad",
+        "kind": "app",
+        "transport": "stdio",
+        "auth_ref": "token=secret",
+    }]
+    with pytest.raises(ValueError, match="auth_ref"):
+        agent_mcp_registry.validate_profile(row)
