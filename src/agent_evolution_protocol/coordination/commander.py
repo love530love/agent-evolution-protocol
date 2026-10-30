@@ -118,7 +118,11 @@ def submit_order(root: Path, *, target: str, task: str, text: str, sender: str,
         validate_workspace_id(workspace_id)
     order_id = now().replace(":", "").replace(".", "").replace("+", "") + "-" + uuid4().hex[:8]
     event = event_id or ("EVT-" + uuid4().hex[:10].upper())
-    body = text if ACK_TOKEN in text else f"{text.rstrip()}\n\n[{ACK_TOKEN}:{event}]"
+    # A generic instruction such as "include AEP-ACK" is not an event
+    # acknowledgement.  Only skip augmentation when this exact event id is
+    # already present; otherwise the dispatch contract cannot prove that a
+    # reply belongs to this order.
+    body = text if event in text else f"{text.rstrip()}\n\n[{ACK_TOKEN}:{event}]"
     created_at = now()
     expires_at = datetime.fromtimestamp(time.time() + expires_minutes * 60, timezone.utc).isoformat()
     dispatch = dispatch_contract.build(
@@ -637,7 +641,14 @@ def check_acks(root: Path) -> dict:
     """Accept only a role-attributed reply event, never a raw screen snapshot."""
     acked = []
     for order in _orders(root):
-        if order.get("state") in ("AGENT_ACK", "CEASED", "FAILED", "RETIRED"):
+        # CEASED means the delivery attempt stopped without an ACK; it does
+        # not mean the event can never be acknowledged.  A desktop agent may
+        # answer after the bounded read-back window.  Re-checking a late
+        # same-event reply is read-only and never replays input, so it is safe
+        # to upgrade CEASED -> AGENT_ACK when the anchored transcript proves
+        # the event.  FAILED remains terminal because it denotes a hard
+        # adapter/input failure rather than an uncertain send.
+        if order.get("state") in ("AGENT_ACK", "FAILED", "RETIRED"):
             continue
         token = f"{ACK_TOKEN}:{order['event_id']}"
         for event in bus.read_events(root, agent=order["target"], limit=500):

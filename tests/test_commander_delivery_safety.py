@@ -90,6 +90,35 @@ class CommanderDeliverySafetyTests(unittest.TestCase):
         self.assertEqual(commander.check_acks(self.root)["acked"], [])
         self.assertEqual(commander._orders(self.root)[0]["state"], "MESSAGE_VISIBLE")
 
+    def test_generic_ack_instruction_still_gets_exact_event_token(self):
+        order = commander.submit_order(
+            self.root,
+            target="workbuddy",
+            task="test",
+            text="Please reply with AEP-ACK after reading this",
+            sender="human",
+        )
+        self.assertIn(order["event_id"], order["text"])
+        self.assertEqual(order["text"].count(order["event_id"]), 1)
+
+    def test_late_ack_can_upgrade_ceased_without_replaying_input(self):
+        order = commander.submit_order(self.root, target="workbuddy", task="test",
+                                       text="Please inspect the local inbox", sender="human")
+        order["session_id"] = "123"
+        commander._record_attempt(self.root, order, state="CEASED",
+                                  note="REPLY_TIMEOUT_UNCERTAIN")
+        transcript_bus.publish(
+            self.root,
+            agent="workbuddy",
+            text="Done. AEP-ACK:" + order["event_id"],
+            session_id="123",
+            role="assistant",
+            direction="incoming",
+        )
+        result = commander.check_acks(self.root)
+        self.assertEqual(len(result["acked"]), 1)
+        self.assertEqual(commander._orders(self.root)[0]["state"], "AGENT_ACK")
+
     def test_role_attributed_same_session_reply_can_ack(self):
         order = commander.submit_order(self.root, target="workbuddy", task="test",
                                        text="Please inspect the local inbox", sender="human")
