@@ -138,6 +138,7 @@ multi-agent coordination:
 - [REA evidence capability for the agent team](docs/coordination/REA_CAPABILITY.md)
 - [Per-Agent MCP bundles and session-aware dispatch](docs/AGENT_MCP_BUNDLES.zh-CN.md)
 - [Third-party execution ecosystem and acceptance gates](docs/THIRD_PARTY_EXECUTION_ECOSYSTEM.zh-CN.md)
+- [Capability runtime installation](docs/CAPABILITY_RUNTIME_INSTALL.zh-CN.md)
 - [Desktop-primary / headless-augmentation production architecture](docs/DESKTOP_PRIMARY_HEADLESS_AUGMENTATION.zh-CN.md)
 - [Desktop-primary / headless-augmentation acceptance checklist](docs/acceptance/DESKTOP_PRIMARY_HEADLESS_ACCEPTANCE_20261029.md)
 - [session affinity](docs/coordination/MULTI_AGENT_SESSION_AFFINITY.md)
