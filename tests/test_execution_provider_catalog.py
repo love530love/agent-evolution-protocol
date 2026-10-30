@@ -11,6 +11,7 @@ ROOT = Path(__file__).parents[1]
 
 def test_catalog_is_valid_and_contains_all_execution_layers():
     catalog = execution_provider_catalog.load(ROOT / "examples" / "execution-provider-catalog.json")
+    assert catalog["provenance_policy"]["default_distribution_mode"] == "reference-only"
     layers = {row["layer"] for row in catalog["providers"]}
     assert {"browser", "desktop_visual", "terminal_execution", "code_engineering", "mobile", "reverse_engineering"} <= layers
     assert all(row["status"] == "candidate" for row in catalog["providers"])
@@ -28,4 +29,11 @@ def test_catalog_rejects_duplicate_provider_ids(tmp_path):
     data = json.loads((ROOT / "examples" / "execution-provider-catalog.json").read_text(encoding="utf-8"))
     data["providers"].append(dict(data["providers"][0]))
     with pytest.raises(ValueError, match="unique"):
+        execution_provider_catalog.validate_catalog(data)
+
+
+def test_catalog_rejects_unverified_distribution_policy():
+    data = json.loads((ROOT / "examples" / "execution-provider-catalog.json").read_text(encoding="utf-8"))
+    data["provenance_policy"]["default_distribution_mode"] = "vendored"
+    with pytest.raises(ValueError, match="reference-only"):
         execution_provider_catalog.validate_catalog(data)

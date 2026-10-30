@@ -1,6 +1,11 @@
 {
   "schema": "aep-execution-provider-catalog-v1",
   "purpose": "optional third-party execution providers; catalog entries are not installed or trusted automatically",
+  "provenance_policy": {
+    "default_license_status": "unverified",
+    "default_distribution_mode": "reference-only",
+    "notice_policy": "verify-upstream-license-before-installation-or-redistribution"
+  },
   "providers": [
     {
       "id": "browser_use",

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 预备 0.4.2：加入贡献者署名、风险控制基线和 Provider 分发溯源硬门。
+
 - 预备 0.4.1：统一包内与项目元数据版本号，补充项目标准、第三方致谢和发布回滚规范。
 
 - Added Qoder execution-gate replay: read-only busy/ready probing before input,

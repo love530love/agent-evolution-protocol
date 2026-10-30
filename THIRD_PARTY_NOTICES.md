@@ -1,6 +1,6 @@
 # Third-party acknowledgements and notices
 
-感谢以下开源项目及其维护者为 Agent 执行、浏览器自动化、桌面操控、终端工程、移动测试和逆向分析生态做出的贡献。AEP 当前只登记其公开仓库和能力边界，不默认复制、重新打包或再分发这些项目的代码。
+感谢以下开源项目及其维护者为 Agent 执行、浏览器自动化、桌面操控、终端工程、移动测试和逆向分析生态做出的贡献。AEP 当前只登记其公开仓库和能力边界，不默认复制、重新打包或再分发这些项目的代码。机器可读的默认溯源策略位于 [execution-provider-catalog.json](examples/execution-provider-catalog.json)，当前所有候选均为 `unverified + reference-only`。
 
 ## Referenced projects
 

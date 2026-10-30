@@ -4,10 +4,20 @@
   "title": "AEP execution provider catalog v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "purpose", "providers"],
+  "required": ["schema", "purpose", "provenance_policy", "providers"],
   "properties": {
     "schema": {"const": "aep-execution-provider-catalog-v1"},
     "purpose": {"type": "string", "minLength": 1},
+    "provenance_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["default_license_status", "default_distribution_mode", "notice_policy"],
+      "properties": {
+        "default_license_status": {"const": "unverified"},
+        "default_distribution_mode": {"const": "reference-only"},
+        "notice_policy": {"type": "string", "minLength": 1}
+      }
+    },
     "providers": {
       "type": "array",
       "minItems": 1,

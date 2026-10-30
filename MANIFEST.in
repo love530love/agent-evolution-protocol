@@ -1,6 +1,7 @@
 include LICENSE
 include NOTICE
 include THIRD_PARTY_NOTICES.md
+include CONTRIBUTORS.md
 recursive-include docs *.md
 recursive-include examples *.json
 recursive-include patches *.patch

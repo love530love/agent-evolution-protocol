@@ -32,6 +32,8 @@
 - [第三方执行生态与接入验收门](docs/THIRD_PARTY_EXECUTION_ECOSYSTEM.zh-CN.md)
 - [能力运行时安装与冒烟验收](docs/CAPABILITY_RUNTIME_INSTALL.zh-CN.md)
 - [项目体系、标准与发布规范](docs/PROJECT_STANDARDS.zh-CN.md)
+- [风险登记与控制基线](docs/RISK_REGISTER.zh-CN.md)
+- [贡献者与署名溯源](CONTRIBUTORS.md)
 - [桌面主控、无头增强的生产架构](docs/DESKTOP_PRIMARY_HEADLESS_AUGMENTATION.zh-CN.md)
 - [Qoder 派工失败复盘与联邦执行升级方案](docs/FAILURE_REVIEW_QODER_20261030.zh-CN.md)
 - [派工标准 v1](docs/DISPATCH_STANDARD.zh-CN.md)

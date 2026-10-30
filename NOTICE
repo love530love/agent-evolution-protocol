@@ -6,3 +6,7 @@ This repository may reference optional third-party projects. Their names,
 logos, source code, models and licenses remain owned by their respective
 authors. See THIRD_PARTY_NOTICES.md before installing, copying or redistributing
 any optional provider.
+
+AI-assisted contribution: OpenAI Codex contributed architecture, implementation,
+tests and documentation under the direction of the human maintainer. This is a
+provenance acknowledgement, not a separate legal copyright or trademark claim.

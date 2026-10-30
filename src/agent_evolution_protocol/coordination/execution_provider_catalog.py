@@ -23,10 +23,17 @@ def _catalog_path(path: str | Path | None = None) -> Path:
 
 
 def validate_catalog(value: Any) -> dict[str, Any]:
-    if not isinstance(value, dict) or set(value) != {"schema", "purpose", "providers"}:
+    if not isinstance(value, dict) or set(value) != {"schema", "purpose", "provenance_policy", "providers"}:
         raise ValueError("invalid execution provider catalog fields")
     if value["schema"] != CATALOG_SCHEMA or not isinstance(value["purpose"], str) or not value["purpose"].strip():
         raise ValueError("invalid execution provider catalog header")
+    policy = value["provenance_policy"]
+    if not isinstance(policy, dict) or set(policy) != {"default_license_status", "default_distribution_mode", "notice_policy"}:
+        raise ValueError("invalid execution provider provenance policy")
+    if policy["default_license_status"] != "unverified" or policy["default_distribution_mode"] != "reference-only":
+        raise ValueError("unverified providers must remain reference-only")
+    if not isinstance(policy["notice_policy"], str) or not policy["notice_policy"].strip():
+        raise ValueError("provenance notice policy is required")
     providers = value["providers"]
     if not isinstance(providers, list) or not providers:
         raise ValueError("providers must be a non-empty list")
@@ -48,7 +55,8 @@ def validate_catalog(value: Any) -> dict[str, Any]:
                 raise ValueError(f"provider.{key} must be a non-empty string list")
         ids.add(provider_id)
         normalized.append(dict(row))
-    return {"schema": CATALOG_SCHEMA, "purpose": value["purpose"], "providers": normalized}
+    return {"schema": CATALOG_SCHEMA, "purpose": value["purpose"],
+            "provenance_policy": dict(policy), "providers": normalized}
 
 
 def load(path: str | Path | None = None) -> dict[str, Any]:
