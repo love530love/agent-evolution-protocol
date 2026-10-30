@@ -30,6 +30,8 @@
 - [红皇后—鲶鱼—创造性破坏复盘](docs/coordination/RED_QUEEN_CATFISH_CREATIVE_DESTRUCTION_RETROSPECTIVE_20260928.md)
 - [每 Agent MCP Bundle 与会话感知派工](docs/AGENT_MCP_BUNDLES.zh-CN.md)
 - [桌面主控、无头增强的生产架构](docs/DESKTOP_PRIMARY_HEADLESS_AUGMENTATION.zh-CN.md)
+- [Qoder 派工失败复盘与联邦执行升级方案](docs/FAILURE_REVIEW_QODER_20261030.zh-CN.md)
+- [Agent 执行与协作契约模板](templates/AGENT_OPERATOR_CONTRACT.zh-CN.md)
 - [桌面主控、无头增强验收清单](docs/acceptance/DESKTOP_PRIMARY_HEADLESS_ACCEPTANCE_20261029.md)
 
 参考代码位于 `src/agent_evolution_protocol/coordination/`。设计原则是：普通消息只留言，

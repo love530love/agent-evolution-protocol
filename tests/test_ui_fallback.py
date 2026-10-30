@@ -15,12 +15,13 @@ PROFILE = {"agent": "fake_agent", "process": "FakeAgent", "title": "Fake Agent",
 
 class FakeDriver:
     def __init__(self, *, model=True, session=True, input_found=True, no_window=False,
-                 send_status="submitted-unconfirmed"):
+                 send_status="submitted-unconfirmed", activity_state="ready"):
         self.model = model
         self.session = session
         self.input_found = input_found
         self.no_window = no_window
         self.send_status = send_status
+        self.activity_state = activity_state
         self.sent = 0
         self.launched = 0
         self.selected = 0
@@ -30,7 +31,7 @@ class FakeDriver:
         if self.no_window:
             return {"status": "NO_WINDOW"}
         return {"status": "window-observed", "pid": 1234, "input_found": self.input_found,
-                "input_ambiguous": False}
+                "input_ambiguous": False, "activity_state": self.activity_state}
 
     def capture(self, profile):
         text = ("Original task chat " if self.session else "Other chat ")
@@ -127,6 +128,24 @@ class UiFallbackTests(unittest.TestCase):
         profile_path.write_text(json.dumps({**PROFILE, "transport": "ocr",
                                             "composer_hint": "Ask anything"}), encoding="utf-8")
         self.assertEqual(ui.load_profile(profile_path)["composer_hint"], "Ask anything")
+
+    def test_busy_agent_is_deferred_before_any_input(self):
+        profile = {**PROFILE, "require_activity_ready": True}
+        driver = FakeDriver(activity_state="busy")
+        result = ui.run(profile, "Analyze the error", event_id="EVT-BUSY-1",
+                         receipt_path=self.receipt, lock_path=self.lock,
+                         driver=driver, poll_seconds=0.1)
+        self.assertEqual(result["state"], "AGENT_BUSY")
+        self.assertEqual(driver.sent, 0)
+
+    def test_activity_uncertainty_is_deferred_for_strict_profile(self):
+        profile = {**PROFILE, "require_activity_ready": True}
+        driver = FakeDriver(activity_state="unknown")
+        result = ui.run(profile, "Analyze the error", event_id="EVT-ACTIVITY-1",
+                         receipt_path=self.receipt, lock_path=self.lock,
+                         driver=driver, poll_seconds=0.1)
+        self.assertEqual(result["state"], "ACTIVITY_UNCONFIRMED")
+        self.assertEqual(driver.sent, 0)
 
 
 if __name__ == "__main__":

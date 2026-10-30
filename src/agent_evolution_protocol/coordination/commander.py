@@ -253,6 +253,53 @@ def _uia_deliver(root: Path, agent: str, text: str, event_id: str, *,
                       "stderr": done.stderr[-800:], "task_delivered": False}
 
 
+def _uia_observe(root: Path, agent: str, *, expected_pid: int = 0,
+                 ocr: bool = True, timeout: int = 20) -> dict:
+    """Read-only readiness probe used immediately before any desktop input.
+
+    This is deliberately separate from ``_uia_deliver``.  A visible composer
+    can coexist with an active tool run; sending at that point can interrupt or
+    queue work in the wrong turn.  The probe therefore has to report a stable
+    ready state before the input lease is consumed.
+    """
+    adapter = Path(__file__).resolve().parent / "wake_adapters" / "uia_session.ps1"
+    if not adapter.is_file():
+        return {"status": "ADAPTER_MISSING", "activity_state": "unknown",
+                "task_delivered": False}
+    profile = {}
+    try:
+        profile = registry.profile(root, agent)
+    except ValueError:
+        pass
+    cmd = [_pwsh(), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(adapter),
+           "-Agent", agent, "-ProcessName", profile.get("process") or agent,
+           "-Mode", "observe"]
+    if profile.get("title"):
+        cmd += ["-ExpectedTitle", profile["title"]]
+    if profile.get("exe"):
+        cmd += ["-ExpectedPath", profile["exe"]]
+    if expected_pid:
+        cmd += ["-ExpectedPid", str(expected_pid), "-AllowUnknownPath"]
+    if ocr:
+        cmd += ["-OcrVerify"]
+    try:
+        done = subprocess.run(cmd, text=True, encoding="utf-8", errors="replace",
+                              capture_output=True, timeout=timeout + 45, check=False)
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "ADAPTER_ERROR", "activity_state": "unknown",
+                "error": str(exc), "task_delivered": False}
+    for line in reversed(done.stdout.splitlines()):
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            return value
+    return {"status": "NO_RECEIPT", "activity_state": "unknown",
+            "returncode": done.returncode, "stderr": done.stderr[-800:],
+            "task_delivered": False}
+
+
 def _profiled_deliver(root: Path, agent: str, text: str, event_id: str, *,
                       allow_launch: bool = False) -> dict:
     profile_path = Path(root) / "ui_profiles" / f"{agent}.json"
@@ -272,9 +319,28 @@ def _profiled_deliver(root: Path, agent: str, text: str, event_id: str, *,
             "agent_accepted": result.get("agent_accepted") is True,
             "receipt_file": str(receipt_path),
             "evidence": str(receipt_path),
+            "wait_for_ready": result.get("state") in {"AGENT_BUSY", "ACTIVITY_UNCONFIRMED"},
         }
     except Exception as exc:  # noqa: BLE001 - profile failures must never fall through to blind UI input
         return {"status": "PROFILE_DELIVERY_FAILED", "task_delivered": False,
+                "error": str(exc)[:800]}
+
+
+def _profiled_readiness(root: Path, agent: str) -> dict:
+    """Read-only profile probe used to resume a busy desktop Agent.
+
+    It never selects a session, focuses a window, writes the clipboard or
+    clicks.  A supervisor may call it at its normal low-frequency tick without
+    perturbing the user's desktop.
+    """
+    profile_path = Path(root) / "ui_profiles" / f"{agent}.json"
+    if not profile_path.is_file():
+        return {"status": "NO_PROFILE", "activity_state": "unknown"}
+    try:
+        profile = ui_fallback.load_profile(profile_path)
+        return ui_fallback.PowerShellUiaDriver().observe(profile)
+    except Exception as exc:  # noqa: BLE001 - readiness is advisory and read-only
+        return {"status": "READINESS_PROBE_FAILED", "activity_state": "unknown",
                 "error": str(exc)[:800]}
 
 
@@ -536,6 +602,11 @@ def _dispatch(root: Path, *, order: dict) -> dict:
     # A missing/failed adapter receipt proves neither typing nor sending.
     # Even when the adapter reports a submitted input, never retry blindly:
     # it may have reached the agent without a readable echo.
+    if receipt.get("status") in ("AGENT_BUSY", "ACTIVITY_UNCONFIRMED", "NO_WINDOW",
+                                  "LAUNCH_UNVERIFIED", "WINDOW_OR_INPUT_AMBIGUOUS",
+                                  "NO_SAFE_COMPOSER", "SESSION_NOT_VERIFIED", "MODEL_NOT_VERIFIED"):
+        return _record_attempt(root, order, state="DEFERRED", transport=transport, receipt=receipt,
+                               note="PREINPUT_NOT_READY: observe again after the target becomes ready")
     if receipt.get("status") in ("NO_RECEIPT", "ADAPTER_ERROR", "ADAPTER_MISSING", "PROFILE_DELIVERY_FAILED", "SEND_CONTROL_NOT_FOUND", "send-control-not-found", "input-not-confirmed") or receipt.get("returncode", 0) != 0:
         return _record_attempt(root, order, state="CEASED", transport=transport, receipt=receipt,
                                note="DELIVERY_UNPROVEN: adapter failed; manual diagnosis required")
@@ -662,6 +733,17 @@ def tick(root: Path, *, perceive_first: bool = True) -> dict:
         # Only a fresh deposit is safe to dispatch. WINDOW_FOUND may have
         # reached the composer before a crash; DEFERRED needs a new preflight.
         if order.get("state") != "DEPOSITED":
+            if order.get("state") == "DEFERRED":
+                last = (order.get("attempts") or [])[-1] if order.get("attempts") else {}
+                receipt = last.get("receipt") or {}
+                if receipt.get("wait_for_ready"):
+                    readiness = _profiled_readiness(root, order.get("target", ""))
+                    if readiness.get("activity_state") == "ready":
+                        _record_attempt(root, order, state="DEPOSITED", receipt=readiness,
+                                        note="READY_AFTER_BUSY: pre-input resume")
+                        fresh = _persisted_order(root, order["id"])
+                        dispatched.append({"order": fresh["id"], "target": fresh["target"],
+                                           "state": dispatch(root, order=fresh)["state"]})
             continue
         dispatched.append({"order": order["id"], "target": order["target"], "state": dispatch(root, order=order)["state"]})
     reinforced = []

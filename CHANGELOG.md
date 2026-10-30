@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added Qoder execution-gate replay: read-only busy/ready probing before input,
+  strict multi-placeholder composer matching, client-specific accent-button
+  detection, and explicit `AGENT_BUSY` / `ACTIVITY_UNCONFIRMED` receipts.
+- Added the Qoder failure review, federation execution roadmap, and a reusable
+  Agent operator contract for sharing session/ACK/Red Queen-Catfish rules.
 - Added a Chinese beginner introduction covering design intent, conceptual roots, a complete round, common misconceptions, and a first-run walkthrough.
 - Added local coordination kernel docs and reference implementation: status board, wake daemon, wake adapters, realtime hub/hook, and Red Queen / Catfish / Creative Destruction retrospective.
 - Added session-affinity policy, digest-first handoff, batch topic acknowledgement, stale state detection, and wake pending/claim timeout tracking.

@@ -71,6 +71,19 @@ def load_profile(path: Path) -> dict:
     profile["reply_timeout_seconds"] = int(profile.get("reply_timeout_seconds", 120))
     if not 5 <= profile["reply_timeout_seconds"] <= 300:
         raise ValueError("reply timeout must be 5..300 seconds")
+    hints = profile.get("composer_hints", [])
+    if hints is None:
+        hints = []
+    if not isinstance(hints, list) or any(not isinstance(item, str) or not item.strip() for item in hints):
+        raise ValueError("composer_hints must be a list of non-empty strings")
+    profile["composer_hints"] = [item.strip() for item in hints]
+    busy_markers = profile.get("busy_markers", [])
+    if busy_markers is None:
+        busy_markers = []
+    if not isinstance(busy_markers, list) or any(not isinstance(item, str) or not item.strip() for item in busy_markers):
+        raise ValueError("busy_markers must be a list of non-empty strings")
+    profile["busy_markers"] = [item.strip() for item in busy_markers]
+    profile["require_activity_ready"] = bool(profile.get("require_activity_ready", False))
     return profile
 
 
@@ -98,8 +111,11 @@ class PowerShellUiaDriver:
             env["AEP_SCROLL_COMPOSER"] = "1"
         if profile.get("maximize_window"):
             env["AEP_MAXIMIZE_WINDOW"] = "1"
-        if profile.get("send_button_color") == "purple":
-            env["AEP_SEND_BUTTON_COLOR"] = "1"
+        if profile.get("send_button_color"):
+            color = str(profile["send_button_color"])
+            # Keep the historical purple sentinel for existing profiles while
+            # allowing additional client-specific color probes.
+            env["AEP_SEND_BUTTON_COLOR"] = "1" if color == "purple" else color
         return env
 
     def _run(self, script: Path, args: list[str], timeout: int = 45,
@@ -130,7 +146,10 @@ class PowerShellUiaDriver:
 
     def observe(self, profile: dict) -> dict:
         try:
-            return self._run(UIA, self._target(profile) + ["-Mode", "observe"])
+            args = self._target(profile) + ["-Mode", "observe"]
+            if profile.get("activity_ocr"):
+                args.append("-OcrVerify")
+            return self._run(UIA, args, env=self._ui_env(profile))
         except RelayError as exc:
             if "LAUNCH_FORBIDDEN" in str(exc):
                 return {"status": "NO_WINDOW"}
@@ -168,6 +187,10 @@ class PowerShellUiaDriver:
     def deliver(self, profile: dict, message: str, event_id: str) -> dict:
         args = self._target(profile) + ["-Mode", "compose" if profile["transport"] == "ocr" else "deliver",
                 "-Text", message, "-EventId", event_id, "-ReadBackTimeoutSeconds", "5"]
+        if profile.get("composer_hint"):
+            args += ["-ComposerHint", str(profile["composer_hint"])]
+        for hint in profile.get("composer_hints", []):
+            args += ["-ComposerHints", str(hint)]
         if profile["transport"] == "ocr" and profile.get("strict_composer_hint", False):
             args += ["-RequireComposerHint", "-ComposerHint", profile["composer_hint"]]
         if profile.get("send_button_x_ratio") and profile.get("send_button_y_ratio"):
@@ -248,6 +271,23 @@ def run(profile: dict, message: str, *, event_id: str, receipt_path: Path,
                 _atomic(receipt_path, state)
                 return state
             state["launched"] = True
+        # A visible window is not necessarily ready for another task.  In
+        # particular, Qoder/WorkBuddy can keep the composer visible while a
+        # tool run is still active.  Never type over that run: defer and let
+        # the supervisor resume only after a later readiness observation.
+        activity = str(observation.get("activity_state", "")).lower()
+        if activity == "busy":
+            state.update(state="AGENT_BUSY", reason="target reports an active generation/tool run",
+                         activity=observation.get("activity_evidence", {}))
+            _atomic(receipt_path, state)
+            return state
+        if (profile.get("require_activity_ready") and
+                activity not in {"ready"}):
+            state.update(state="ACTIVITY_UNCONFIRMED",
+                         reason="target readiness was not independently observed",
+                         activity=observation.get("activity_evidence", {}))
+            _atomic(receipt_path, state)
+            return state
         pid = observation.get("pid")
         if not pid or (profile["transport"] == "uia" and observation.get("input_ambiguous")):
             state.update(state="WINDOW_OR_INPUT_AMBIGUOUS")

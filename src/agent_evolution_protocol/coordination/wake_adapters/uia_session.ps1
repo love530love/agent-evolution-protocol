@@ -15,6 +15,7 @@ param(
   [switch]$OcrVerify,
   [switch]$RequireComposerHint,
   [string]$ComposerHint = '',
+  [string[]]$ComposerHints = @(),
   [string]$SessionLabel = '',
   [ValidateRange(1, 300)][int]$ReadBackTimeoutSeconds = 20,
   [string]$SendKey = '{ENTER}',
@@ -109,8 +110,8 @@ function Invoke-AepClick {
   Start-Sleep -Milliseconds 200
 }
 
-function Find-AepPurpleControl {
-  param([IntPtr]$Hwnd)
+function Find-AepAccentControl {
+  param([IntPtr]$Hwnd, [string]$ColorProfile = 'purple')
   $rect = New-Object AepUiWindow+RECT
   if (-not [AepUiWindow]::GetWindowRect($Hwnd, [ref]$rect)) { return $null }
   $width = $rect.Right - $rect.Left
@@ -121,14 +122,25 @@ function Find-AepPurpleControl {
   try {
     $graphics.CopyFromScreen($rect.Left, $rect.Top, 0, 0, $bitmap.Size)
     $minX = $width; $minY = $height; $maxX = -1; $maxY = -1; $count = 0
-    # CodeBuddy's enabled send control is purple. Restrict the scan to the
-    # lower-right composer band and use a coarse grid to avoid OCR/coordinate
-    # drift when the task panel height changes.
+    # Restrict the scan to the lower-right composer band and use a coarse grid
+    # to avoid OCR/coordinate drift when the task panel height changes.  Each
+    # client may use a different accent for its enabled send control.
     for ($y = [int]($height * 0.62); $y -lt $height; $y += 2) {
       for ($x = [int]($width * 0.40); $x -lt $width; $x += 2) {
         $c = $bitmap.GetPixel($x, $y)
-        if ($c.B -ge 190 -and $c.R -ge 70 -and $c.R -le 160 -and
-            $c.G -ge 35 -and $c.G -le 125 -and $c.B -gt ($c.R + 70)) {
+        $hit = $false
+        if ($ColorProfile -eq 'green' -or $ColorProfile -eq 'teal') {
+          $hit = ($c.G -ge 120 -and $c.B -ge 100 -and
+                  $c.G -gt ($c.R + 35) -and $c.B -gt ($c.R + 25))
+        } elseif ($ColorProfile -eq 'yellow') {
+          $hit = ($c.R -ge 150 -and $c.G -ge 120 -and $c.B -le 120 -and
+                  $c.R -gt ($c.B + 50))
+        } else {
+          # CodeBuddy's enabled send control is purple.
+          $hit = ($c.B -ge 190 -and $c.R -ge 70 -and $c.R -le 160 -and
+                  $c.G -ge 35 -and $c.G -le 125 -and $c.B -gt ($c.R + 70))
+        }
+        if ($hit) {
           $count++
           if ($x -lt $minX) { $minX = $x }; if ($x -gt $maxX) { $maxX = $x }
           if ($y -lt $minY) { $minY = $y }; if ($y -gt $maxY) { $maxY = $y }
@@ -145,6 +157,11 @@ function Find-AepPurpleControl {
     Count = $count
     Bounds = "$minX,$minY-$maxX,$maxY"
   }
+}
+
+function Find-AepPurpleControl {
+  param([IntPtr]$Hwnd)
+  return Find-AepAccentControl -Hwnd $Hwnd -ColorProfile 'purple'
 }
 
 function Invoke-AepScrollComposer {
@@ -165,7 +182,7 @@ function Invoke-AepScrollComposer {
 # Composer placeholders seen in real clients. A hit is evidence of where the
 # input box is; a miss means we fall back to a geometry guess and label it as
 # low confidence instead of pretending we knew.
-$ComposerHints = @(
+$DefaultComposerHints = @(
   '今天帮你做些什么', '输入', '发送消息', '发消息', '说点什么', '提问', '询问',
   'Ask anything', 'Ask', 'Send a message', 'Type a message', 'Message', 'Reply'
 )
@@ -472,6 +489,50 @@ function Select-InputElement {
   }
 }
 
+function Get-ActivityEvidence {
+  param($Root, [IntPtr]$Hwnd, [bool]$InputFound, [bool]$InputAmbiguous, [switch]$Ocr)
+  $busyPatterns = @(
+    '正在执行', '执行中', '生成中', '运行中', '处理中', '思考中',
+    'Stop generating', 'Stop', 'Generating', 'Running', 'Working', 'Thinking'
+  )
+  $readyPatterns = @('发送', 'Send', '提交', 'Submit')
+  $names = @()
+  $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+  $queue = New-Object System.Collections.Queue
+  if ($Root) { $queue.Enqueue($Root) }
+  while ($queue.Count -gt 0 -and $names.Count -lt 800) {
+    $element = $queue.Dequeue()
+    try {
+      $type = $element.Current.ControlType.ProgrammaticName
+      $name = [string]$element.Current.Name
+      $offscreen = [bool]$element.Current.IsOffscreen
+      if (-not $offscreen -and $name -and ($type -match 'Button|ProgressBar|Custom|Text')) {
+        $names += $name.Trim()
+      }
+      $child = $walker.GetFirstChild($element)
+      while ($child) { $queue.Enqueue($child); $child = $walker.GetNextSibling($child) }
+    } catch { }
+  }
+  $ocrText = ''
+  if ($Ocr -and $Hwnd -ne [IntPtr]::Zero) {
+    try { $ocrText = [string](Get-WindowOcrText -Hwnd $Hwnd).Text } catch { $ocrText = '' }
+  }
+  $joined = (($names -join ' ') + ' ' + $ocrText)
+  $busyHits = @($busyPatterns | Where-Object { $joined -match [regex]::Escape($_) } | Select-Object -Unique)
+  $readyHits = @($readyPatterns | Where-Object { $joined -match [regex]::Escape($_) } | Select-Object -Unique)
+  $state = 'unknown'
+  if ($busyHits.Count -gt 0) { $state = 'busy' }
+  elseif ($readyHits.Count -gt 0 -or ($InputFound -and -not $InputAmbiguous)) { $state = 'ready' }
+  return [ordered]@{
+    state = $state
+    busy_hits = $busyHits
+    ready_hits = $readyHits
+    input_found = $InputFound
+    input_ambiguous = $InputAmbiguous
+    ocr_used = [bool]$Ocr
+  }
+}
+
 function Invoke-SessionSwitch {
   param([IntPtr]$Hwnd, $Root, [string]$Label)
   if (-not $Label.Trim()) { return $false }
@@ -581,6 +642,9 @@ if ($Mode -eq 'deliver' -and $SessionLabel.Trim()) {
 
 $transcript = Get-VisibleTranscript -Root $root -CapChars $MaxCaptureChars
 $selection = Select-InputElement -Root $root -Soft
+$activity = Get-ActivityEvidence -Root $root -Hwnd $window.Hwnd `
+  -InputFound ([bool]$selection) -InputAmbiguous $(if ($selection) { [bool]$selection.Ambiguous } else { $false }) `
+  -Ocr:$OcrVerify
 
 if ($Mode -eq 'observe') {
   Write-Report @{
@@ -594,6 +658,8 @@ if ($Mode -eq 'observe') {
     input_candidate_count  = $(if ($selection) { $selection.CandidateCount } else { 0 })
     input_ambiguous        = $(if ($selection) { $selection.Ambiguous } else { $false })
     input_candidates       = $(if ($selection) { $selection.List } else { @() })
+    activity_state         = $activity.state
+    activity_evidence      = $activity
     element_inventory      = Get-ElementInventory -Root $root
     transcript_chars       = $transcript.Text.Length
     transcript_lines       = $transcript.LineCount
@@ -691,16 +757,27 @@ if ($Mode -eq 'compose') {
     $scan = Get-WindowOcrText -Hwnd $window.Hwnd
   }
   $hit = $null
-  $hintsToUse = if ($RequireComposerHint) { @($ComposerHint) } else { $ComposerHints }
+  # If the editor already contains a human draft, its placeholder is hidden.
+  # An explicit marker can therefore identify the same composer without
+  # falling back to a blind coordinate click.
+  $allHints = @()
+  if ($ComposerHint.Trim()) { $allHints += $ComposerHint }
+  if ($ComposerHints) { $allHints += @($ComposerHints) }
+  $allHints += @($DefaultComposerHints)
+  $hintsToUse = if ($RequireComposerHint) { @($ComposerHint) } else { @($allHints | Select-Object -Unique) }
   foreach ($hint in $hintsToUse) {
     $candidate = @($scan.Lines | Where-Object { $_.Text -and $_.Text.Contains($hint) } | Sort-Object -Property Y -Descending | Select-Object -First 1)
     if ($candidate.Count -ge 1) { $hit = $candidate[0]; $hintUsed = $hint; break }
   }
   if ($RequireComposerHint) {
-    $exact = @($scan.Lines | Where-Object { $_.Text -and $_.Text.Trim() -eq $ComposerHint.Trim() })
+    $exactHints = @($allHints | Where-Object { $_ -and $_.Trim() } | Select-Object -Unique)
+    if ($exactHints.Count -eq 0) { throw 'COMPOSER_HINT_REQUIRED: no exact composer hint supplied' }
+    $exact = @($scan.Lines | Where-Object {
+      $_.Text -and ($exactHints -contains $_.Text.Trim())
+    })
     if ($exact.Count -ne 1) { throw "COMPOSER_HINT_NOT_UNIQUE: expected one exact OCR match, found $($exact.Count)" }
     $hit = $exact[0]
-    $hintUsed = $ComposerHint
+    $hintUsed = $hit.Text.Trim()
     $rectCheck = New-Object AepUiWindow+RECT
     if (-not [AepUiWindow]::GetWindowRect($window.Hwnd, [ref]$rectCheck)) { throw 'WINDOW_RECT_UNAVAILABLE' }
     $windowHeight = $rectCheck.Bottom - $rectCheck.Top
@@ -740,6 +817,9 @@ if ($Mode -eq 'compose') {
 
   try { [System.Windows.Forms.Clipboard]::SetText($Text) } catch { Set-Clipboard -Value $Text }
   Start-Sleep -Milliseconds 200
+  # Replace any stale draft instead of appending the new dispatch.
+  [System.Windows.Forms.SendKeys]::SendWait('^a')
+  Start-Sleep -Milliseconds 120
   [System.Windows.Forms.SendKeys]::SendWait('^v')
   Start-Sleep -Milliseconds 1200
 
@@ -761,8 +841,9 @@ if ($Mode -eq 'compose') {
 
   $sendButtonMethod = 'enter'
   $sendButtonEvidence = $null
-  if ($env:AEP_SEND_BUTTON_COLOR -eq '1') {
-    $sendButtonEvidence = Find-AepPurpleControl -Hwnd $window.Hwnd
+  if ($env:AEP_SEND_BUTTON_COLOR) {
+    $colorProfile = if ($env:AEP_SEND_BUTTON_COLOR -eq '1') { 'purple' } else { $env:AEP_SEND_BUTTON_COLOR }
+    $sendButtonEvidence = Find-AepAccentControl -Hwnd $window.Hwnd -ColorProfile $colorProfile
     if ($sendButtonEvidence) {
       $sendRect = New-Object AepUiWindow+RECT
       if (-not [AepUiWindow]::GetWindowRect($window.Hwnd, [ref]$sendRect)) { throw 'WINDOW_RECT_UNAVAILABLE: send button' }

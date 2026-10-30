@@ -155,6 +155,45 @@ class CommanderDeliverySafetyTests(unittest.TestCase):
         profiled.assert_called_once()
         raw.assert_not_called()
 
+    def test_busy_profiled_agent_is_deferred_not_ceased(self):
+        order = commander.submit_order(self.root, target="qoder", task="notice",
+                                       text="Read this warning", sender="codex")
+        profile = self.root / "ui_profiles" / "qoder.json"
+        profile.parent.mkdir(parents=True)
+        profile.write_text("{}", encoding="utf-8")
+        client = {"agent": "qoder", "windows": [{"pid": 123}],
+                  "unique": True, "anchored": False}
+        with (patch.object(commander.registry, "discover", return_value={"clients": [client]}),
+              patch.object(commander, "_pick_transport", return_value=("uia", {})),
+              patch.object(commander, "_profiled_deliver", return_value={
+                  "status": "AGENT_BUSY", "task_delivered": False,
+                  "agent_accepted": False, "wait_for_ready": True}) as profiled):
+            result = commander.dispatch(self.root, order=order)
+        self.assertEqual(result["state"], "DEFERRED")
+        self.assertIn("PREINPUT_NOT_READY", result["attempts"][-1]["note"])
+        profiled.assert_called_once()
+
+    def test_tick_resumes_only_after_readiness_edge(self):
+        order = commander.submit_order(self.root, target="qoder", task="notice",
+                                       text="Read this warning", sender="codex")
+        commander._record_attempt(self.root, order, state="DEFERRED",
+                                  receipt={"status": "AGENT_BUSY", "wait_for_ready": True},
+                                  note="PREINPUT_NOT_READY")
+        with (patch.object(commander, "_profiled_readiness",
+                           return_value={"activity_state": "busy"}) as probe,
+              patch.object(commander, "dispatch") as dispatch):
+            result = commander.tick(self.root, perceive_first=False)
+        dispatch.assert_not_called()
+        probe.assert_called_once()
+        self.assertEqual(result["dispatched"], [])
+
+        with (patch.object(commander, "_profiled_readiness",
+                           return_value={"activity_state": "ready"}) as probe,
+              patch.object(commander, "dispatch", return_value={"state": "MESSAGE_VISIBLE"}) as dispatch):
+            result = commander.tick(self.root, perceive_first=False)
+        dispatch.assert_called_once()
+        self.assertEqual(result["dispatched"][0]["state"], "MESSAGE_VISIBLE")
+
 
 if __name__ == "__main__":
     unittest.main()

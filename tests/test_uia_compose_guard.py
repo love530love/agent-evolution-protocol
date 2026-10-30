@@ -50,3 +50,16 @@ def test_ocr_compose_does_not_promote_paste_to_delivery_without_clearance():
     assert "$delivered = [bool]($visible -and $composerCleared -and -not $eventInComposer)" in source
     assert "composer_cleared  = $composerCleared" in source
     assert "event_in_composer = $eventInComposer" in source
+
+
+def test_qoder_profile_uses_sticky_composer_and_activity_gate():
+    profile = json.loads(
+        (ROOT / "coordination" / "ui_profiles" / "qoder.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert profile["strict_composer_hint"] is True
+    assert "长按鼠标语音输入文字" in profile["composer_hints"]
+    assert profile["require_activity_ready"] is True
+    assert profile["activity_ocr"] is True
+    assert profile["send_button_color"] == "green"
