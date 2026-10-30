@@ -2,9 +2,10 @@
 
 A task claim protects a task ID, not a directory tree. Two different task IDs
 can therefore declare overlapping ``paths`` and both believe they own the same
-file. This module reports that condition and proposes a resolution; it never
-creates, narrows, releases or rewrites a claim, and it never touches the files
-it is talking about.
+file. Read-side helpers report that condition and propose a resolution. The
+write-side ``claim`` and ``renew`` helpers only create or extend the caller's
+own coordination record; they never touch scoped files or take over another
+task's claim.
 
 Scope rules:
 
