@@ -61,7 +61,7 @@ aep --coord-root .tools/acceptance coord-improvement self-test
 
 This preserves a machine-readable report and evidence under a unique run directory. It does not change production policy or certify real Agent delivery/ACK. CI covers Ubuntu/Windows and Python 3.10/3.12.
 
-[总体系与能力状态](docs/SYSTEM_OVERVIEW.zh-CN.md) · [协同推理工作流](docs/COLLABORATIVE_REASONING_FRAMEWORK.zh-CN.md) · [v0.4.0 发布说明](docs/releases/v0.4.0.md)
+[总体系与能力状态](docs/SYSTEM_OVERVIEW.zh-CN.md) · [协同推理工作流](docs/COLLABORATIVE_REASONING_FRAMEWORK.zh-CN.md) · [v0.4.1 发布说明](docs/releases/v0.4.1.md)
 
 An evidence-driven governance protocol for multi-agent systems that need diversity without coordination collapse.
 
@@ -139,6 +139,7 @@ multi-agent coordination:
 - [Per-Agent MCP bundles and session-aware dispatch](docs/AGENT_MCP_BUNDLES.zh-CN.md)
 - [Third-party execution ecosystem and acceptance gates](docs/THIRD_PARTY_EXECUTION_ECOSYSTEM.zh-CN.md)
 - [Capability runtime installation](docs/CAPABILITY_RUNTIME_INSTALL.zh-CN.md)
+- [Project standards and release rules](docs/PROJECT_STANDARDS.zh-CN.md)
 - [Desktop-primary / headless-augmentation production architecture](docs/DESKTOP_PRIMARY_HEADLESS_AUGMENTATION.zh-CN.md)
 - [Desktop-primary / headless-augmentation acceptance checklist](docs/acceptance/DESKTOP_PRIMARY_HEADLESS_ACCEPTANCE_20261029.md)
 - [session affinity](docs/coordination/MULTI_AGENT_SESSION_AFFINITY.md)

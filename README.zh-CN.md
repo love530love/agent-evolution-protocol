@@ -31,6 +31,7 @@
 - [每 Agent MCP Bundle 与会话感知派工](docs/AGENT_MCP_BUNDLES.zh-CN.md)
 - [第三方执行生态与接入验收门](docs/THIRD_PARTY_EXECUTION_ECOSYSTEM.zh-CN.md)
 - [能力运行时安装与冒烟验收](docs/CAPABILITY_RUNTIME_INSTALL.zh-CN.md)
+- [项目体系、标准与发布规范](docs/PROJECT_STANDARDS.zh-CN.md)
 - [桌面主控、无头增强的生产架构](docs/DESKTOP_PRIMARY_HEADLESS_AUGMENTATION.zh-CN.md)
 - [Qoder 派工失败复盘与联邦执行升级方案](docs/FAILURE_REVIEW_QODER_20261030.zh-CN.md)
 - [派工标准 v1](docs/DISPATCH_STANDARD.zh-CN.md)
