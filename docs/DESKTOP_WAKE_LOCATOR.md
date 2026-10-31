@@ -48,7 +48,7 @@ pwsh -File src/agent_evolution_protocol/coordination/wake_adapters/uia_session.p
 
 | agent | 窗口标题（精确） | 进程/可执行文件 |
 | --- | --- | --- |
-| `qoder` | `Qoder` | `Qoder.exe` / `D:\Programs\Qoder\Qoder.exe` |
+| `qoder` | `Qoder`（黑色任务栏图标，国际版） | `Qoder.exe` / `D:\Programs\Qoder\.qoder-versions\0.4.11\Qoder.exe` |
 | `qoder_cn` | `Qoder CN` | `Qoder CN.exe` / `D:\Programs\QoderCN\Qoder CN\.qoder-versions\0.4.11\Qoder CN.exe` |
 
 `qoder` 的匹配不能命中 `Qoder CN`，`qoder_cn` 的匹配也不能命中 `Qoder`。

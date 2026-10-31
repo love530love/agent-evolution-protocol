@@ -10,11 +10,39 @@ import time
 from agent_evolution_protocol.coordination import improvement_spool as spool
 
 
+def _tempdir():
+    """A temp root that survives a scanner holding a just-released lock file.
+
+    These fixtures hand a lock file to a real PowerShell process.  Windows can
+    still report a transient sharing violation while an indexer or a
+    late-closing child lets go of it, and that says nothing about the watcher.
+    A leaked lease is therefore asserted explicitly by ``_assert_lease_released``
+    instead of being inferred from whether the directory could be deleted.
+    """
+    return TemporaryDirectory(ignore_cleanup_errors=True)
+
+
+def _assert_lease_released(case, root):
+    """Prove the watcher's OS-held lease is gone, not just that it exited."""
+    lock = Path(root) / "improvement_spool" / "watcher.lock"
+    if not lock.exists():
+        return
+    deadline = time.monotonic() + 10
+    while True:
+        try:
+            with lock.open("r+b"):
+                return
+        except OSError:
+            if time.monotonic() >= deadline:
+                case.fail("watcher.lock is still held after the watcher exited")
+            time.sleep(0.1)
+
+
 class SpoolTests(unittest.TestCase):
     @unittest.skipUnless(sys.platform == "win32" and shutil.which("pwsh.exe"), "Windows PowerShell 7")
     def test_live_watcher_receives_event_and_stops(self):
         repo = Path(__file__).resolve().parents[1]
-        with TemporaryDirectory() as temp:
+        with _tempdir() as temp:
             root = Path(temp)
             args = [shutil.which("pwsh.exe"), "-NoProfile", "-File",
                     str(repo / "scripts/watch-improvements.ps1"), "-Python", sys.executable,
@@ -39,13 +67,16 @@ class SpoolTests(unittest.TestCase):
                 self.assertEqual(stop.returncode, 0)
                 process.communicate(timeout=15)
                 self.assertEqual(process.returncode, 0)
+                # A watcher that exits but keeps its lease would block every
+                # later restart, so release is asserted rather than assumed.
+                _assert_lease_released(self, root)
             finally:
                 if process.poll() is None:
                     process.kill()
                     process.communicate()
 
     def test_overview_and_corrupt_receipt_recovery(self):
-        with TemporaryDirectory() as temp:
+        with _tempdir() as temp:
             root = Path(temp)
             inbox = root / "improvement_spool" / "inbox"
             inbox.mkdir(parents=True)
@@ -62,7 +93,7 @@ class SpoolTests(unittest.TestCase):
     @unittest.skipUnless(sys.platform == "win32" and shutil.which("pwsh.exe"), "Windows PowerShell 7")
     def test_stop_flag_prevents_restart(self):
         repo = Path(__file__).resolve().parents[1]
-        with TemporaryDirectory() as temp:
+        with _tempdir() as temp:
             args = [shutil.which("pwsh.exe"), "-NoProfile", "-File",
                     str(repo / "scripts/watch-improvements.ps1"), "-Python", sys.executable,
                     "-CoordRoot", temp]
@@ -75,7 +106,7 @@ class SpoolTests(unittest.TestCase):
     @unittest.skipUnless(sys.platform == "win32" and shutil.which("pwsh.exe"), "Windows PowerShell 7")
     def test_watcher_once_cleans_up_subscriptions(self):
         repo = Path(__file__).resolve().parents[1]
-        with TemporaryDirectory() as temp:
+        with _tempdir() as temp:
             run = subprocess.run([shutil.which("pwsh.exe"), "-NoProfile", "-File",
                 str(repo / "scripts/watch-improvements.ps1"), "-Python", sys.executable,
                 "-CoordRoot", temp, "-Once"], capture_output=True, text=True, timeout=30,
@@ -83,7 +114,7 @@ class SpoolTests(unittest.TestCase):
             self.assertEqual(run.returncode, 0, run.stderr)
 
     def test_delivery_reconciliation_and_replay_guard(self):
-        with TemporaryDirectory() as temp:
+        with _tempdir() as temp:
             root = Path(temp)
             proof = root / "proof"
             proof.write_text("ok")
@@ -103,7 +134,7 @@ class SpoolTests(unittest.TestCase):
                 spool.enqueue(root, event)
 
     def test_poison_message_does_not_block_other_work(self):
-        with TemporaryDirectory() as temp:
+        with _tempdir() as temp:
             root = Path(temp)
             inbox = root / "improvement_spool" / "inbox"
             inbox.mkdir(parents=True)

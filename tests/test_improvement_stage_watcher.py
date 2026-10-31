@@ -16,6 +16,33 @@ from agent_evolution_protocol.coordination import commander, improvement, improv
 from agent_evolution_protocol.coordination.battle_orders import _atomic_json, _task_writer_lock
 
 
+def _tempdir():
+    """A temp root that survives a scanner holding a just-released lock file.
+
+    The watcher takes an OS-held lease on ``watcher.lock``; Windows can still
+    report a transient sharing violation while an indexer or a late-closing
+    child lets go of it.  That says nothing about the behaviour under test, so
+    the lease is asserted explicitly instead of being inferred from rmtree.
+    """
+    return TemporaryDirectory(ignore_cleanup_errors=True)
+
+
+def _assert_lease_released(case, root):
+    """Prove the watcher's OS-held lease is gone, not just that it exited."""
+    lock = Path(root) / "improvement_spool" / "watcher.lock"
+    if not lock.exists():
+        return
+    deadline = time.monotonic() + 10
+    while True:
+        try:
+            with lock.open("r+b"):
+                return
+        except OSError:
+            if time.monotonic() >= deadline:
+                case.fail("watcher.lock is still held after the watcher exited")
+            time.sleep(0.1)
+
+
 REPO = Path(__file__).resolve().parents[1]
 PWSH = shutil.which("pwsh.exe")
 
@@ -95,7 +122,7 @@ class ImprovementStageWatcherTests(unittest.TestCase):
         self.assertEqual(list((root / "improvement_spool" / "inbox").glob("*.json")), [])
 
     def test_new_proposal_directory_is_watched_after_startup(self):
-        with TemporaryDirectory() as temp:
+        with _tempdir() as temp:
             root = Path(temp)
             roster = self._roster(root, "validate")
             with self._watch(root, roster) as (process, log):
@@ -103,7 +130,7 @@ class ImprovementStageWatcherTests(unittest.TestCase):
                 self._assert_queued(root, identity, process, log)
 
     def test_stage_advance_without_new_inbox_queues_review_and_deduplicates_events(self):
-        with TemporaryDirectory() as temp:
+        with _tempdir() as temp:
             root = Path(temp)
             identity, proof = self._proposal(root)
             roster = self._roster(root, "review")
@@ -121,7 +148,7 @@ class ImprovementStageWatcherTests(unittest.TestCase):
             self.assertEqual(process.returncode, 0)
 
     def test_claim_release_without_new_inbox_queues_validation(self):
-        with TemporaryDirectory() as temp:
+        with _tempdir() as temp:
             root = Path(temp)
             identity, _ = self._proposal(root)
             lease = improvement_work.claim(root, identity, actor="fixture-holder")
@@ -133,7 +160,7 @@ class ImprovementStageWatcherTests(unittest.TestCase):
             self.assertEqual(process.returncode, 0)
 
     def test_completed_validation_receipt_without_new_inbox_releases_handoff(self):
-        with TemporaryDirectory() as temp:
+        with _tempdir() as temp:
             root = Path(temp)
             identity, _ = self._proposal(root)
             folder = improvement._folder(root, identity) / "runs" / uuid4().hex
@@ -153,7 +180,7 @@ class ImprovementStageWatcherTests(unittest.TestCase):
             self.assertEqual(process.returncode, 0)
 
     def test_output_and_temporary_files_do_not_trigger_scheduler(self):
-        with TemporaryDirectory() as temp:
+        with _tempdir() as temp:
             root = Path(temp)
             identity, proof = self._proposal(root)
             roster = self._roster(root, "review")
@@ -173,7 +200,7 @@ class ImprovementStageWatcherTests(unittest.TestCase):
                 self._assert_queued(root, identity, process, log)
 
     def test_publisher_lock_conflict_stops_without_replaying_after_release(self):
-        with TemporaryDirectory() as temp:
+        with _tempdir() as temp:
             root = Path(temp)
             identity, proof = self._proposal(root)
             roster = self._roster(root, "review")
@@ -190,7 +217,7 @@ class ImprovementStageWatcherTests(unittest.TestCase):
                 self.assertIn("being written", text)
 
     def test_inbox_publication_while_locked_stops_without_hidden_retry(self):
-        with TemporaryDirectory() as temp:
+        with _tempdir() as temp:
             root = Path(temp)
             roster = self._roster(root, "validate")
             with self._watch(root, roster) as (process, log):
@@ -204,9 +231,12 @@ class ImprovementStageWatcherTests(unittest.TestCase):
                 text = log.read_text(encoding="utf-8", errors="replace")
                 self.assertIn("Drain failed", text)
                 self.assertIn("No automatic retry was attempted", text)
+            # The failed instance must not leave its lease behind, or the next
+            # restart would be refused for a lock nobody holds.
+            _assert_lease_released(self, root)
 
     def test_second_instance_fails_before_reconciliation(self):
-        with TemporaryDirectory() as temp:
+        with _tempdir() as temp:
             root = Path(temp)
             roster = self._roster(root, "validate")
             with self._watch(root, roster) as (process, log):
@@ -219,7 +249,7 @@ class ImprovementStageWatcherTests(unittest.TestCase):
                 self.assertIsNone(process.poll(), log.read_text(encoding="utf-8", errors="replace"))
 
     def test_ready_file_preflight_rejects_existing_and_input_paths(self):
-        with TemporaryDirectory() as temp:
+        with _tempdir() as temp:
             root = Path(temp)
             self._proposal(root)
             roster = self._roster(root, "validate")

@@ -56,6 +56,18 @@
       "status": "candidate"
     },
     {
+      "id": "omniparser_v2",
+      "repository": "https://github.com/microsoft/OmniParser",
+      "layer": "desktop_visual",
+      "integration": "vision-service",
+      "runtime": ["python", "vision-model"],
+      "capabilities": ["screenshot", "locate", "read"],
+      "strengths": ["structured screen element parsing", "shared visual locator for multiple desktop adapters"],
+      "limitations": ["parsing is not input injection", "model weights and GPU runtime are deployment-specific"],
+      "acceptance": ["screen capture hash", "element map with coordinates or bounds", "post-action evidence from a separate executor"],
+      "status": "candidate"
+    },
+    {
       "id": "ufo2",
       "repository": "https://github.com/microsoft/UFO",
       "layer": "desktop_windows",
@@ -65,6 +77,20 @@
       "strengths": ["Windows-focused desktop planning", "multi-agent GUI decomposition"],
       "limitations": ["Windows session and model prerequisites"],
       "acceptance": ["interactive session anchor", "foreground/action evidence", "recovery checkpoint"],
+      "status": "candidate"
+    },
+    {
+      "id": "cua_driver",
+      "repository": "https://github.com/trycua/cua",
+      "layer": "desktop_windows",
+      "integration": "mcp+connector",
+      "runtime": ["windows", "python", "rust", "mcp"],
+      "capabilities": ["launch_program", "locate_session", "dispatch", "readback", "screenshot"],
+      "strengths": ["typed cross-platform desktop actions", "stdio MCP boundary", "evidence-oriented action/refusal ledger", "background-capable actions where upstream supports them"],
+      "limitations": ["action support and background delivery vary by app/platform", "interactive Windows or RDP session is required for desktop E2E", "optional perception extension has separate AGPL-3.0-only components"],
+      "acceptance": ["initialize and tools/list", "unique window/session binding", "one-use capture_id attached to visual action", "same-event message visibility and Agent ACK"],
+      "source_note": "Installed locally in an isolated .tools/cua-runtime; catalog status remains candidate until a real original-session dispatch and readback are evidenced.",
+      "license_note": "Main repository components are MIT or FSL-1.1-MIT by subproject; optional cua-perception includes AGPL-3.0-only OmniParser and other third-party notices. Verify the exact component before redistribution.",
       "status": "candidate"
     },
     {

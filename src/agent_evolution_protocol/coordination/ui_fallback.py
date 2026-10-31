@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+
+from agent_evolution_protocol.coordination import uia_argv
 import re
 import secrets
 import shutil
@@ -84,7 +86,48 @@ def load_profile(path: Path) -> dict:
         raise ValueError("busy_markers must be a list of non-empty strings")
     profile["busy_markers"] = [item.strip() for item in busy_markers]
     profile["require_activity_ready"] = bool(profile.get("require_activity_ready", False))
+    send_mode = str(profile.get("send_mode", "enter")).strip().lower()
+    if send_mode not in {"enter", "button", "auto"}:
+        raise ValueError("send_mode must be enter, button or auto")
+    profile["send_mode"] = send_mode
+    interject_hints = profile.get("interject_hints", [])
+    if interject_hints is None:
+        interject_hints = []
+    if not isinstance(interject_hints, list) or any(
+        not isinstance(item, str) or not item.strip() for item in interject_hints
+    ):
+        raise ValueError("interject_hints must be a list of non-empty strings")
+    profile["interject_hints"] = [item.strip() for item in interject_hints]
+    profile["allow_busy_interject"] = bool(profile.get("allow_busy_interject", False))
+    for key in ("session_evidence_markers", "model_evidence_markers"):
+        markers = profile.get(key, [])
+        if markers is None:
+            markers = []
+        if not isinstance(markers, list) or any(not isinstance(item, str) or not item.strip()
+                                                for item in markers):
+            raise ValueError(f"{key} must be a list of non-empty strings")
+        profile[key] = [item.strip() for item in markers]
+    ocr_language = str(profile.get("ocr_language", "") or "").strip()
+    if ocr_language and not re.fullmatch(r"[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8}){0,3}", ocr_language):
+        raise ValueError("ocr_language must be a BCP-47 language tag")
+    profile["ocr_language"] = ocr_language
     return profile
+
+
+def _evidence_present(text: str, exact: str, markers: list[str]) -> bool:
+    """Verify a session/model even when OCR mangles the primary label.
+
+    Electron clients often render the active chat title outside the OCR region
+    or with CJK glyph loss.  A profiled client may provide stable, unique
+    content markers from the same conversation; all markers must be present so
+    the fallback never degrades into a workspace-only guess.
+    """
+    if exact and exact in text:
+        return True
+    if not markers:
+        return False
+    folded = (text or "").casefold()
+    return all(marker.casefold() in folded for marker in markers)
 
 
 class Driver(Protocol):
@@ -92,7 +135,7 @@ class Driver(Protocol):
     def capture(self, profile: dict) -> str: ...
     def select_session(self, profile: dict) -> dict: ...
     def launch(self, profile: dict) -> None: ...
-    def deliver(self, profile: dict, message: str, event_id: str) -> dict: ...
+    def deliver(self, profile: dict, message: str, event_id: str, *, urgent: bool = False) -> dict: ...
 
 
 class PowerShellUiaDriver:
@@ -107,10 +150,18 @@ class PowerShellUiaDriver:
     def _ui_env(profile: dict) -> dict[str, str]:
         """Pass opt-in visual recovery flags without changing the host shell."""
         env = os.environ.copy()
+        # Keep coordinates in the physical desktop space used by screenshots
+        # unless a profile was explicitly calibrated in a DPI-aware process.
+        if profile.get("dpi_aware"):
+            env["AEP_DPI_AWARE"] = "1"
+        else:
+            env.pop("AEP_DPI_AWARE", None)
         if profile.get("scroll_composer"):
             env["AEP_SCROLL_COMPOSER"] = "1"
         if profile.get("maximize_window"):
             env["AEP_MAXIMIZE_WINDOW"] = "1"
+        if profile.get("allow_minor_clipping"):
+            env["AEP_ALLOW_MINOR_CLIPPING"] = "1"
         if profile.get("send_button_color"):
             color = str(profile["send_button_color"])
             # Keep the historical purple sentinel for existing profiles while
@@ -120,10 +171,9 @@ class PowerShellUiaDriver:
 
     def _run(self, script: Path, args: list[str], timeout: int = 45,
              env: dict[str, str] | None = None) -> dict:
-        completed = subprocess.run([self.pwsh, "-NoProfile", "-ExecutionPolicy", "Bypass",
-                                    "-File", str(script), *args], text=True, encoding="utf-8",
-                                   errors="replace", capture_output=True, timeout=timeout,
-                                   check=False, env=env)
+        completed = uia_argv.run([self.pwsh, "-NoProfile", "-ExecutionPolicy", "Bypass",
+                                  "-File", str(script), *args],
+                                 timeout=timeout, env=env)
         if completed.returncode != 0:
             detail = (completed.stderr or completed.stdout)[-1200:]
             raise RelayError(f"UI_SCRIPT_FAILED:{detail}")
@@ -140,6 +190,13 @@ class PowerShellUiaDriver:
     def _target(profile: dict) -> list[str]:
         args = ["-Agent", profile["agent"], "-ProcessName", profile["process"],
                 "-ExpectedTitle", profile["title"], "-ExpectedPath", profile["exe"]]
+        hints = [str(hint) for hint in profile.get("interject_hints", []) if str(hint).strip()]
+        if hints:
+            args += ["-InterjectHints", ",".join(hints)]
+        # Without this the recognizer silently falls back to the user profile
+        # (en-US here), which turns a Chinese UI into Latin look-alikes.
+        if profile.get("ocr_language"):
+            args += ["-OcrLanguage", str(profile["ocr_language"])]
         if profile.get("allow_unknown_path"):
             args.append("-AllowUnknownPath")
         return args
@@ -174,7 +231,8 @@ class PowerShellUiaDriver:
     def select_session(self, profile: dict) -> dict:
         if profile["transport"] == "ocr":
             return self._run(UIA, self._target(profile) + ["-Mode", "select-ocr",
-                                                         "-SessionLabel", profile["session_marker"]], timeout=75)
+                                                         "-SessionLabel", profile["session_marker"]], timeout=75,
+                              env=self._ui_env(profile))
         args = self._target(profile) + ["-SessionLabel", profile["session_marker"]]
         return self._run(SELECT_SESSION, args)
 
@@ -184,18 +242,32 @@ class PowerShellUiaDriver:
             raise RelayError("EXECUTABLE_MISSING")
         subprocess.Popen([str(executable)], cwd=str(executable.parent), close_fds=True)
 
-    def deliver(self, profile: dict, message: str, event_id: str) -> dict:
+    def deliver(self, profile: dict, message: str, event_id: str, *, urgent: bool = False) -> dict:
         args = self._target(profile) + ["-Mode", "compose" if profile["transport"] == "ocr" else "deliver",
-                "-Text", message, "-EventId", event_id, "-ReadBackTimeoutSeconds", "5"]
-        if profile.get("composer_hint"):
+                "-Text", message, "-EventId", event_id, "-ReadBackTimeoutSeconds", "5",
+                "-SendMode", profile.get("send_mode", "enter")]
+        if urgent:
+            args.append("-UrgentInterject")
+        strict_ocr = profile["transport"] == "ocr" and profile.get("strict_composer_hint", False)
+        if profile.get("composer_hint") and not strict_ocr:
             args += ["-ComposerHint", str(profile["composer_hint"])]
-        for hint in profile.get("composer_hints", []):
-            args += ["-ComposerHints", str(hint)]
-        if profile["transport"] == "ocr" and profile.get("strict_composer_hint", False):
+        # PowerShell binds a string[] parameter from one comma-separated
+        # argument.  Repeating the parameter name causes a terminating
+        # ParameterBindingException before the UI script can even focus the
+        # composer, which is a provably pre-input failure.
+        hints = [str(hint) for hint in profile.get("composer_hints", []) if str(hint).strip()]
+        if hints and not strict_ocr:
+            args += ["-ComposerHints", ",".join(hints)]
+        if strict_ocr:
             args += ["-RequireComposerHint", "-ComposerHint", profile["composer_hint"]]
+            if profile.get("allow_composer_geometry_fallback"):
+                args.append("-AllowComposerGeometryFallback")
         if profile.get("send_button_x_ratio") and profile.get("send_button_y_ratio"):
             args += ["-SendButtonXRatio", str(profile["send_button_x_ratio"]),
                      "-SendButtonYRatio", str(profile["send_button_y_ratio"])]
+        if profile.get("composer_x_ratio") and profile.get("composer_y_ratio"):
+            args += ["-ComposerXRatio", str(profile["composer_x_ratio"]),
+                     "-ComposerYRatio", str(profile["composer_y_ratio"])]
         return self._run(UIA, args, timeout=75, env=self._ui_env(profile))
 
 
@@ -238,19 +310,72 @@ def _challenge() -> tuple[str, str]:
     return nonce, "AEP-ACK:" + nonce[::-1]
 
 
+def _preinput_receipt_retryable(existing: dict) -> bool:
+    """Recognize only receipts that prove the UI was never touched."""
+    if not isinstance(existing, dict) or existing.get("task_delivered", False):
+        return False
+    if existing.get("state") in {
+        "NO_WINDOW", "AGENT_BUSY", "ACTIVITY_UNCONFIRMED",
+        "URGENT_INTERJECT_UNAVAILABLE",
+        "WINDOW_OR_INPUT_AMBIGUOUS", "NO_SAFE_COMPOSER",
+        "SESSION_NOT_VERIFIED", "MODEL_NOT_VERIFIED",
+    }:
+        return True
+    if existing.get("state") != "SEND_UNCERTAIN":
+        return False
+    report = existing.get("send_report") or {}
+    if (report.get("status") == "composer-not-confirmed" and
+            not report.get("task_delivered", False)):
+        return True
+    error = str(existing.get("error", ""))
+    return ("COMPOSER_HINT_" in error or
+            ("ComposerHints" in error and
+             ("绑定参数" in error or "指定了参数" in error or
+              "ParameterBindingException" in error)))
+
+
+def _deliver(driver: Driver, profile: dict, message: str, event_id: str, *, urgent: bool) -> dict:
+    """Call both new and legacy drivers without turning a legacy driver into a
+    false urgent success.  Normal dispatch remains compatible with older
+    adapters; urgent interjection requires an adapter that explicitly accepts
+    the urgent keyword.
+    """
+    import inspect
+
+    try:
+        parameters = inspect.signature(driver.deliver).parameters
+    except (TypeError, ValueError):
+        parameters = {}
+    supports_urgent = "urgent" in parameters
+    if urgent and not supports_urgent:
+        return {"status": "urgent-interject-unsupported", "interruption": False}
+    if supports_urgent:
+        return driver.deliver(profile, message, event_id, urgent=urgent)
+    return driver.deliver(profile, message, event_id)
+
+
 def run(profile: dict, message: str, *, event_id: str, receipt_path: Path,
         lock_path: Path, driver: Driver, allow_launch: bool = False,
-        poll_seconds: float = 1.5) -> dict:
+        poll_seconds: float = 1.5, urgent: bool = False) -> dict:
     if not EVENT.fullmatch(event_id) or not message.strip():
         raise ValueError("event_id and message required")
     if poll_seconds < 0.1:
         raise ValueError("poll interval too short")
     receipt_path = Path(receipt_path)
     if receipt_path.exists():
-        return json.loads(receipt_path.read_text(encoding="utf-8"))
+        existing = json.loads(receipt_path.read_text(encoding="utf-8"))
+        # A pre-input readiness result is deliberately retryable after the
+        # target becomes ready.  No composer write or send control was
+        # attempted in these states, so reusing the same event ID cannot
+        # duplicate a user-visible message.  All post-input/uncertain states
+        # remain terminal and retain the original receipt for auditability.
+        if not _preinput_receipt_retryable(existing):
+            return existing
     with _desktop_lock(Path(lock_path)):
         if receipt_path.exists():
-            return json.loads(receipt_path.read_text(encoding="utf-8"))
+            existing = json.loads(receipt_path.read_text(encoding="utf-8"))
+            if not _preinput_receipt_retryable(existing):
+                return existing
         state = {"agent": profile["agent"], "event_id": event_id, "state": "PREFLIGHT",
                  "at": _utc(), "task_delivered": False, "agent_accepted": False}
         observation = driver.observe(profile)
@@ -277,10 +402,27 @@ def run(profile: dict, message: str, *, event_id: str, receipt_path: Path,
         # the supervisor resume only after a later readiness observation.
         activity = str(observation.get("activity_state", "")).lower()
         if activity == "busy":
-            state.update(state="AGENT_BUSY", reason="target reports an active generation/tool run",
-                         activity=observation.get("activity_evidence", {}))
-            _atomic(receipt_path, state)
-            return state
+            interject = (observation.get("interject_evidence") or
+                         (observation.get("activity_evidence") or {}).get("interject_evidence") or {})
+            if not urgent:
+                state.update(state="AGENT_BUSY", reason="target reports an active generation/tool run",
+                             activity=observation.get("activity_evidence", {}))
+                _atomic(receipt_path, state)
+                return state
+            if not profile.get("allow_busy_interject"):
+                state.update(state="URGENT_INTERJECT_UNAVAILABLE",
+                             reason="profile has not enabled a non-interrupting interject action",
+                             activity=observation.get("activity_evidence", {}),
+                             interject=interject)
+                _atomic(receipt_path, state)
+                return state
+            if not interject.get("ready") or interject.get("interrupt_only"):
+                state.update(state="URGENT_INTERJECT_UNAVAILABLE",
+                             reason="no uniquely identified non-interrupting interject control was observed",
+                             activity=observation.get("activity_evidence", {}),
+                             interject=interject)
+                _atomic(receipt_path, state)
+                return state
         if (profile.get("require_activity_ready") and
                 activity not in {"ready"}):
             state.update(state="ACTIVITY_UNCONFIRMED",
@@ -299,15 +441,18 @@ def run(profile: dict, message: str, *, event_id: str, receipt_path: Path,
             return state
         state["pid"] = pid
         before = driver.capture(profile)
-        if profile["session_marker"] not in before:
+        if not _evidence_present(before, profile["session_marker"],
+                                 profile.get("session_evidence_markers", [])):
             selected = driver.select_session(profile)
             state["session_selection"] = selected
             before = driver.capture(profile)
-        if profile["session_marker"] not in before:
+        if not _evidence_present(before, profile["session_marker"],
+                                 profile.get("session_evidence_markers", [])):
             state.update(state="SESSION_NOT_VERIFIED")
             _atomic(receipt_path, state)
             return state
-        if profile["model_marker"] not in before:
+        if not _evidence_present(before, profile["model_marker"],
+                                 profile.get("model_evidence_markers", [])):
             state.update(state="MODEL_NOT_VERIFIED")
             _atomic(receipt_path, state)
             return state
@@ -319,19 +464,31 @@ def run(profile: dict, message: str, *, event_id: str, receipt_path: Path,
         outgoing = (f"{message.rstrip()}\n\n事件 ID：{event_id}。请在回复中单独写 AEP-ACK:"
                     f" 后紧跟校验串 {nonce} 的倒序字符，然后写你的结论和下一步。"
                     "不要在回复前切换会话或模型。")
+        if urgent:
+            outgoing = ("【紧急插话｜保持当前任务继续运行】\n" + outgoing +
+                        "\n这是非中断插话；不要点击停止、取消或中止。")
         state.update(state="SEND_ATTEMPTED", session_marker=profile["session_marker"],
                      model_marker=profile["model_marker"], challenge=nonce,
                      expected_ack=expected_ack, outgoing_chars=len(outgoing))
         # Persist before touching the UI: after a crash, a retry may not send again.
         _atomic(receipt_path, state)
         try:
-            sent = driver.deliver(profile, outgoing, event_id)
+            sent = _deliver(driver, profile, outgoing, event_id, urgent=urgent)
         except Exception as exc:  # noqa: BLE001
             state.update(state="SEND_UNCERTAIN", error=str(exc)[:800])
             _atomic(receipt_path, state)
             return state
         state["send_report"] = sent
-        if sent.get("status") not in {"message-visible", "submitted-unconfirmed"}:
+        accepted_statuses = {"message-visible", "submitted-unconfirmed"}
+        if urgent:
+            accepted_statuses |= {"urgent-interject-visible", "urgent-interject-submitted"}
+            if sent.get("interruption", False) or not sent.get("interject_action"):
+                state.update(state="URGENT_INTERJECT_UNCERTAIN",
+                             reason="send receipt did not prove a non-interrupting interject action",
+                             send_report=sent)
+                _atomic(receipt_path, state)
+                return state
+        if sent.get("status") not in accepted_statuses:
             state.update(state="SEND_UNCERTAIN")
             _atomic(receipt_path, state)
             return state
@@ -345,10 +502,12 @@ def run(profile: dict, message: str, *, event_id: str, receipt_path: Path,
                 state.update(state="SESSION_WINDOW_CHANGED")
                 break
             text = driver.capture(profile)
-            if profile["session_marker"] not in text:
+            if not _evidence_present(text, profile["session_marker"],
+                                     profile.get("session_evidence_markers", [])):
                 state.update(state="SESSION_CHANGED")
                 break
-            if profile["model_marker"] not in text:
+            if not _evidence_present(text, profile["model_marker"],
+                                     profile.get("model_evidence_markers", [])):
                 state.update(state="MODEL_CHANGED")
                 break
             if expected_ack in text:
@@ -370,12 +529,15 @@ def main() -> int:
     parser.add_argument("--receipt", type=Path, required=True)
     parser.add_argument("--lock", type=Path, default=Path.cwd() / "coordination" / "desktop-input.lock")
     parser.add_argument("--allow-launch", action="store_true")
+    parser.add_argument("--urgent-interject", action="store_true",
+                        help="use a profiled non-interrupting interject action while the agent is busy")
     args = parser.parse_args()
     try:
         profile = load_profile(args.profile)
         message = args.message_file.read_text(encoding="utf-8")
         output = run(profile, message, event_id=args.event_id, receipt_path=args.receipt,
-                     lock_path=args.lock, driver=PowerShellUiaDriver(), allow_launch=args.allow_launch)
+                     lock_path=args.lock, driver=PowerShellUiaDriver(), allow_launch=args.allow_launch,
+                     urgent=args.urgent_interject)
         if output["state"] == "AGENT_REPLY_VERIFIED":
             from .presence import signal
             signal(args.lock.parent, agent=profile["agent"], state="online",

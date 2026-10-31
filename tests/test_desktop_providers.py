@@ -12,6 +12,10 @@ from agent_evolution_protocol.coordination import commander, desktop_providers a
 
 
 class DesktopProviderTests(unittest.TestCase):
+    def test_catalog_includes_cua_driver_candidate(self):
+        self.assertEqual(providers.CATALOG["cua_driver"]["project"], "trycua/cua")
+        self.assertEqual(providers.CATALOG["cua_driver"]["priority"], 5)
+
     def setUp(self):
         self.temp = TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

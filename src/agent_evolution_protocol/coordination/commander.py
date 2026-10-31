@@ -27,6 +27,7 @@ from uuid import uuid4
 from agent_evolution_protocol.coordination import client_registry as registry
 from agent_evolution_protocol.coordination import transcript_bus as bus
 from agent_evolution_protocol.coordination import transport_cdp as cdp
+from agent_evolution_protocol.coordination import uia_argv
 from agent_evolution_protocol.coordination import ui_fallback
 from agent_evolution_protocol.coordination import desktop_providers
 from agent_evolution_protocol.coordination import desktop_health
@@ -99,7 +100,7 @@ def submit_order(root: Path, *, target: str, task: str, text: str, sender: str,
                  priority: str = "normal", event_id: str = "", allow_launch: bool = False,
                  transport: str = "auto", expires_minutes: int = 120,
                  candidates: str = "", source_wake: dict | None = None,
-                 workspace_id: str = "") -> dict:
+                 workspace_id: str = "", urgent_interject: bool = False) -> dict:
     """Queue a directive for one client. Nothing is sent until a tick runs.
 
     ``candidates`` is a comma/space separated list of backup agents. When the
@@ -143,7 +144,7 @@ def submit_order(root: Path, *, target: str, task: str, text: str, sender: str,
     payload = {
         "id": order_id, "event_id": event, "target": target, "sender": sender,
         "task": task or "GENERAL", "priority": priority, "text": body, "allow_launch": allow_launch,
-        "transport": transport, "state": "DEPOSITED", "created_at": created_at,
+        "transport": transport, "urgent_interject": bool(urgent_interject), "state": "DEPOSITED", "created_at": created_at,
         "expires_at": expires_at,
         "attempts": [], "ack": None,
         "candidates": _parse_candidates(candidates), "children": [], "parent": None,
@@ -259,8 +260,7 @@ def _uia_deliver(root: Path, agent: str, text: str, event_id: str, *,
     if ocr:
         cmd += ["-OcrVerify"]
     try:
-        done = subprocess.run(cmd, text=True, encoding="utf-8", errors="replace",
-                              capture_output=True, timeout=timeout + 90, check=False)
+        done = uia_argv.run(cmd, timeout=timeout + 90)
     except Exception as exc:  # noqa: BLE001
         return {"status": "ADAPTER_ERROR", "error": str(exc), "task_delivered": False}
     report = None
@@ -306,8 +306,7 @@ def _uia_observe(root: Path, agent: str, *, expected_pid: int = 0,
     if ocr:
         cmd += ["-OcrVerify"]
     try:
-        done = subprocess.run(cmd, text=True, encoding="utf-8", errors="replace",
-                              capture_output=True, timeout=timeout + 45, check=False)
+        done = uia_argv.run(cmd, timeout=timeout + 45)
     except Exception as exc:  # noqa: BLE001
         return {"status": "ADAPTER_ERROR", "activity_state": "unknown",
                 "error": str(exc), "task_delivered": False}
@@ -324,7 +323,7 @@ def _uia_observe(root: Path, agent: str, *, expected_pid: int = 0,
 
 
 def _profiled_deliver(root: Path, agent: str, text: str, event_id: str, *,
-                      allow_launch: bool = False) -> dict:
+                      allow_launch: bool = False, urgent_interject: bool = False) -> dict:
     profile_path = Path(root) / "ui_profiles" / f"{agent}.json"
     try:
         profile = ui_fallback.load_profile(profile_path)
@@ -335,6 +334,7 @@ def _profiled_deliver(root: Path, agent: str, text: str, event_id: str, *,
             profile, text, event_id=event_id, receipt_path=receipt_path,
             lock_path=Path(root) / "desktop-input.lock",
             driver=ui_fallback.PowerShellUiaDriver(), allow_launch=allow_launch,
+            urgent=urgent_interject,
         )
         return {
             "status": result.get("state", "UNKNOWN"),
@@ -383,8 +383,7 @@ def _capture_uia(root: Path, agent: str, *, timeout: int = 20) -> tuple[str, str
     if profile.get("exe"):
         cmd += ["-ExpectedPath", profile["exe"]]
     try:
-        subprocess.run(cmd, text=True, encoding="utf-8", errors="replace",
-                       capture_output=True, timeout=timeout + 90, check=False)
+        uia_argv.run(cmd, timeout=timeout + 90)
     except Exception:  # noqa: BLE001
         return "", "uia"
     try:
@@ -486,6 +485,95 @@ def _mark_dispatching(root: Path, order: dict) -> dict:
     return fenced
 
 
+def _preinput_retryable(order: dict) -> bool:
+    """Return True only when the durable history proves no input was sent.
+
+    ``WINDOW_FOUND`` is recorded immediately before the profiled adapter
+    performs its readiness check.  It is therefore retryable only when a
+    later attempt explicitly records a pre-input deferral.  A bare
+    ``WINDOW_FOUND`` remains uncertain and must not be replayed.
+    """
+    def _receipt_proves_preinput(receipt: dict) -> bool:
+        """Read a profiled relay receipt when the outer order only has a link.
+
+        A PowerShell parameter-binding error happens before the UI script can
+        focus, paste, or click.  Preserve the normal no-replay fence, but make
+        this one machine-verifiable class eligible for an explicit retry.
+        """
+        if not isinstance(receipt, dict) or receipt.get("task_delivered", False):
+            return False
+        error = str(receipt.get("error", ""))
+        markers = ("WINDOW_NOT_FULLY_VISIBLE", "COMPOSER_HINT_", "WINDOW_RECT_UNAVAILABLE",
+                   "WINDOW_FOCUS_DENIED", "SESSION_LABEL_", "MODEL_MARKER_",
+                   "ParameterBindingException", "multiple times specified the parameter 'ComposerHints'",
+                   "parameter 'ComposerHints'")
+        if (any(marker in error for marker in markers)
+                or ("ComposerHints" in error and ("绑定参数" in error or "指定了参数" in error))):
+            return True
+        receipt_file = receipt.get("receipt_file")
+        if not receipt_file:
+            return False
+        try:
+            detail = json.loads(Path(str(receipt_file)).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            return False
+        if detail.get("task_delivered", False):
+            return False
+        report = detail.get("send_report") or {}
+        if report.get("status") == "composer-not-confirmed" and not report.get("task_delivered", False):
+            return True
+        detail_error = str(detail.get("error", ""))
+        return detail.get("state") == "SEND_UNCERTAIN" and (
+            any(marker in detail_error for marker in markers)
+            or ("ComposerHints" in detail_error and
+                ("绑定参数" in detail_error or "指定了参数" in detail_error))
+        )
+
+    attempts = order.get("attempts", [])
+    for index, attempt in enumerate(attempts):
+        state = attempt.get("state")
+        if state in {"DEPOSITED", "DEFERRED", "DISPATCHING"}:
+            continue
+        if state == "WINDOW_FOUND":
+            later = attempts[index + 1:]
+            proven_preinput = any(
+                row.get("state") in {"DEFERRED", "CEASED"}
+                and not row.get("receipt", {}).get("task_delivered", False)
+                and (
+                    row.get("receipt", {}).get("status") in {
+                    "AGENT_BUSY", "URGENT_INTERJECT_UNAVAILABLE", "ACTIVITY_UNCONFIRMED", "NO_WINDOW",
+                    "LAUNCH_UNVERIFIED", "WINDOW_OR_INPUT_AMBIGUOUS",
+                    "NO_SAFE_COMPOSER", "SESSION_NOT_VERIFIED", "MODEL_NOT_VERIFIED",
+                    }
+                    or _receipt_proves_preinput(row.get("receipt", {}))
+                    or (
+                        row.get("receipt", {}).get("status") == "PROFILE_DELIVERY_FAILED"
+                        and any(marker in str(row.get("receipt", {}).get("error", ""))
+                                for marker in ("WINDOW_NOT_FULLY_VISIBLE", "COMPOSER_HINT_",
+                                               "WINDOW_RECT_UNAVAILABLE", "WINDOW_FOCUS_DENIED",
+                                               "SESSION_LABEL_", "MODEL_MARKER_"))
+                    )
+                )
+                for row in later
+            )
+            if proven_preinput:
+                continue
+        if state == "CEASED":
+            receipt = attempt.get("receipt", {})
+            error = str(receipt.get("error", ""))
+            if (_receipt_proves_preinput(receipt)
+                    or (receipt.get("status") == "PROFILE_DELIVERY_FAILED"
+                    and not receipt.get("task_delivered", False)
+                    and any(marker in error for marker in (
+                        "WINDOW_NOT_FULLY_VISIBLE", "COMPOSER_HINT_",
+                        "WINDOW_RECT_UNAVAILABLE", "WINDOW_FOCUS_DENIED",
+                        "SESSION_LABEL_", "MODEL_MARKER_",
+                    )))):
+                continue
+        return False
+    return True
+
+
 def dispatch(root: Path, *, order: dict) -> dict:
     if str(order.get("task", "")).startswith("improvement:"):
         from .battle_orders import _task_writer_lock
@@ -502,9 +590,7 @@ def dispatch(root: Path, *, order: dict) -> dict:
         current = _persisted_order(root, order["id"])
         if current != order:
             return current
-        if current.get("state") != "DEPOSITED" or any(
-                attempt.get("state") not in {"DEPOSITED", "DEFERRED", "DISPATCHING"}
-                for attempt in current.get("attempts", [])):
+        if current.get("state") != "DEPOSITED" or not _preinput_retryable(current):
             return current
         if datetime.now(timezone.utc) > datetime.fromisoformat(current["expires_at"]):
             return _record_attempt(root, order, state="FAILED", note="EXPIRED")
@@ -612,7 +698,8 @@ def _dispatch(root: Path, *, order: dict) -> dict:
     profile_path = Path(root) / "ui_profiles" / f"{target}.json"
     if profile_path.is_file():
         receipt = _profiled_deliver(root, target, order["text"], order["event_id"],
-                                    allow_launch=bool(order.get("allow_launch")))
+                                    allow_launch=bool(order.get("allow_launch")),
+                                    urgent_interject=bool(order.get("urgent_interject")))
         transport = "profiled-ui"
     else:
         receipt = _uia_deliver(root, target, order["text"], order["event_id"],
@@ -625,7 +712,7 @@ def _dispatch(root: Path, *, order: dict) -> dict:
     # A missing/failed adapter receipt proves neither typing nor sending.
     # Even when the adapter reports a submitted input, never retry blindly:
     # it may have reached the agent without a readable echo.
-    if receipt.get("status") in ("AGENT_BUSY", "ACTIVITY_UNCONFIRMED", "NO_WINDOW",
+    if receipt.get("status") in ("AGENT_BUSY", "URGENT_INTERJECT_UNAVAILABLE", "ACTIVITY_UNCONFIRMED", "NO_WINDOW",
                                   "LAUNCH_UNVERIFIED", "WINDOW_OR_INPUT_AMBIGUOUS",
                                   "NO_SAFE_COMPOSER", "SESSION_NOT_VERIFIED", "MODEL_NOT_VERIFIED"):
         return _record_attempt(root, order, state="DEFERRED", transport=transport, receipt=receipt,
@@ -788,20 +875,15 @@ def tick(root: Path, *, perceive_first: bool = True) -> dict:
 
 
 def resume_deferred(root: Path, *, order_id: str) -> dict:
-    """Explicitly retry only a proven pre-input failure, keeping the event ID.
-
-    Never resume CEASED/WINDOW_FOUND/INPUT_SUBMITTED: those may already have
-    reached the target. A caller should first resolve the recorded prerequisite.
-    """
+    """Explicitly retry only a proven pre-input failure, keeping the event ID."""
     with _dispatch_lock(root, order_id):
         order = _persisted_order(root, order_id)
-        if order.get("state") != "DEFERRED":
-            raise ValueError("only DEFERRED pre-input orders can be resumed")
+        if order.get("state") not in {"DEFERRED", "CEASED"} or not _preinput_retryable(order):
+            raise ValueError("only DEFERRED or proven pre-input orders can be resumed")
         if datetime.now(timezone.utc) > datetime.fromisoformat(order["expires_at"]):
             return _record_attempt(root, order, state="FAILED", note="EXPIRED")
         if not str(order.get("task", "")).startswith("improvement:"):
-            if any(attempt.get("state") not in {"DEPOSITED", "DEFERRED", "DISPATCHING"}
-                   for attempt in order.get("attempts", [])):
+            if not _preinput_retryable(order):
                 raise ValueError("delivery history is uncertain; cannot resume automatically")
             _record_attempt(root, order, state="DEPOSITED", note="EXPLICIT_PREINPUT_RESUME")
     # Release the non-reentrant order lock before dispatch reacquires it and

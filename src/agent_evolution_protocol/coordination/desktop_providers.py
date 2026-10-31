@@ -13,6 +13,7 @@ from uuid import uuid4
 NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 OPERATIONS = {"windows", "snapshot", "read", "locate", "type", "click", "keys", "select", "screenshot", "clipboard", "wait"}
 CATALOG = {
+    "cua_driver": {"project": "trycua/cua", "runtime": "python/rust+mcp", "priority": 5},
     "sbroenne": {"project": "sbroenne/mcp-windows", "runtime": "dotnet", "priority": 10},
     "shuyu": {"project": "shuyu-labs/Windows-MCP.Net", "runtime": "dotnet", "priority": 20},
     "mcpcontrol": {"project": "claude-did-this/MCPControl", "runtime": "node", "priority": 30},

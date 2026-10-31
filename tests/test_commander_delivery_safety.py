@@ -55,6 +55,40 @@ class CommanderDeliverySafetyTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "only DEFERRED"):
             commander.resume_deferred(self.root, order_id=order["id"])
 
+    def test_window_found_followed_by_preinput_deferral_is_retryable(self):
+        order = commander.submit_order(self.root, target="qoder", task="notice",
+                                       text="Read inbox", sender="codex")
+        commander._record_attempt(self.root, order, state="WINDOW_FOUND")
+        commander._record_attempt(
+            self.root,
+            order,
+            state="DEFERRED",
+            receipt={"status": "ACTIVITY_UNCONFIRMED", "task_delivered": False},
+            note="PREINPUT_NOT_READY",
+        )
+        with patch.object(commander, "dispatch", return_value=order) as dispatch:
+            commander.resume_deferred(self.root, order_id=order["id"])
+        self.assertEqual(dispatch.call_args.kwargs["order"]["event_id"], order["event_id"])
+
+    def test_safe_preinput_profile_failure_is_retryable(self):
+        order = commander.submit_order(self.root, target="qoder", task="notice",
+                                       text="Read inbox", sender="codex")
+        commander._record_attempt(self.root, order, state="WINDOW_FOUND")
+        commander._record_attempt(
+            self.root,
+            order,
+            state="CEASED",
+            receipt={
+                "status": "PROFILE_DELIVERY_FAILED",
+                "task_delivered": False,
+                "error": "UI_SCRIPT_FAILED: WINDOW_NOT_FULLY_VISIBLE",
+            },
+            note="DELIVERY_UNPROVEN",
+        )
+        with patch.object(commander, "dispatch", return_value=order) as dispatch:
+            commander.resume_deferred(self.root, order_id=order["id"])
+        self.assertEqual(dispatch.call_args.kwargs["order"]["event_id"], order["event_id"])
+
     def test_tick_does_not_repeat_window_found_or_failed(self):
         first = commander.submit_order(self.root, target="workbuddy", task="one",
                                        text="one", sender="codex")

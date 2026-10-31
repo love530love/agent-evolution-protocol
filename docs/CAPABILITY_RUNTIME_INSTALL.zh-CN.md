@@ -26,6 +26,28 @@ pwsh.exe -File .\scripts\install-capability-runtime.ps1 -InstallBrowser
 pwsh.exe -File .\scripts\install-capability-runtime.ps1 -InstallBrowser -IncludeVectors
 ```
 
+协议/执行增强保持可选，不会被基础安装隐式拉入：
+
+```powershell
+& $py -m pip install -e ".[a2a,model-routing]"   # A2A SDK + LiteLLM
+& $py -m pip install -e ".[durable]"              # Temporal Python SDK
+& $py -m pip install -e ".[desktop-agent]"         # pyautogui/uiautomation 兜底
+```
+
+这些 extras 只安装客户端库，不会自动启动 Temporal 服务、桌面 Agent 或视觉模型；安装完成仍需按 provider
+验收门槛逐项探测和绑定原会话。
+
+## Cua Driver（可选桌面 MCP Provider）
+
+Cua Driver 要求独立的 Python 3.12–3.13 运行时；不要把它强行塞进 AEP 的核心环境。使用固定版本、隔离安装并完成 MCP 探测：
+
+```powershell
+pwsh.exe -File .\scripts\install-capability-runtime.ps1
+pwsh.exe -File .\scripts\install-cua-runtime.ps1 -Install -Register -Probe
+```
+
+脚本不会执行上游远程安装脚本，也不会默认安装 `cua-perception`。Cua 的可选感知扩展包含 AGPL-3.0-only 的 OmniParser 及其他第三方组件，发布或远程托管前必须单独核对许可证和 NOTICE。详见 [Cua Driver 接入 AEP](CUA_DRIVER_INTEGRATION.zh-CN.md)。
+
 脚本会拒绝覆盖已存在的环境；`-WhatIf` 只输出计划，不创建或下载文件。
 
 ## 冒烟验收

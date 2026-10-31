@@ -1,4 +1,4 @@
-param([Parameter(Mandatory = $true)][string]$ImagePath)
+param([Parameter(Mandatory = $true)][string]$ImagePath, [string]$Language = '')
 
 # Windows PowerShell 5.1 compatibility island: PowerShell 7 cannot resolve
 # Windows.Media.Ocr WinRT types on this host. No UI input occurs here.
@@ -23,7 +23,18 @@ try {
   $stream = Await-Ocr ($file.OpenAsync([Windows.Storage.FileAccessMode]::Read)) ([Windows.Storage.Streams.IRandomAccessStream])
   $decoder = Await-Ocr ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream)) ([Windows.Graphics.Imaging.BitmapDecoder])
   $bitmap = Await-Ocr ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
-  $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
+  # An explicit language is honoured when its recognizer is installed.  Without
+  # it the engine silently falls back to the user profile, which on this host is
+  # en-US -- and an en-US recognizer reading a Chinese UI returns plausible
+  # Latin look-alikes instead of an error, so every Chinese marker misses.
+  $engine = $null
+  if ($Language) {
+    try {
+      $target = [Windows.Globalization.Language]::new($Language)
+      $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromLanguage($target)
+    } catch { $engine = $null }
+  }
+  if (-not $engine) { $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages() }
   if (-not $engine) { throw 'OCR_ENGINE_UNAVAILABLE' }
   $result = Await-Ocr ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
   $lines = @($result.Lines | ForEach-Object {
@@ -39,8 +50,9 @@ try {
     }
     [pscustomobject]@{ Text = [string]$_.Text; X = [int]$minX; Y = [int]$minY; W = [int]($maxX - $minX); H = [int]($maxY - $minY) }
   })
-  [pscustomobject]@{ Text = [string]$result.Text; Lines = $lines; Error = '' } | ConvertTo-Json -Compress -Depth 5
+  [pscustomobject]@{ Text = [string]$result.Text; Lines = $lines; Error = '';
+    Language = [string]$engine.RecognizerLanguage.LanguageTag } | ConvertTo-Json -Compress -Depth 5
 } catch {
-  [pscustomobject]@{ Text = ''; Lines = @(); Error = $_.Exception.Message } | ConvertTo-Json -Compress -Depth 5
+  [pscustomobject]@{ Text = ''; Lines = @(); Error = $_.Exception.Message; Language = '' } | ConvertTo-Json -Compress -Depth 5
   exit 1
 }

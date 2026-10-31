@@ -51,3 +51,7 @@ src/agent_evolution_protocol/coordination/messages/
 /transcript_bus/
 /tmp-mission-test/
 /desktop_health.json
+
+# Desktop driver scratch: screenshots and one-line runtime logs from UI probes.
+/tmp/
+/overlay_audit.jsonl

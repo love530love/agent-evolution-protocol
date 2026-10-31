@@ -9,11 +9,17 @@ param(
   [string]$EventId = '',
   [string]$OutFile = '',
   [string]$ReceiptFile = '',
+  [ValidateSet('enter', 'button', 'auto')][string]$SendMode = 'enter',
+  [switch]$UrgentInterject,
+  [string[]]$InterjectHints = @(),
   [switch]$AllowUnknownPath,
   [switch]$AllowLaunch,
   [switch]$AllowClipboardPaste,
   [switch]$OcrVerify,
+  [string]$OcrLanguage = '',
   [switch]$RequireComposerHint,
+  [switch]$AllowComposerGeometryFallback,
+  [switch]$NoSend,
   [string]$ComposerHint = '',
   [string[]]$ComposerHints = @(),
   [string]$SessionLabel = '',
@@ -21,9 +27,34 @@ param(
   [string]$SendKey = '{ENTER}',
   [double]$SendButtonXRatio = 0,
   [double]$SendButtonYRatio = 0,
+  [double]$ComposerXRatio = 0,
+  [double]$ComposerYRatio = 0,
   [ValidateRange(1, 50)][int]$MaxInputCandidates = 6,
-  [ValidateRange(1000, 4000000)][int]$MaxCaptureChars = 400000
+  [ValidateRange(1000, 4000000)][int]$MaxCaptureChars = 400000,
+  [string]$ParamFile = ''
 )
+
+<#
+  Non-ASCII parameters cannot survive the console code page.
+
+  This host runs PowerShell with [Console]::InputEncoding = ibm437, so a
+  Chinese composer hint, session label or message body arrives here already
+  reduced to "?" -- the send then either matches nothing or types question
+  marks at the Agent.  The caller therefore moves every non-ASCII value into a
+  UTF-8 JSON file and names it with -ParamFile.  Applying the overrides after
+  binding keeps every other code path untouched.
+#>
+if ($ParamFile -and (Test-Path -LiteralPath $ParamFile)) {
+  $overrides = [IO.File]::ReadAllText($ParamFile, [Text.Encoding]::UTF8) | ConvertFrom-Json
+  foreach ($property in $overrides.PSObject.Properties) {
+    Set-Variable -Name $property.Name -Value $property.Value -Scope Script
+  }
+}
+
+# The same code page would otherwise mangle the receipt on the way out, so a
+# Chinese session label or composer hint came back as "?" and looked like the
+# input had failed when only the echo had.
+try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }
 
 <#
   Local desktop transport for agent clients.
@@ -47,6 +78,7 @@ Add-Type -AssemblyName System.Drawing
 
 Add-Type -TypeDefinition @'
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 public static class AepUiWindow {
   [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
@@ -60,12 +92,43 @@ public static class AepUiWindow {
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
   [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
   [DllImport("user32.dll")] public static extern void mouse_event(uint dwFlags, int dx, int dy, uint dwData, IntPtr dwExtraInfo);
+  [DllImport("user32.dll")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
+  [StructLayout(LayoutKind.Sequential)] public struct KEYBDINPUT { public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public UIntPtr dwExtraInfo; }
+  [StructLayout(LayoutKind.Sequential)] public struct MOUSEINPUT { public int dx; public int dy; public uint mouseData; public uint dwFlags; public uint time; public UIntPtr dwExtraInfo; }
+  [StructLayout(LayoutKind.Explicit)] public struct INPUTUNION {
+    [FieldOffset(0)] public KEYBDINPUT ki;
+    [FieldOffset(0)] public MOUSEINPUT mi;
+  }
+  [StructLayout(LayoutKind.Sequential)] public struct INPUT { public uint type; public INPUTUNION U; }
+  [DllImport("user32.dll", SetLastError=true)] public static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+  public static uint SendUnicodeText(string text) {
+    var list = new List<INPUT>();
+    foreach (char ch in text ?? "") {
+      list.Add(new INPUT { type = 1, U = new INPUTUNION { ki = new KEYBDINPUT { wVk = 0, wScan = ch, dwFlags = 4, time = 0, dwExtraInfo = UIntPtr.Zero } } });
+      list.Add(new INPUT { type = 1, U = new INPUTUNION { ki = new KEYBDINPUT { wVk = 0, wScan = ch, dwFlags = 4 | 2, time = 0, dwExtraInfo = UIntPtr.Zero } } });
+    }
+    if (list.Count == 0) return 0;
+    return SendInput((uint)list.Count, list.ToArray(), Marshal.SizeOf(typeof(INPUT)));
+  }
+  public static uint SendVirtualKey(byte vk) {
+    var inputs = new INPUT[2];
+    inputs[0] = new INPUT { type = 1, U = new INPUTUNION { ki = new KEYBDINPUT { wVk = vk, wScan = 0, dwFlags = 0, time = 0, dwExtraInfo = UIntPtr.Zero } } };
+    inputs[1] = new INPUT { type = 1, U = new INPUTUNION { ki = new KEYBDINPUT { wVk = vk, wScan = 0, dwFlags = 2, time = 0, dwExtraInfo = UIntPtr.Zero } } };
+    return SendInput(2, inputs, Marshal.SizeOf(typeof(INPUT)));
+  }
   [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
   [StructLayout(LayoutKind.Sequential)]
   public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
 }
 '@
-$null = [AepUiWindow]::SetProcessDPIAware()
+# Electron windows may be reported in either logical or physical pixels.  The
+# Qoder profile is calibrated against the physical desktop exposed to the
+# helper, so making this process DPI-aware here would inflate the window rect
+# (for example 2560x1400 -> 3840x2100) and move the click into the browser pane.
+# Opt in only for profiles that explicitly require DPI-aware coordinates.
+if ($env:AEP_DPI_AWARE -eq '1') {
+  $null = [AepUiWindow]::SetProcessDPIAware()
+}
 
 function Set-AepForegroundWindow {
   param([IntPtr]$Hwnd, [int]$ShowMode = 9)
@@ -108,6 +171,47 @@ function Invoke-AepClick {
   Start-Sleep -Milliseconds 80
   [AepUiWindow]::mouse_event(0x0004, 0, 0, 0, [IntPtr]::Zero)
   Start-Sleep -Milliseconds 200
+}
+
+function Invoke-AepKeyChord {
+  param([byte]$Modifier, [byte]$Key)
+  # keybd_event is retained as a compatibility fallback for Electron editors
+  # that ignore System.Windows.Forms.SendKeys.  It sends only the explicit
+  # chord after the composer has been focused and never presses Enter.
+  [AepUiWindow]::keybd_event($Modifier, 0, 0, [UIntPtr]::Zero)
+  [AepUiWindow]::keybd_event($Key, 0, 0, [UIntPtr]::Zero)
+  [AepUiWindow]::keybd_event($Key, 0, 2, [UIntPtr]::Zero)
+  [AepUiWindow]::keybd_event($Modifier, 0, 2, [UIntPtr]::Zero)
+}
+
+function Invoke-AepEnter {
+  $sent = [AepUiWindow]::SendVirtualKey(0x0D)
+  if ($sent -ne 2) {
+    # A few legacy Electron builds only respond to keybd_event; retain that
+    # fallback but never pretend the keystroke was accepted by the app.
+    [AepUiWindow]::keybd_event(0x0D, 0, 0, [UIntPtr]::Zero)
+    [AepUiWindow]::keybd_event(0x0D, 0, 2, [UIntPtr]::Zero)
+  }
+  Start-Sleep -Milliseconds 120
+}
+
+function Invoke-AepPasteClipboard {
+  param([string]$Value, [switch]$Replace)
+  try { [System.Windows.Forms.Clipboard]::SetText($Value) } catch { Set-Clipboard -Value $Value }
+  Start-Sleep -Milliseconds 150
+  if ($Replace) { Invoke-AepKeyChord -Modifier 0x11 -Key 0x41; Start-Sleep -Milliseconds 100 }
+  Invoke-AepKeyChord -Modifier 0x11 -Key 0x56
+}
+
+function Invoke-AepUnicodeText {
+  param([string]$Value)
+  $sent = [AepUiWindow]::SendUnicodeText($Value)
+  $expected = [uint32]($Value.Length * 2)
+  if ($sent -lt $expected) {
+    $lastError = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+    throw "INPUT_INJECTION_FAILED: SendInput accepted $sent/$expected keyboard events (lastError=$lastError)"
+  }
+  return $sent
 }
 
 function Find-AepAccentControl {
@@ -188,7 +292,7 @@ $DefaultComposerHints = @(
 )
 
 function Get-WindowOcrText {
-  param([IntPtr]$Hwnd)
+  param([IntPtr]$Hwnd, [string]$Language = '')
   $text = ''
   $shot = ''
   $lines = @()
@@ -212,11 +316,14 @@ function Get-WindowOcrText {
   try {
     $compat = Join-Path $PSScriptRoot 'windows_ocr_compat.ps1'
     $shell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    $raw = & $shell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $compat -ImagePath $shot
+    $raw = & $shell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $compat -ImagePath $shot -Language $Language
     if ($LASTEXITCODE -ne 0) { throw "OCR_COMPAT_FAILED: $raw" }
     $decoded = $raw | ConvertFrom-Json
     $text = [string]$decoded.Text
     $lines = @($decoded.Lines)
+    # Recorded so a mojibake transcript is diagnosable: an en-US recognizer
+    # reading a Chinese UI produces Latin look-alikes, not an empty string.
+    $ocrLanguage = [string]$decoded.Language
   } catch { $text = ''; $lines = @(); $ocrError = $_.Exception.Message }
   finally {
     # Diagnostics are opt-in. Production runs keep the old no-retention
@@ -228,7 +335,7 @@ function Get-WindowOcrText {
     }
     if ($shot -and (Test-Path -LiteralPath $shot)) { Remove-Item -LiteralPath $shot -Force -ErrorAction SilentlyContinue }
   }
-  return [pscustomobject]@{ Text = [string]$text; Error = [string]$ocrError; Lines = , $lines }
+  return [pscustomobject]@{ Text = [string]$text; Error = [string]$ocrError; Lines = , $lines; Language = [string]$ocrLanguage }
 }
 
 $ActivationEvidence = [ordered]@{ show_window = $false; foreground = $false; window_alive = $false }
@@ -490,12 +597,17 @@ function Select-InputElement {
 }
 
 function Get-ActivityEvidence {
-  param($Root, [IntPtr]$Hwnd, [bool]$InputFound, [bool]$InputAmbiguous, [switch]$Ocr)
+  param($Root, [IntPtr]$Hwnd, [bool]$InputFound, [bool]$InputAmbiguous, [switch]$Ocr, [string[]]$InterjectHints = @())
+  $interjectHintList = @($InterjectHints | ForEach-Object { [string]$_ -split ',' } |
+    Where-Object { $_ -and $_.Trim() } | ForEach-Object { $_.Trim() } | Select-Object -Unique)
   $busyPatterns = @(
     '正在执行', '执行中', '生成中', '运行中', '处理中', '思考中',
     'Stop generating', 'Stop', 'Generating', 'Running', 'Working', 'Thinking'
   )
   $readyPatterns = @('发送', 'Send', '提交', 'Submit')
+  $defaultInterjectPatterns = @('插话', '继续执行并发送', '继续执行', '在后台发送', 'Send while running', 'Interject', 'Add message while running', 'Add message')
+  $interjectPatterns = @($interjectHintList + $defaultInterjectPatterns | Where-Object { $_ -and $_.Trim() } | Select-Object -Unique)
+  $stopPatterns = @('停止', '取消', '中止', 'Stop generating', 'Cancel', 'Abort')
   $names = @()
   $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
   $queue = New-Object System.Collections.Queue
@@ -514,12 +626,19 @@ function Get-ActivityEvidence {
     } catch { }
   }
   $ocrText = ''
+  $ocrLanguage = ''
   if ($Ocr -and $Hwnd -ne [IntPtr]::Zero) {
-    try { $ocrText = [string](Get-WindowOcrText -Hwnd $Hwnd).Text } catch { $ocrText = '' }
+    try {
+      $scan = Get-WindowOcrText -Hwnd $Hwnd -Language $OcrLanguage
+      $ocrText = [string]$scan.Text
+      $ocrLanguage = [string]$scan.Language
+    } catch { $ocrText = '' }
   }
   $joined = (($names -join ' ') + ' ' + $ocrText)
   $busyHits = @($busyPatterns | Where-Object { $joined -match [regex]::Escape($_) } | Select-Object -Unique)
   $readyHits = @($readyPatterns | Where-Object { $joined -match [regex]::Escape($_) } | Select-Object -Unique)
+  $interjectHits = @($interjectPatterns | Where-Object { $joined -match [regex]::Escape($_) } | Select-Object -Unique)
+  $stopHits = @($stopPatterns | Where-Object { $joined -match [regex]::Escape($_) } | Select-Object -Unique)
   $state = 'unknown'
   if ($busyHits.Count -gt 0) { $state = 'busy' }
   elseif ($readyHits.Count -gt 0 -or ($InputFound -and -not $InputAmbiguous)) { $state = 'ready' }
@@ -527,9 +646,17 @@ function Get-ActivityEvidence {
     state = $state
     busy_hits = $busyHits
     ready_hits = $readyHits
+    interject_evidence = [ordered]@{
+      ready = [bool]($busyHits.Count -gt 0 -and $interjectHits.Count -gt 0)
+      hits = $interjectHits
+      stop_hits = $stopHits
+      interrupt_only = [bool]($busyHits.Count -gt 0 -and $interjectHits.Count -eq 0 -and $stopHits.Count -gt 0)
+      hints = $interjectPatterns
+    }
     input_found = $InputFound
     input_ambiguous = $InputAmbiguous
     ocr_used = [bool]$Ocr
+    ocr_language = $ocrLanguage
   }
 }
 
@@ -574,7 +701,12 @@ function Invoke-SessionSwitch {
 }
 
 function Invoke-SendControl {
-  param($Root, [IntPtr]$Hwnd)
+  param($Root, [IntPtr]$Hwnd, [ValidateSet('enter', 'button', 'auto')][string]$Mode = 'enter')
+  if ($Mode -eq 'enter' -or $Mode -eq 'auto') {
+    Invoke-AepEnter
+    Start-Sleep -Milliseconds 230
+    return 'enter'
+  }
   $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
   $queue = New-Object System.Collections.Queue
   $queue.Enqueue($Root)
@@ -620,6 +752,62 @@ function Invoke-SendControl {
   return ''
 }
 
+function Invoke-InterjectControl {
+  param($Root, [IntPtr]$Hwnd, [string[]]$Hints = @())
+  $safeHints = @($Hints | ForEach-Object { [string]$_ -split ',' } |
+    Where-Object { $_ -and $_.Trim() } | ForEach-Object { $_.Trim() } | Select-Object -Unique)
+  if ($safeHints.Count -eq 0) { return '' }
+  $stopWords = @('停止', '取消', '中止', 'Stop', 'Cancel', 'Abort')
+  $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+  $queue = New-Object System.Collections.Queue
+  if ($Root) { $queue.Enqueue($Root) }
+  while ($queue.Count -gt 0) {
+    $element = $queue.Dequeue()
+    try {
+      $type = $element.Current.ControlType
+      $name = [string]$element.Current.Name
+      if ($type -eq [System.Windows.Automation.ControlType]::Button -and
+          $safeHints -contains $name.Trim() -and
+          -not ($stopWords -contains $name.Trim()) -and
+          $element.Current.IsEnabled -and -not $element.Current.IsOffscreen) {
+        try {
+          $pattern = $element.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+          $pattern.Invoke(); Start-Sleep -Milliseconds 250
+          return $name.Trim()
+        } catch {
+          try {
+            if ($element.Current.IsEnabled -and -not $element.Current.IsOffscreen) {
+              $box = $element.Current.BoundingRectangle
+              if ($box.Width -gt 0 -and $box.Height -gt 0) {
+                Invoke-AepClick -X ([int]($box.Left + $box.Width / 2)) -Y ([int]($box.Top + $box.Height / 2))
+                return $name.Trim()
+              }
+            }
+          } catch { }
+        }
+      }
+      $child = $walker.GetFirstChild($element)
+      while ($child) { $queue.Enqueue($child); $child = $walker.GetNextSibling($child) }
+    } catch { }
+  }
+  # Opaque Electron clients may expose the action only to OCR.  Click an exact
+  # profiled label, never a generic lower-right point and never a stop control.
+  $scan = Get-WindowOcrText -Hwnd $Hwnd
+  $rect = New-Object AepUiWindow+RECT
+  if ([AepUiWindow]::GetWindowRect($Hwnd, [ref]$rect)) {
+    $hits = @($scan.Lines | Where-Object {
+      $_.Text -and ($safeHints -contains $_.Text.Trim()) -and
+      -not ($stopWords -contains $_.Text.Trim()) -and $_.Y -lt (($rect.Bottom - $rect.Top) * 0.85)
+    })
+    if ($hits.Count -eq 1) {
+      $hit = $hits[0]
+      Invoke-AepClick -X ([int]($rect.Left + $hit.X + $hit.W / 2)) -Y ([int]($rect.Top + $hit.Y + $hit.H / 2))
+      return $hit.Text.Trim()
+    }
+  }
+  return ''
+}
+
 $windows = Get-TargetWindows
 $launched = $false
 if ($windows.Count -eq 0) {
@@ -644,7 +832,7 @@ $transcript = Get-VisibleTranscript -Root $root -CapChars $MaxCaptureChars
 $selection = Select-InputElement -Root $root -Soft
 $activity = Get-ActivityEvidence -Root $root -Hwnd $window.Hwnd `
   -InputFound ([bool]$selection) -InputAmbiguous $(if ($selection) { [bool]$selection.Ambiguous } else { $false }) `
-  -Ocr:$OcrVerify
+  -Ocr:$OcrVerify -InterjectHints $InterjectHints
 
 if ($Mode -eq 'observe') {
   Write-Report @{
@@ -660,6 +848,7 @@ if ($Mode -eq 'observe') {
     input_candidates       = $(if ($selection) { $selection.List } else { @() })
     activity_state         = $activity.state
     activity_evidence      = $activity
+    interject_evidence     = $activity.interject_evidence
     element_inventory      = Get-ElementInventory -Root $root
     transcript_chars       = $transcript.Text.Length
     transcript_lines       = $transcript.LineCount
@@ -751,6 +940,26 @@ if ($Mode -eq 'compose') {
   if (-not $ActivationEvidence.foreground) { throw 'WINDOW_FOCUS_DENIED: Windows rejected foreground activation' }
   Start-Sleep -Milliseconds 400
 
+  $interjectAction = ''
+  if ($UrgentInterject) {
+    if ($activity.state -ne 'busy' -or -not $activity.interject_evidence.ready) {
+      Write-Report @{ status = 'urgent-interject-unavailable'; pid = $window.Pid; title = $window.Title;
+        interruption = $false; interject_action = ''; interject_evidence = $activity.interject_evidence;
+        task_delivered = $false; method = 'uia-compose' }
+      return
+    }
+    $interjectAction = Invoke-InterjectControl -Root $root -Hwnd $window.Hwnd -Hints $InterjectHints
+    if (-not $interjectAction) {
+      Write-Report @{ status = 'urgent-interject-unavailable'; pid = $window.Pid; title = $window.Title;
+        interruption = $false; interject_action = ''; interject_evidence = $activity.interject_evidence;
+        task_delivered = $false; method = 'uia-compose' }
+      return
+    }
+    $root = [System.Windows.Automation.AutomationElement]::FromHandle($window.Hwnd)
+    if (-not $root) { throw 'UIA_ROOT_MISSING_AFTER_INTERJECT' }
+    $selection = Select-InputElement -Root $root -Soft
+  }
+
   $scan = Get-WindowOcrText -Hwnd $window.Hwnd
   if ($env:AEP_SCROLL_COMPOSER -eq '1') {
     [void](Invoke-AepScrollComposer -Hwnd $window.Hwnd)
@@ -775,9 +984,20 @@ if ($Mode -eq 'compose') {
     $exact = @($scan.Lines | Where-Object {
       $_.Text -and ($exactHints -contains $_.Text.Trim())
     })
-    if ($exact.Count -ne 1) { throw "COMPOSER_HINT_NOT_UNIQUE: expected one exact OCR match, found $($exact.Count)" }
-    $hit = $exact[0]
-    $hintUsed = $hit.Text.Trim()
+    if ($exact.Count -ne 1) {
+      if (-not ($AllowComposerGeometryFallback -and $exact.Count -eq 0)) {
+        throw "COMPOSER_HINT_NOT_UNIQUE: expected one exact OCR match, found $($exact.Count)"
+      }
+      # Some Electron builds render the empty placeholder visually but expose
+      # no OCR glyph.  A profiled client may explicitly allow a bounded,
+      # lower-pane geometry fallback; paste verification below remains
+      # mandatory before any send control is clicked.
+      $hit = $null
+      $hintUsed = 'geometry-fallback'
+    } else {
+      $hit = $exact[0]
+      $hintUsed = $hit.Text.Trim()
+    }
     $rectCheck = New-Object AepUiWindow+RECT
     if (-not [AepUiWindow]::GetWindowRect($window.Hwnd, [ref]$rectCheck)) { throw 'WINDOW_RECT_UNAVAILABLE' }
     $windowHeight = $rectCheck.Bottom - $rectCheck.Top
@@ -789,9 +1009,9 @@ if ($Mode -eq 'compose') {
     $minorClip = ($clipLeft -le 32 -and $clipTop -le 32 -and $clipRight -le 32 -and $clipBottom -le 32)
     if (($clipLeft -gt 0 -or $clipTop -gt 0 -or $clipRight -gt 0 -or $clipBottom -gt 0) -and
         -not ($minorClip -and $env:AEP_ALLOW_MINOR_CLIPPING -eq '1')) {
-      throw 'WINDOW_NOT_FULLY_VISIBLE: refusing OCR click on clipped window'
+      throw "WINDOW_NOT_FULLY_VISIBLE: refusing OCR click on clipped window (clip=$clipLeft,$clipTop,$clipRight,$clipBottom; minor=$minorClip; allow=$($env:AEP_ALLOW_MINOR_CLIPPING); rect=$($rectCheck.Left),$($rectCheck.Top),$($rectCheck.Right),$($rectCheck.Bottom); screen=$($screen.Left),$($screen.Top),$($screen.Right),$($screen.Bottom))"
     }
-    if ($windowHeight -le 0 -or $hit.Y -lt [int]($windowHeight * 0.55)) {
+    if ($hit -and ($windowHeight -le 0 -or $hit.Y -lt [int]($windowHeight * 0.55))) {
       throw 'COMPOSER_HINT_OUTSIDE_LOWER_PANE: refusing OCR click'
     }
   }
@@ -804,23 +1024,34 @@ if ($Mode -eq 'compose') {
     $clickY = [int]($rectForClick.Top + $hit.Y + ($hit.H / 2))
     $confidence = 'ocr-hint'
   } else {
-    if ($RequireComposerHint) { throw 'COMPOSER_HINT_MISSING: refusing geometry guess' }
+    if ($RequireComposerHint -and -not $AllowComposerGeometryFallback) {
+      throw 'COMPOSER_HINT_MISSING: refusing geometry guess'
+    }
     $rect = New-Object AepUiWindow+RECT
     if ([AepUiWindow]::GetWindowRect($window.Hwnd, [ref]$rect)) {
-      $clickX = [int](($rect.Left + $rect.Right) / 2)
-      $clickY = [int]($rect.Bottom - (($rect.Bottom - $rect.Top) * 0.08))
-      $confidence = 'geometry-guess'
+      $width = $rect.Right - $rect.Left
+      $height = $rect.Bottom - $rect.Top
+      if ($ComposerXRatio -gt 0 -and $ComposerYRatio -gt 0 -and
+          $ComposerXRatio -lt 1 -and $ComposerYRatio -lt 1) {
+        $clickX = [int]($rect.Left + ($width * $ComposerXRatio))
+        $clickY = [int]($rect.Top + ($height * $ComposerYRatio))
+        $confidence = 'profile-composer-ratio'
+      } else {
+        $clickX = [int](($rect.Left + $rect.Right) / 2)
+        $clickY = [int]($rect.Bottom - ($height * 0.08))
+        $confidence = 'geometry-guess'
+      }
     } else { throw 'WINDOW_RECT_UNAVAILABLE: cannot locate the composer' }
   }
 
   Invoke-AepClick -X $clickX -Y $clickY
 
-  try { [System.Windows.Forms.Clipboard]::SetText($Text) } catch { Set-Clipboard -Value $Text }
-  Start-Sleep -Milliseconds 200
-  # Replace any stale draft instead of appending the new dispatch.
-  [System.Windows.Forms.SendKeys]::SendWait('^a')
-  Start-Sleep -Milliseconds 120
-  [System.Windows.Forms.SendKeys]::SendWait('^v')
+  # Replace any stale draft instead of appending the new dispatch.  Use the
+  # native key chord first; SendKeys is silently ignored by some Electron
+  # renderers when a debugger or IME owns the foreground input queue.
+  Invoke-AepKeyChord -Modifier 0x11 -Key 0x41
+  Start-Sleep -Milliseconds 100
+  [void](Invoke-AepUnicodeText -Value $Text)
   Start-Sleep -Milliseconds 1200
 
   $afterPaste = Get-WindowOcrText -Hwnd $window.Hwnd
@@ -838,10 +1069,16 @@ if ($Mode -eq 'compose') {
     }
     return
   }
+  if ($NoSend) {
+    Write-Report @{ status = 'composer-confirmed-no-send'; pid = $window.Pid; title = $window.Title;
+      click = @{ x = $clickX; y = $clickY; confidence = $confidence; hint = $(if ($hit) { $hintUsed } else { '' }) };
+      composer_verified = $true; task_delivered = $false; method = 'uia-compose' }
+    return
+  }
 
   $sendButtonMethod = 'enter'
   $sendButtonEvidence = $null
-  if ($env:AEP_SEND_BUTTON_COLOR) {
+  if ($SendMode -eq 'button' -and $env:AEP_SEND_BUTTON_COLOR) {
     $colorProfile = if ($env:AEP_SEND_BUTTON_COLOR -eq '1') { 'purple' } else { $env:AEP_SEND_BUTTON_COLOR }
     $sendButtonEvidence = Find-AepAccentControl -Hwnd $window.Hwnd -ColorProfile $colorProfile
     if ($sendButtonEvidence) {
@@ -853,15 +1090,21 @@ if ($Mode -eq 'compose') {
       $sendButtonMethod = 'purple-pixel-control'
     }
   }
-  if (-not $sendButtonEvidence -and $SendButtonXRatio -gt 0 -and $SendButtonYRatio -gt 0) {
+  if ($SendMode -eq 'button' -and -not $sendButtonEvidence -and $SendButtonXRatio -gt 0 -and $SendButtonYRatio -gt 0) {
     $sendRect = New-Object AepUiWindow+RECT
     if (-not [AepUiWindow]::GetWindowRect($window.Hwnd, [ref]$sendRect)) { throw 'WINDOW_RECT_UNAVAILABLE: send button' }
     $sendX = [int]($sendRect.Left + (($sendRect.Right - $sendRect.Left) * $SendButtonXRatio))
     $sendY = [int]($sendRect.Top + (($sendRect.Bottom - $sendRect.Top) * $SendButtonYRatio))
     Invoke-AepClick -X $sendX -Y $sendY
     $sendButtonMethod = 'profile-ratio'
-  } elseif (-not $sendButtonEvidence) {
-    [System.Windows.Forms.SendKeys]::SendWait($SendKey)
+  } elseif ($SendMode -eq 'button' -and -not $sendButtonEvidence) {
+    $sendButtonMethod = ''
+  } elseif ($SendMode -ne 'button') {
+    if ($SendKey -eq '{ENTER}') {
+      Invoke-AepEnter
+    } else {
+      [System.Windows.Forms.SendKeys]::SendWait($SendKey)
+    }
   }
   $deadline = [DateTime]::UtcNow.AddSeconds($ReadBackTimeoutSeconds)
   $visible = $false
@@ -918,6 +1161,10 @@ if ($Mode -eq 'compose') {
     capture_path      = $(if ($OutFile -and $body) { [IO.Path]::GetFullPath($OutFile) } else { '' })
     send_button_method = $sendButtonMethod
     send_button_evidence = $sendButtonEvidence
+    send_mode         = $SendMode
+    interruption      = $false
+    interject_action  = $interjectAction
+    interject_evidence = $activity.interject_evidence
     task_delivered    = $(if ($RequireComposerHint) { $false } else { $delivered })
     method            = 'uia-compose'
   }
@@ -939,6 +1186,26 @@ if (-not $ActivationEvidence.foreground) {
 }
 Start-Sleep -Milliseconds 300
 
+$interjectAction = ''
+if ($UrgentInterject) {
+  if ($activity.state -ne 'busy' -or -not $activity.interject_evidence.ready) {
+    Write-Report @{ status = 'urgent-interject-unavailable'; pid = $window.Pid; title = $window.Title;
+      interruption = $false; interject_action = ''; interject_evidence = $activity.interject_evidence;
+      task_delivered = $false; method = 'uia-deliver' }
+    return
+  }
+  $interjectAction = Invoke-InterjectControl -Root $root -Hwnd $window.Hwnd -Hints $InterjectHints
+  if (-not $interjectAction) {
+    Write-Report @{ status = 'urgent-interject-unavailable'; pid = $window.Pid; title = $window.Title;
+      interruption = $false; interject_action = ''; interject_evidence = $activity.interject_evidence;
+      task_delivered = $false; method = 'uia-deliver' }
+    return
+  }
+  $root = [System.Windows.Automation.AutomationElement]::FromHandle($window.Hwnd)
+  if (-not $root) { throw 'UIA_ROOT_MISSING_AFTER_INTERJECT' }
+  $selection = Select-InputElement -Root $root -Soft
+}
+
 $writeMethod = ''
 $focused = $false
 $inputVerified = $false
@@ -958,7 +1225,7 @@ if ($selection) {
     if ($readOnly) { throw 'INPUT_READ_ONLY: target input is read-only' }
     try { [System.Windows.Forms.Clipboard]::SetText($Text) } catch { Set-Clipboard -Value $Text }
     if (-not $focused) { throw 'INPUT_FOCUS_FAILED: cannot focus the composer; refusing to type blindly' }
-    [System.Windows.Forms.SendKeys]::SendWait('^v')
+    Invoke-AepKeyChord -Modifier 0x11 -Key 0x56
     $writeMethod = 'clipboard-paste'
   }
   Start-Sleep -Milliseconds 300
@@ -969,8 +1236,7 @@ if ($selection) {
   # Electron clients without an accessibility tree: keyboard paste into whatever
   # the client focuses on activation. Nothing here proves the composer got it;
   # only a read-back that finds the event id can promote the status.
-  try { [System.Windows.Forms.Clipboard]::SetText($Text) } catch { Set-Clipboard -Value $Text }
-  [System.Windows.Forms.SendKeys]::SendWait('^v')
+  Invoke-AepPasteClipboard -Value $Text
   $writeMethod = 'clipboard-paste-unverified-input'
   Start-Sleep -Milliseconds 400
 }
@@ -993,18 +1259,16 @@ if ($selection -and -not $inputVerified) {
 Start-Sleep -Milliseconds 500
 $rootForSend = [System.Windows.Automation.AutomationElement]::FromHandle($window.Hwnd)
 if (-not $rootForSend) { throw 'UIA_ROOT_MISSING_BEFORE_SEND' }
-$sendMethod = Invoke-SendControl -Root $rootForSend -Hwnd $window.Hwnd
+$sendMethod = Invoke-SendControl -Root $rootForSend -Hwnd $window.Hwnd -Mode $SendMode
 if (-not $sendMethod) {
   # ValuePattern can update the visual editor without firing the web app's
   # input event. Re-type once through the focused control so the send button
   # state is recomputed, then reacquire the UIA tree and look for the button.
   if ($selection -and $focused) {
-    try { [System.Windows.Forms.Clipboard]::SetText($Text) } catch { Set-Clipboard -Value $Text }
-    [System.Windows.Forms.SendKeys]::SendWait('^a')
-    [System.Windows.Forms.SendKeys]::SendWait('^v')
+    Invoke-AepPasteClipboard -Value $Text -Replace
     Start-Sleep -Milliseconds 500
     $rootForSend = [System.Windows.Automation.AutomationElement]::FromHandle($window.Hwnd)
-    if ($rootForSend) { $sendMethod = Invoke-SendControl -Root $rootForSend -Hwnd $window.Hwnd }
+    if ($rootForSend) { $sendMethod = Invoke-SendControl -Root $rootForSend -Hwnd $window.Hwnd -Mode $SendMode }
   }
 }
 if (-not $sendMethod) {
@@ -1075,6 +1339,10 @@ Write-Report @{
   readback_polls      = $polls
   ocr_used            = $ocrUsed
   send_method         = $sendMethod
+  send_mode           = $SendMode
+  interruption        = $false
+  interject_action    = $interjectAction
+  interject_evidence  = $activity.interject_evidence
   composer_cleared    = $composerCleared
   activation          = $ActivationEvidence
   input_found         = [bool]$selection
