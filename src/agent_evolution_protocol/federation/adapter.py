@@ -38,9 +38,13 @@ class Adapter(Protocol):
 class FakeAdapter:
     """Deterministic adapter: replays a scripted list of outcomes.
 
-    ``outcomes`` entries are ``accepted``, ``refused``, ``failed`` or
-    ``token_exhausted``. When the script runs out the last entry repeats, so a
-    test never depends on call counts it did not declare.
+    An outcome is either a delivery state (``accepted``/``refused``/``failed``)
+    or any other non-empty string, which is reported as ``failed`` with that
+    string as the ``signal``. The second form matters: the diagnosis table knows
+    ten signals and only one of them would otherwise be reachable from a test.
+
+    When the script runs out the last entry repeats, so a test never depends on
+    call counts it did not declare.
     """
 
     def __init__(self, agent, capabilities, *, outcomes=("accepted",), heartbeat_at=None):
@@ -50,8 +54,8 @@ class FakeAdapter:
         self._capabilities = {str(item) for item in capabilities}
         self._outcomes = list(outcomes) or ["accepted"]
         for item in self._outcomes:
-            if item not in DELIVERY_STATES + ("token_exhausted",):
-                raise ValueError(f"unknown scripted outcome {item!r}")
+            if not isinstance(item, str) or not item.strip():
+                raise ValueError("scripted outcomes must be non-empty strings")
         self._index = 0
         self.last_heartbeat = heartbeat_at
         self.deliveries = []
@@ -67,10 +71,10 @@ class FakeAdapter:
         outcome = self._outcomes[min(self._index, len(self._outcomes) - 1)]
         self._index += 1
         self.deliveries.append({"task": task.get("id"), "outcome": outcome})
-        if outcome == "token_exhausted":
-            return {"status": "failed", "signal": "token_exhausted",
-                    "note": "context exhausted mid-task"}
-        return {"status": outcome, "signal": "", "note": f"scripted {outcome}"}
+        if outcome in DELIVERY_STATES:
+            return {"status": outcome, "signal": "", "note": f"scripted {outcome}"}
+        return {"status": "failed", "signal": outcome,
+                "note": f"scripted {outcome}"}
 
     def observe(self):
         return {"agent": self.agent, "state": "idle" if not self.deliveries else "worked",

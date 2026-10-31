@@ -49,7 +49,9 @@
 | `federation/handoff.py` | 接管包 | 只引用 `snapshot_digest`；目标 Agent 必须自称并持能力；重定向即 `HANDOFF_DIGEST_MISMATCH` |
 | `federation/diagnosis.py` | 故障分类 | 10 类信号 → (层, 类别, 动作)；未知即 escalate；retry 有预算 |
 | `federation/evolution.py` | 策略库 | proposed/promoted/retired；晋升是证据的纯函数；只追加历史 |
-| `federation/adapter.py` | 适配器边界 | 四个方法；`FakeAdapter` 供测试；能力匹配确定序 |
+| `federation/adapter.py` | 适配器边界 | 四个方法；`FakeAdapter` 供测试（可脚本化任意 signal）；能力匹配确定序 |
+| `federation/a2a.py` | 真跨进程适配器 | JSON-RPC over stdio；崩溃/超时/协议错误各自报独立 signal；`restart=False` 用于确定性崩溃测试 |
+| `federation/locking.py` | 工作区锁 | 跨进程独占、进程内可重入；拿不到抛 `LockTimeout` 而不是挂死 |
 | `federation/engine.py` | 调度内核 | tick 五步；接管必须真正投递；旧 Agent 归档不删除 |
 
 ## 3. 标准 Schema（复用，不另立）
@@ -95,16 +97,61 @@ class Adapter(Protocol):
 `kind`/`transport` 的取值在 `adapter.CONNECTOR_KINDS` / `TRANSPORTS` 里与 schema 枚举同步，
 非法值在生成阶段就抛错，不会产出一份下游才失败的文档。
 
+### 4.1 传输层故障归谁管
+
+适配器**不猜**该怎么办，只报事实：进程死了报 `adapter_crashed`，不应答报
+`adapter_timeout`，答非所问报 `adapter_protocol_error`。怎么处理由 `diagnosis.RULES` 决定：
+
+| signal | 动作 | 理由 |
+| --- | --- | --- |
+| `adapter_crashed` | `switch_agent`（可重试，有预算） | 换一个执行者就能继续 |
+| `adapter_timeout` | `switch_agent`（可重试，有预算） | 同上；但不能无限重试 |
+| `adapter_protocol_error` | `escalate` | 对端在说胡话，内核不该替它圆场 |
+
+前两个也进了 `handoff.REASONS`，所以接力包里的 `reason` 记的是真实原因
+（`adapter_crashed`），不会被含糊地写成 `stalled`。
+
 ## 5. 六项能力 → 现状
 
 | 要求 | 现状 | 证据 |
 | --- | --- | --- |
 | 1. 持久化与跨重启恢复 | 已实现 | `test_state_survives_a_restart`、`test_tampered_event_chain_blocks_recovery` |
-| 2. 异构 Agent 唤醒/派工/加入 | 接口已定，真实传输未接 | `test_ready_task_is_delivered_to_a_capable_agent`；A2A/MCP 适配器**未实现** |
+| 2. 异构 Agent 唤醒/派工/加入 | 本地回环已实测（真子进程 JSON-RPC） | `test_capabilities_come_from_the_real_process`、`test_a_real_exhausted_agent_is_replaced`、`test_a_real_crash_mid_conversation_hands_the_task_over`；跨机/跨厂商**未测** |
 | 3. 无损接力（token 耗尽/卡死/换模型） | 已实现（快照+接管包+归档） | `test_token_exhaustion_hands_the_task_to_a_successor`、`test_stalled_agent_is_replaced` |
 | 4. 阻断识别与自愈 | 已实现分类与有界动作 | `test_every_known_signal_maps_to_layer_and_action`、`test_no_successor_blocks_instead_of_losing_the_task` |
-| 5. 自主进化闭环 | 已实现策略状态机与继承 | `test_promotion_after_threshold`、`test_only_promoted_strategies_are_inherited` |
+| 5. 自主进化闭环 | 已接入 tick（观察→提议→晋升→应用→记账） | `test_one_recovery_is_only_a_proposal`、`test_two_recoveries_promote_the_strategy`、`test_a_promoted_strategy_is_reused_on_the_next_failure`、`test_a_strategy_cannot_turn_an_escalation_into_a_retry` |
 | 6. 全链路审计 | 已实现哈希链与快照版本 | `test_edited_event_is_detected`、`test_rollback_returns_verified_old_version`、`test_every_event_line_validates_against_the_published_schema` |
+| 7. 并发安全 | 已实现（工作区锁） | `test_two_processes_never_lose_an_increment`、`test_concurrent_writers_keep_every_task`、`test_concurrent_event_appends_keep_a_contiguous_chain` |
+
+### 5.1 进化闭环如何接进调度
+
+`tick` 在诊断出动作后先问策略库，再决定：
+
+1. **观察**：任务因某个 `signal` 失败，补救动作记为 `task.remedy`；
+2. **提议**：任务最终成功且该 `(signal, remedy)` 尚无记录 → `evolution.propose`，状态 `proposed`；
+3. **晋升**：成功数达阈值且无失败 → 自动 `promote`，写 `strategy_promoted` 事件（纯证据函数，无人为判断）；
+4. **应用**：下次同 `signal` 出现时，已晋升策略可替换默认动作，写 `strategy_applied` 事件，记录 `default` 与 `chosen`；
+5. **记账**：任务成功或失败都回写证据；**应用后仍失败**记 `failure`，直接阻断晋升。
+
+边界（不可越过的红线）：`SAFE_OVERRIDES = {retry, handoff, switch_agent, cool_down}`。
+策略只能在这些**可逆**动作之间选择；`escalate`/`pause`/`quarantine`/`arbitrate` 不在白名单内，
+所以"我们学到了点什么"永远不能把一次升级/暂停降级成重试。
+
+### 5.2 并发安全怎么保证
+
+`tick` 是读-改-写：读 `state.json` → 改 → 写回。两个调度器同时做，后写的会抹掉先写的，
+而事件日志里两条都在——**状态与审计记录互相矛盾**，这种损坏最难发现。
+
+所以每个工作区一把锁（`workspaces/<WID>/.lock`），`state.json` 与 `events.jsonl` 共用：
+
+- `tick` 在锁内**重新从磁盘加载**，结束后把结果同步回调用方持有的对象，陈旧副本无法覆盖新写入；
+- `EventLog.append` 在锁内读尾取 `prev_sha256`，否则两个进程会写出同一个 `seq`、把链分叉；
+- 锁在进程内可重入（`save()` 在 `tick` 内调用不会自锁），跨进程严格独占；
+- 拿不到锁抛 `LockTimeout`，不挂死；进程崩溃时内核自动释放，不会留下永久锁。
+
+实测对照（`.tools/lock-teeth-check.py`）：两个进程各加 400 次，**无锁得 400（丢一半，还伴随 JSON 撕裂读），有锁得 800**。
+另外 `add_task` 这类接收 `state` 对象的函数本身不锁，可能并发丢写，
+需要并发的调用方走 `engine.update(root, workspace_id, change)`（锁内加载-应用-保存）。
 
 ## 6. 极端场景覆盖（测试即验收）
 
@@ -125,6 +172,10 @@ class Adapter(Protocol):
 | 回滚到历史版本 | `test_rollback_returns_verified_old_version` |
 | 归档 Agent 被重复派活 | `test_archived_agent_is_not_offered_new_work` |
 | 产物偏离既有标准 | `test_a_full_handoff_run_leaves_only_conformant_documents`、`test_every_schema_file_is_versioned` |
+| 两个调度器同时 tick（丢更新） | `test_two_processes_never_lose_an_increment`、`test_concurrent_writers_keep_every_task` |
+| 两个进程同时追加事件（链分叉） | `test_concurrent_event_appends_keep_a_contiguous_chain` |
+| 锁被长期占用 | `test_a_busy_lock_times_out_instead_of_hanging` |
+| 策略被用来绕过安全动作 | `test_a_strategy_cannot_turn_an_escalation_into_a_retry` |
 
 复算：`PYTHONPATH=src D:/A/python.exe -m pytest tests/test_federation_*.py -q`
 端到端时间线：`PYTHONPATH=src D:/A/python.exe examples/federation_demo.py`
@@ -147,15 +198,17 @@ FAILED tests/test_federation_schemas.py::test_federation_schema_assets_are_valid
 
 ## 8. 明确未做（NOT_VERIFIED）
 
-1. **真实 A2A / MCP 适配器**：目前只有 `FakeAdapter`；跨进程、跨机器的联邦没有实测。
+1. **真实 A2A / MCP 适配器**：`FakeAdapter` 之外只有一个本地回环适配器（见第 9 节）；
+   跨机器、跨厂商的联邦没有实测。
 2. **浏览器底座对接**：`capabilities` 里可以声明 `browser`，但没有实现真正调用底座的适配器。
-3. **多机**：事件链与快照假设单机文件系统；多机需要共享存储与锁，未设计。
+3. **多机**：事件链与快照假设单机文件系统；`locking.py` 是**本机**文件锁，
+   跨机需要共享存储与分布式锁（NFS 上的 `flock` 语义并不可靠），未设计。
 4. **真实 Token 计量**：`token_exhausted` 是适配器上报的信号，内核不自己数 token。
-5. **并发写**：同一工作区多进程同时 tick 未加锁，当前假设单调度器。
+5. **策略跨工作区继承**：`evolution.inherit()` 已实现且有测试，但 `create()` 还没接
+   "从全局库继承"，目前每个工作区从空库开始学。
 
 ## 9. 下一步优先级
 
-1. 写一个真实 A2A 适配器（本地回环即可），验证 `deliver/observe` 不是纸面契约；
-2. 给 `state.json` 加文件锁，允许两个调度器并存而不互相覆盖；
-3. 把 `evolution.py` 的策略真正接回 `engine.tick`（现在策略库与调度是两条线，尚未联动）；
-4. 用真实任务跑一次"跨重启 + 换 Agent"的端到端，产出可对账的时间线。
+1. 用真实任务跑一次"跨重启 + 换 Agent + 中途换策略"的端到端，产出可对账的时间线；
+2. 把 `create()` 接到全局策略库，验证 `inherit()` 在真实工作区之间生效；
+3. MCP 适配器：把 `tools/call` 映射到 `deliver/observe`，重点验证超时与半途失败。

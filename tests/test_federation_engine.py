@@ -74,7 +74,10 @@ class SchedulingTests(EngineTestCase):
     def test_failed_dependency_blocks_downstream(self):
         engine.add_task(self.root, self.state, task_id="t1", requirement="browser")
         engine.add_task(self.root, self.state, task_id="t2", requirement="code", deps=["t1"])
+        # The failure has to be on disk: tick re-reads state under the lock, so
+        # an in-memory-only edit is not a failure anyone else could observe.
         self.state["tasks"]["t1"]["state"] = "failed"
+        engine.save(self.root, self.state)
         adapters = [FakeAdapter("alpha", {"code"}, heartbeat_at=NOW.isoformat())]
         engine.tick(self.root, self.state, adapters, now=NOW)
         self.assertEqual(self.state["tasks"]["t2"]["state"], "blocked")

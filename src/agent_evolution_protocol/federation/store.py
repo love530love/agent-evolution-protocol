@@ -19,9 +19,13 @@ from pathlib import Path
 import tempfile
 
 from ..coordination.workspace_identity import validate_workspace_id
+from .locking import workspace_lock
 
 
 EVENT_SCHEMA = "aep-event-envelope-v1"
+#: One lock per workspace serialises both ``state.json`` and ``events.jsonl``.
+#: They are one logical record, so they share one lock rather than two.
+LOCK_NAME = ".lock"
 #: Fields the event id is derived from; ``event_id`` and ``sha256`` are excluded
 #: because both are computed from this block.
 ID_FIELDS = ("schema", "seq", "at", "workspace_id", "kind", "actor", "payload",
@@ -70,10 +74,16 @@ def workspace_dir(root, workspace_id):
     return Path(root) / "workspaces" / validate_workspace_id(workspace_id)
 
 
+def lock_path(root, workspace_id):
+    """The one advisory lock guarding this workspace's state and event log."""
+    return workspace_dir(root, workspace_id) / LOCK_NAME
+
+
 class EventLog:
     """Append-only chain scoped to one workspace."""
 
     def __init__(self, root, workspace_id):
+        self.root = Path(root)
         self.workspace_id = validate_workspace_id(workspace_id)
         self.path = workspace_dir(root, workspace_id) / "events.jsonl"
 
@@ -92,6 +102,12 @@ class EventLog:
             raise ValueError("event kind is required")
         if not isinstance(actor, str) or not actor.strip():
             raise ValueError("event actor is required")
+        # Reading the tail to find ``prev_sha256`` is a read-modify-write: two
+        # processes doing it at once would emit the same seq and fork the chain.
+        with workspace_lock(lock_path(self.root, self.workspace_id)):
+            return self._append_locked(kind, actor, payload, moment)
+
+    def _append_locked(self, kind, actor, payload, moment):
         rows = self.events()
         previous = rows[-1]["sha256"] if rows else ""
         base = {"schema": EVENT_SCHEMA, "seq": len(rows) + 1, "at": stamp(moment),

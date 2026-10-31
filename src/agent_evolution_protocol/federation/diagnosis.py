@@ -24,6 +24,12 @@ RULES = {
     "foreign_message": ("external", "pollution", "quarantine", False),
     "conflict": ("external", "conclusion_conflict", "arbitrate", False),
     "manual_pause": ("external", "operator_pause", "pause", False),
+    # Signals an adapter raises about the transport itself, not about the work.
+    # A dead or silent peer is recoverable by moving the task; a peer that
+    # answers nonsense is not something the kernel should paper over.
+    "adapter_crashed": ("agent", "transport_dead", "switch_agent", True),
+    "adapter_timeout": ("agent", "transport_silent", "switch_agent", True),
+    "adapter_protocol_error": ("external", "protocol_violation", "escalate", False),
 }
 PRIORITY = {action: index for index, action in enumerate(
     ("escalate", "pause", "handoff", "switch_agent", "arbitrate", "quarantine",

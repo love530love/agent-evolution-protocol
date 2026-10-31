@@ -17,7 +17,8 @@ from .store import digest, stamp
 
 HANDOFF_SCHEMA = "aep-handoff-packet-v1"
 REASONS = frozenset({"token_exhausted", "stalled", "refusal", "model_switch",
-                     "manual_switch", "resource_blocked", "conflict_review"})
+                     "manual_switch", "resource_blocked", "conflict_review",
+                     "adapter_crashed", "adapter_timeout"})
 CAPABILITY = re.compile(r"[a-z][a-z0-9-]{1,31}")
 _HEX = re.compile(r"[0-9a-f]{64}")
 

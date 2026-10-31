@@ -22,14 +22,19 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from ..coordination.workspace_identity import new_workspace_id, validate_workspace_id
-from . import diagnosis, handoff as handoff_mod, snapshot as snapshot_mod
+from . import diagnosis, evolution, handoff as handoff_mod, snapshot as snapshot_mod
 from .adapter import find, match
-from .store import EventLog, atomic_write, read_json, stamp, workspace_dir
+from .locking import workspace_lock
+from .store import EventLog, atomic_write, lock_path, read_json, stamp, workspace_dir
 
 
 STATE_SCHEMA = "aep-federation-state-v1"
 TASK_STATES = ("pending", "ready", "running", "done", "blocked", "failed")
 TERMINAL = ("done", "failed", "blocked")
+#: A promoted strategy may only ever choose among reversible recovery actions.
+#: It cannot turn an escalation, a pause or a quarantine into a retry: that
+#: would let "we learned something" override a safety decision.
+SAFE_OVERRIDES = frozenset({"retry", "handoff", "switch_agent", "cool_down"})
 
 
 def _state_path(root, workspace_id):
@@ -49,7 +54,9 @@ def load(root, workspace_id):
 
 
 def save(root, state):
-    atomic_write(_state_path(root, state["workspace_id"]), state)
+    """Persist state atomically, under the workspace lock."""
+    with workspace_lock(lock_path(root, state["workspace_id"])):
+        atomic_write(_state_path(root, state["workspace_id"]), state)
     return state
 
 
@@ -60,13 +67,28 @@ def create(root, *, goal, acceptance, constraints=(), moment=None):
                                       constraints=constraints, moment=moment)
     state = {"schema": STATE_SCHEMA, "workspace_id": workspace_id, "anchor": anchor,
              "created_at": stamp(moment), "paused": False, "tasks": {}, "agents": {},
-             "quarantine": [], "handoffs": [], "conflicts": []}
+             "quarantine": [], "handoffs": [], "conflicts": [],
+             "strategies": evolution.new_library()}
     save(root, state)
     log = EventLog(root, workspace_id)
     log.append("workspace_created", actor="kernel",
                payload={"goal": anchor["goal"], "acceptance": anchor["acceptance"]}, moment=moment)
     checkpoint(root, state, moment=moment, reason="workspace_created")
     return state
+
+
+def update(root, workspace_id, change, *, timeout=None):
+    """Locked read-modify-write: load fresh state, apply ``change``, save.
+
+    ``add_task``/``complete``/``pause`` take a state object, so two callers that
+    each loaded their own copy can still lose one of the two writes. Callers
+    that may run concurrently should go through this instead.
+    """
+    with workspace_lock(lock_path(root, workspace_id), **({"timeout": timeout} if timeout else {})):
+        fresh = load(root, workspace_id)
+        result = change(fresh)
+        save(root, fresh)
+        return result
 
 
 def add_task(root, state, *, task_id, requirement, deps=(), moment=None):
@@ -97,6 +119,85 @@ def ready_tasks(state):
 def _blocked_by_failed(state, task_id):
     return [dep for dep in state["tasks"][task_id]["deps"]
             if state["tasks"][dep]["state"] in ("failed", "blocked")]
+
+
+def _library(state):
+    """The workspace's strategy library, created on demand for old states."""
+    library = state.get("strategies")
+    if not isinstance(library, dict) or library.get("schema") != evolution.LIBRARY_SCHEMA:
+        library = evolution.new_library()
+        state["strategies"] = library
+    return library
+
+
+def _strategy_for(state, signal, default_action):
+    """The promoted strategy that may replace ``default_action``, if any."""
+    if default_action not in SAFE_OVERRIDES:
+        return None
+    rows = _library(state).get("strategies") or {}
+    for strategy_id in sorted(rows):
+        row = rows[strategy_id]
+        if row.get("status") != "promoted":
+            continue
+        if signal not in (row.get("tags") or []):
+            continue
+        if (row.get("params") or {}).get("action") in SAFE_OVERRIDES:
+            return row
+    return None
+
+
+def _consider_promotion(root, state, moment):
+    """Promote whatever the recorded evidence already justifies; nothing else."""
+    library = _library(state)
+    for strategy_id in sorted(library.get("strategies", {})):
+        row = library["strategies"][strategy_id]
+        if row.get("status") != "proposed":
+            continue
+        try:
+            evolution.promote(library, strategy_id, moment=moment)
+        except ValueError:
+            continue
+        EventLog(root, state["workspace_id"]).append(
+            "strategy_promoted", actor="kernel",
+            payload={"strategy": strategy_id, "name": row["name"],
+                     "successes": row["successes"], "failures": row["failures"]},
+            moment=moment)
+
+
+def _match_strategy(library, signal, remedy):
+    """The strategy that already encodes "this signal, this remedy", if any."""
+    if not signal or not remedy:
+        return ""
+    for strategy_id in sorted(library.get("strategies", {})):
+        row = library["strategies"][strategy_id]
+        if signal in (row.get("tags") or []) and \
+                (row.get("params") or {}).get("action") == remedy:
+            return strategy_id
+    return ""
+
+
+def _learn(root, state, task, outcome, moment):
+    """Record one verified outcome and let promotion follow from it.
+
+    A remedy that was applied and still failed is evidence *against* it, so the
+    failure is recorded on the matching strategy rather than silently dropped.
+    """
+    library = _library(state)
+    signal, remedy = task.get("signal") or "", task.get("remedy") or ""
+    strategy_id = task.get("strategy") or _match_strategy(library, signal, remedy)
+    if strategy_id and strategy_id not in library["strategies"]:
+        strategy_id = ""
+    if not strategy_id:
+        if outcome != "success" or not signal or not remedy:
+            return
+        # A recovery nobody had tried before becomes a proposal, not a rule.
+        row = evolution.propose(library, name=f"recover-{signal}", tags=[signal],
+                                params={"action": remedy}, moment=moment)
+        strategy_id = row["id"]
+    task["strategy"] = strategy_id
+    evolution.record(library, strategy_id, outcome=outcome,
+                     workspace_id=state["workspace_id"], note=remedy, moment=moment)
+    _consider_promotion(root, state, moment)
 
 
 def _stalled(adapter, now, timeout_seconds):
@@ -141,7 +242,7 @@ def _eligible(state, adapters, requirement, *, exclude=()):
     return match(adapters, requirement, exclude=blocked)
 
 
-def _handoff(root, state, task, adapters, *, reason, moment, exclude=()):
+def _handoff(root, state, task, adapters, *, reason, moment, exclude=(), remedy="handoff"):
     """Snapshot, build a packet, and let the first capable agent accept it."""
     built = _snapshot(root, state, moment)
     requirement = task["requirement"]
@@ -150,8 +251,10 @@ def _handoff(root, state, task, adapters, *, reason, moment, exclude=()):
     if not candidates:
         task["state"] = "blocked"
         task["note"] = "no capable successor agent"
+        task["remedy"] = remedy
         EventLog(root, state["workspace_id"]).append(
             "handoff_blocked", actor="kernel", payload={"task": task["id"], "reason": reason}, moment=moment)
+        _learn(root, state, task, "failure", moment)
         return None
     successor = candidates[0]
     current = task["owner"] or "unassigned"
@@ -163,7 +266,8 @@ def _handoff(root, state, task, adapters, *, reason, moment, exclude=()):
     if task["owner"]:
         state["agents"].setdefault(task["owner"], {})["state"] = "archived"
         state["agents"][task["owner"]]["archived_at"] = stamp(moment)
-    task.update({"owner": successor, "state": "running", "attempts": 1, "signal": "", "note": ""})
+    task.update({"owner": successor, "state": "running", "attempts": 1, "note": "",
+                 "remedy": remedy})
     state["agents"].setdefault(successor, {})["state"] = "active"
     # The packet itself is the auditable artifact, so it is stored whole rather
     # than reduced to a summary; ``task``/``accepted_by`` are extras the
@@ -188,7 +292,24 @@ def _handoff(root, state, task, adapters, *, reason, moment, exclude=()):
 
 
 def tick(root, state, adapters, *, now=None, heartbeat_timeout=900, moment=None):
-    """Advance the workspace by one bounded step; returns what it did."""
+    """Advance the workspace by one bounded step, holding the workspace lock.
+
+    The caller's ``state`` is re-read from disk inside the lock and then synced
+    back, so a scheduler that was handed a stale object cannot overwrite what
+    another process wrote in the meantime.
+    """
+    with workspace_lock(lock_path(root, state["workspace_id"])):
+        fresh = load(root, state["workspace_id"])
+        result = _tick(root, fresh, adapters, now=now,
+                       heartbeat_timeout=heartbeat_timeout, moment=moment)
+        if fresh != state:
+            state.clear()
+            state.update(fresh)
+        return result
+
+
+def _tick(root, state, adapters, *, now=None, heartbeat_timeout=900, moment=None):
+    """The in-memory step; callers must hold the workspace lock."""
     now = now or datetime.now(timezone.utc)
     moment = moment or now
     actions = []
@@ -202,7 +323,9 @@ def tick(root, state, adapters, *, now=None, heartbeat_timeout=900, moment=None)
         adapter = find(adapters, task["owner"])
         if adapter is None or _stalled(adapter, now, heartbeat_timeout):
             decision = diagnosis.classify("no_heartbeat", attempts=task["attempts"])
-            packet = _handoff(root, state, task, adapters, reason="stalled", moment=moment)
+            task["signal"] = "no_heartbeat"
+            packet = _handoff(root, state, task, adapters, reason="stalled", moment=moment,
+                              remedy="switch_agent")
             actions.append({"task": task_id, "action": decision["action"],
                             "handoff": bool(packet), "reason": decision["reason"]})
 
@@ -248,23 +371,39 @@ def tick(root, state, adapters, *, now=None, heartbeat_timeout=900, moment=None)
         # silently retried; only a named signal may trigger an automatic retry.
         task["signal"] = signal or {"refused": "refusal"}.get(status, "unclassified")
         decision = diagnosis.classify(task["signal"], attempts=task["attempts"])
-        if decision["action"] == "handoff":
+        action = decision["action"]
+        strategy = _strategy_for(state, task["signal"], action)
+        task["strategy"] = strategy["id"] if strategy is not None else ""
+        if strategy is not None and strategy["params"]["action"] != action:
+            action = strategy["params"]["action"]
+            EventLog(root, state["workspace_id"]).append(
+                "strategy_applied", actor="kernel",
+                payload={"task": task_id, "signal": task["signal"],
+                         "default": decision["action"], "chosen": action,
+                         "strategy": strategy["id"]}, moment=moment)
+        if action == "handoff":
             packet = _handoff(root, state, task, adapters, reason=task["signal"], moment=moment)
             actions.append({"task": task_id, "action": "handoff", "agent": owner,
                             "handoff": bool(packet), "reason": decision["reason"]})
-        elif decision["action"] == "switch_agent":
-            reason = "refusal" if task["signal"] == "refusal" else "stalled"
-            packet = _handoff(root, state, task, adapters, reason=reason, moment=moment)
+        elif action == "switch_agent":
+            # Keep the real cause when the packet's reason vocabulary has it;
+            # "stalled" is the honest fallback, not a catch-all label.
+            reason = (task["signal"] if task["signal"] in handoff_mod.REASONS
+                      else "stalled")
+            packet = _handoff(root, state, task, adapters, reason=reason, moment=moment,
+                              remedy="switch_agent")
             actions.append({"task": task_id, "action": "switch_agent", "agent": owner,
                             "handoff": bool(packet), "reason": decision["reason"]})
-        elif decision["action"] == "retry" and task["attempts"] <= diagnosis.MAX_RETRY:
+        elif action == "retry" and task["attempts"] <= diagnosis.MAX_RETRY:
             task["state"] = "pending"
             task["owner"] = ""
+            task["remedy"] = "retry"
             actions.append({"task": task_id, "action": "retry", "agent": owner})
         else:
             task["state"] = "failed"
-            actions.append({"task": task_id, "action": decision["action"], "agent": owner,
+            actions.append({"task": task_id, "action": action, "agent": owner,
                             "reason": decision["reason"]})
+            _learn(root, state, task, "failure", moment)
     save(root, state)
     return {"status": "TICKED", "actions": actions}
 
@@ -281,6 +420,7 @@ def complete(root, state, *, task_id, artifact_path=None, moment=None):
     EventLog(root, state["workspace_id"]).append(
         "task_done", actor=task["owner"] or "kernel",
         payload={"task": task_id, "artifact": str(artifact_path) if artifact_path else ""}, moment=moment)
+    _learn(root, state, task, "success", moment)
     save(root, state)
     return task
 
