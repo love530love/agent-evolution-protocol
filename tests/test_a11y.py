@@ -7,8 +7,12 @@ value it already has.
 """
 from __future__ import annotations
 
+import contextlib
+import io
+import json
 import os
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -149,6 +153,51 @@ class DrivabilityTests(unittest.TestCase):
     def test_an_unreadable_executor_is_its_own_reason(self):
         self.assertEqual(a11y.drivability("standard", "unknown"),
                          (False, "EXECUTOR_INTEGRITY_UNKNOWN"))
+
+
+class OperatorCommandTests(unittest.TestCase):
+    """`coord-uia` runs the adapter directly, so it must annotate too.
+
+    The driver class annotates the receipts it builds; this command bypasses it
+    and used to be the one place an operator could look at a window and get no
+    verdict on whether it can be driven at all.
+    """
+
+    def test_the_report_gains_a_verdict(self):
+        report = {"status": "transcript-captured", "pid": os.getpid(),
+                  "input_found": True, "transcript_chars": 10}
+        completed = mock.Mock(returncode=0, stdout=json.dumps(report), stderr="")
+        with tempfile.TemporaryDirectory() as folder:
+            args = cli.build_parser().parse_args(
+                ["--coord-root", folder, "coord-uia", "capture", "--agent", "chatgpt"])
+            buffer = io.StringIO()
+            with mock.patch.object(cli, "subprocess") as runner, \
+                    mock.patch.object(cli, "_pwsh", return_value="pwsh"), \
+                    contextlib.redirect_stdout(buffer):
+                runner.run.return_value = completed
+                cli.coord_uia(args)
+        printed = json.loads(buffer.getvalue())["report"]
+        self.assertEqual(printed["pid"], os.getpid())
+        if a11y.available():
+            self.assertIn("executor_elevation", printed)
+            self.assertIn("drivable", printed)
+        else:
+            # Off Windows the annotation is a no-op, and it must stay one.
+            self.assertEqual(printed, report)
+
+    def test_a_report_without_a_window_is_left_alone(self):
+        report = {"status": "NO_WINDOW"}
+        completed = mock.Mock(returncode=1, stdout=json.dumps(report), stderr="")
+        with tempfile.TemporaryDirectory() as folder:
+            args = cli.build_parser().parse_args(
+                ["--coord-root", folder, "coord-uia", "observe", "--agent", "chatgpt"])
+            buffer = io.StringIO()
+            with mock.patch.object(cli, "subprocess") as runner, \
+                    mock.patch.object(cli, "_pwsh", return_value="pwsh"), \
+                    contextlib.redirect_stdout(buffer):
+                runner.run.return_value = completed
+                cli.coord_uia(args)
+        self.assertEqual(json.loads(buffer.getvalue())["report"], report)
 
 
 class CommandTests(unittest.TestCase):

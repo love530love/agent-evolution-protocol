@@ -25,6 +25,7 @@ from agent_evolution_protocol.coordination.joint_attack import open_case as open
 from agent_evolution_protocol.coordination.capability_roster import declare as declare_capabilities, match as match_capabilities
 from agent_evolution_protocol.coordination.mechanism_audit import audit as audit_mechanism
 from agent_evolution_protocol.coordination import a11y
+from agent_evolution_protocol.coordination import ui_fallback
 from agent_evolution_protocol.coordination import evolution_gate
 from agent_evolution_protocol.coordination.volley_plan import plan as plan_volley
 from agent_evolution_protocol.coordination.battle_orders import issue as issue_battle_order, status as battle_order_status
@@ -2401,7 +2402,11 @@ def coord_uia(args: argparse.Namespace) -> None:
             report = candidate
             break
     payload = {"agent": who, "action": args.action, "out_file": out_file,
-               "returncode": completed.returncode, "report": report,
+               "returncode": completed.returncode,
+               # The driver class annotates its own receipts, but this command
+               # runs the adapter directly, so the operator's own command used
+               # to be the one place with no verdict on drivability.
+               "report": ui_fallback.annotate_elevation(report) if report else report,
                "stderr": completed.stderr[-2000:],
                "note": "task_delivered=true only means the event id was read back from the same session; it is never an ACK."}
     print(json.dumps(payload, ensure_ascii=False, indent=2))
