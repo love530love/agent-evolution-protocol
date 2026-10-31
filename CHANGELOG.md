@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.6.0 — Ask the OS instead of guessing at pixels
+
+- Added `coord-a11y`: report or set the Windows screen-reader flag that gates
+  Electron accessibility trees, and report whether a target process can be
+  driven at all. The change is runtime-only by default, so a reboot undoes it.
+- Measured why it matters: the same ChatGPT window goes from 3 elements, no
+  input control and OCR-only text to 400 elements, 3 input candidates,
+  `input_found: true` and 60978 characters read through UIA.
+- Added `coordination/a11y.py`, including an elevation check. Windows refuses
+  to hand over the token of a higher-integrity process, and every later step --
+  UIA enumeration, `ShowWindow`, injected keys -- fails silently when that
+  happens. A target that cannot be driven is now reported as `drivable: false`
+  instead of failing three steps downstream. Measured on this host: the Qoder
+  client runs elevated and reports `unknown`; ChatGPT runs standard and reports
+  `drivable: true`.
+- Added `docs/WINDOWS_SYSTEM_CAPABILITIES.zh-CN.md`: which capabilities belong
+  to Windows (element tree, input injection, event hooks, process facts) and
+  which must stay ours (DAG, evidence ladder, leases, handoff, audit chain).
+- Tests read the flag but never flip it: toggling a machine-wide accessibility
+  switch would change how every application on the desktop behaves.
+
 ## 0.5.1 — The OCR was blind, not missing
 
 - Declared the test extra (`pytest`, `jsonschema`) and made CI install it. The

@@ -24,6 +24,7 @@ from agent_evolution_protocol.coordination.conversation_journal import append_ev
 from agent_evolution_protocol.coordination.joint_attack import open_case as open_joint_case, review_case as review_joint_case, case_status as joint_case_status, submit_adversarial_review, adversarial_status
 from agent_evolution_protocol.coordination.capability_roster import declare as declare_capabilities, match as match_capabilities
 from agent_evolution_protocol.coordination.mechanism_audit import audit as audit_mechanism
+from agent_evolution_protocol.coordination import a11y
 from agent_evolution_protocol.coordination import evolution_gate
 from agent_evolution_protocol.coordination.volley_plan import plan as plan_volley
 from agent_evolution_protocol.coordination.battle_orders import issue as issue_battle_order, status as battle_order_status
@@ -2406,6 +2407,36 @@ def coord_uia(args: argparse.Namespace) -> None:
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+def coord_a11y(args: argparse.Namespace) -> None:
+    """Report or set the Windows screen-reader flag that gates Electron UIA trees.
+
+    Exposed as a command because the flag is a machine-wide switch, not a
+    per-call option: an operator should be able to see and undo it without
+    reading code.
+    """
+    if not a11y.available():
+        payload = {"available": False, "screen_reader": None,
+                   "reason": "accessibility control is Windows-only"}
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    if args.action == "status":
+        payload = {"available": True, "screen_reader": a11y.status()}
+        if args.pid:
+            payload["target_elevation"] = a11y.elevation(args.pid)
+            payload["drivable"] = payload["target_elevation"] != "unknown"
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    if args.action == "enable":
+        a11y.set_enabled(True, persist=args.persist)
+    elif args.action == "disable":
+        a11y.set_enabled(False, persist=args.persist)
+    elif args.action == "check":
+        print(json.dumps(a11y.check(args.pid), ensure_ascii=False, indent=2))
+        return
+    print(json.dumps({"screen_reader": a11y.status(), "persisted": args.persist},
+                     ensure_ascii=False, indent=2))
+
+
 def coord_client(args: argparse.Namespace) -> None:
     """Name, find, anchor and open the desktop clients the legion can command."""
     root = coord_root(args)
@@ -2827,6 +2858,12 @@ def build_parser() -> argparse.ArgumentParser:
     legion = commands.add_parser("coord-legion"); legion.add_argument("action", choices=("record", "scoreboard", "slacking", "challenge", "chase", "adjudicate", "incentive-board")); legion.add_argument("--agent"); legion.add_argument("--kind"); legion.add_argument("--reporter"); legion.add_argument("--reviewer"); legion.add_argument("--verdict", choices=("accepted", "rejected")); legion.add_argument("--event-id"); legion.add_argument("--task"); legion.add_argument("--signature"); legion.add_argument("--evidence", nargs="*", default=[]); legion.add_argument("--note"); legion.add_argument("--reason"); legion.add_argument("--alternative"); legion.add_argument("--predicted-signature"); legion.add_argument("--cheapest-test"); legion.add_argument("--stop-condition"); legion.add_argument("--expected", nargs="*", default=[]); legion.add_argument("--window-hours", type=float, default=24); legion.add_argument("--min-productive", type=int, default=1); legion.set_defaults(func=coord_legion)
     digest = commands.add_parser("coord-chat-digest"); digest.add_argument("--agent", required=True); digest.add_argument("--since-hours", type=float, default=24); digest.add_argument("--per-actor", type=int, default=4); digest.add_argument("--chars", type=int, default=240); digest.add_argument("--markdown", action="store_true"); digest.set_defaults(func=coord_chat_digest)
     uia = commands.add_parser("coord-uia"); uia.add_argument("action", choices=("observe", "capture", "deliver")); uia.add_argument("--agent", required=True); uia.add_argument("--process"); uia.add_argument("--exe"); uia.add_argument("--title"); uia.add_argument("--event-id"); uia.add_argument("--text"); uia.add_argument("--text-file", type=Path); uia.add_argument("--out-file"); uia.add_argument("--allow-unknown-path", action="store_true"); uia.add_argument("--allow-clipboard-paste", action="store_true"); uia.add_argument("--ocr", action="store_true"); uia.add_argument("--timeout", type=int, default=20); uia.set_defaults(func=coord_uia)
+
+    acc = commands.add_parser("coord-a11y", help="report or set the Windows screen-reader flag that gates Electron UIA trees")
+    acc.add_argument("action", choices=("status", "enable", "disable", "check"))
+    acc.add_argument("--pid", type=int, help="also report this process's elevation and whether it can be driven")
+    acc.add_argument("--persist", action="store_true", help="write the user profile so the setting survives a reboot")
+    acc.set_defaults(func=coord_a11y)
 
     client = commands.add_parser("coord-client"); client.add_argument("action", choices=("register", "list", "discover", "anchor", "launch")); client.add_argument("--agent"); client.add_argument("--display"); client.add_argument("--process"); client.add_argument("--exe"); client.add_argument("--window-titles", nargs="*", default=[]); client.add_argument("--transports", nargs="*", default=[]); client.add_argument("--launch-args", nargs="*", default=[]); client.add_argument("--notes"); client.add_argument("--session-label", default=""); client.add_argument("--no-electron", action="store_true"); client.add_argument("--pid", type=int); client.add_argument("--title"); client.add_argument("--session-id"); client.add_argument("--allow-launch", action="store_true"); client.add_argument("--debug-port", type=int); client.set_defaults(func=coord_client)
 
