@@ -1,5 +1,6 @@
 import json
 from datetime import datetime, timedelta, timezone
+import os
 from pathlib import Path
 import subprocess
 import shutil
@@ -170,6 +171,11 @@ class UiaAdapterContractTest(unittest.TestCase):
     """The desktop transport must fail loudly instead of pretending to deliver."""
 
     def run_adapter(self, *extra):
+        # The adapter is a Windows UI script.  WSL can resolve powershell.exe
+        # through interop, which would run a Windows shell against Linux paths
+        # and fail for the wrong reason.
+        if os.name != "nt":
+            self.skipTest("Windows UI adapter")
         pwsh = shutil.which("pwsh.exe") or shutil.which("powershell.exe")
         if not pwsh:
             self.skipTest("powershell not available")

@@ -1,6 +1,7 @@
 """PowerShell launcher tests with isolated fixtures; never installs from network."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -9,7 +10,10 @@ import unittest
 
 
 REPO = Path(__file__).resolve().parents[1]
-PWSH = shutil.which("pwsh.exe") or shutil.which("pwsh")
+# Finding pwsh.exe is not the same as being Windows: WSL puts the Windows PATH
+# on Linux, so these tests would launch a Windows shell that cannot read a
+# /tmp path and fail for a reason that has nothing to do with the installer.
+PWSH = (shutil.which("pwsh.exe") or shutil.which("pwsh")) if os.name == "nt" else None
 
 
 @unittest.skipUnless(PWSH, "PowerShell 7 not installed")

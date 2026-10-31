@@ -1,6 +1,7 @@
 """Offline fixture tests; no dependency downloads or package execution."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -10,7 +11,10 @@ import unittest
 
 
 REPO = Path(__file__).resolve().parents[1]
-PWSH = shutil.which("pwsh.exe") or shutil.which("pwsh")
+# Interop is not Windows: WSL resolves pwsh.exe from the Windows PATH, but a
+# Windows shell cannot use a /tmp path, so every test below would fail for a
+# reason unrelated to the wheelhouse.
+PWSH = (shutil.which("pwsh.exe") or shutil.which("pwsh")) if os.name == "nt" else None
 
 
 @unittest.skipUnless(PWSH, "PowerShell 7 not installed")
