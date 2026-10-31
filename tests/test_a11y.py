@@ -171,7 +171,7 @@ class OperatorCommandTests(unittest.TestCase):
             args = cli.build_parser().parse_args(
                 ["--coord-root", folder, "coord-uia", "capture", "--agent", "chatgpt"])
             buffer = io.StringIO()
-            with mock.patch.object(cli, "subprocess") as runner, \
+            with mock.patch.object(cli, "uia_argv") as runner, \
                     mock.patch.object(cli, "_pwsh", return_value="pwsh"), \
                     contextlib.redirect_stdout(buffer):
                 runner.run.return_value = completed
@@ -192,12 +192,51 @@ class OperatorCommandTests(unittest.TestCase):
             args = cli.build_parser().parse_args(
                 ["--coord-root", folder, "coord-uia", "observe", "--agent", "chatgpt"])
             buffer = io.StringIO()
-            with mock.patch.object(cli, "subprocess") as runner, \
+            with mock.patch.object(cli, "uia_argv") as runner, \
                     mock.patch.object(cli, "_pwsh", return_value="pwsh"), \
                     contextlib.redirect_stdout(buffer):
                 runner.run.return_value = completed
                 cli.coord_uia(args)
         self.assertEqual(json.loads(buffer.getvalue())["report"], report)
+
+    def test_the_receipt_goes_through_the_utf8_runner(self):
+        # Elevated processes report cp1252, and a non-ASCII -Text cannot survive
+        # the console code page, so this command must use the same runner as the
+        # driver: text=True alone made the reader thread die on the adapter's
+        # UTF-8 Chinese and left stdout as None (AttributeError: 'NoneType'
+        # object has no attribute 'splitlines').
+        report = {"status": "transcript-captured", "pid": os.getpid()}
+        completed = mock.Mock(returncode=0, stdout=json.dumps(report), stderr="")
+        with tempfile.TemporaryDirectory() as folder:
+            args = cli.build_parser().parse_args(
+                ["--coord-root", folder, "coord-uia", "deliver", "--agent", "chatgpt",
+                 "--event-id", "AEP-TEST-1", "--text", "验证 AEP-TEST-1"])
+            with mock.patch.object(cli, "uia_argv") as runner, \
+                    mock.patch.object(cli, "_pwsh", return_value="pwsh"), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                runner.run.return_value = completed
+                cli.coord_uia(args)
+                kwargs = runner.run.call_args.kwargs
+        self.assertEqual(kwargs.get("env", {}).get("AEP_SCROLL_COMPOSER"), None)
+        self.assertIn("timeout", kwargs)
+
+    def test_an_undecodable_receipt_does_not_crash_the_command(self):
+        # The reader thread can still lose a race and hand back None; the
+        # command must report that, not raise AttributeError.
+        completed = mock.Mock(returncode=1, stdout=None, stderr="decode failed")
+        with tempfile.TemporaryDirectory() as folder:
+            args = cli.build_parser().parse_args(
+                ["--coord-root", folder, "coord-uia", "capture", "--agent", "chatgpt"])
+            buffer = io.StringIO()
+            with mock.patch.object(cli, "uia_argv") as runner, \
+                    mock.patch.object(cli, "_pwsh", return_value="pwsh"), \
+                    contextlib.redirect_stdout(buffer):
+                runner.run.return_value = completed
+                cli.coord_uia(args)
+        payload = json.loads(buffer.getvalue())
+        self.assertIsNone(payload["report"])
+        self.assertEqual(payload["returncode"], 1)
+        self.assertIn("decode failed", payload["stderr"])
 
 
 class CommandTests(unittest.TestCase):

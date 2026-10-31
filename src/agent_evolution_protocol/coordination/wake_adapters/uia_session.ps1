@@ -195,6 +195,27 @@ function Invoke-AepEnter {
   Start-Sleep -Milliseconds 120
 }
 
+function Wait-ComposerCleared {
+  # Poll until the event id leaves the composer, because "check once, right after
+  # the send action" is what turned a delivered message into
+  # submitted-unconfirmed: the app had not processed the send yet.
+  param([IntPtr]$Hwnd, [string]$EventId, [double]$TimeoutSeconds = 4,
+        [ref]$Polls)
+  $deadline = [DateTime]::UtcNow.AddSeconds([Math]::Max(4, $TimeoutSeconds))
+  while ([DateTime]::UtcNow -lt $deadline) {
+    if ($Polls) { $Polls.Value++ }
+    $root = [System.Windows.Automation.AutomationElement]::FromHandle($Hwnd)
+    if (-not $root) { return $false }
+    $selection = Select-InputElement -Root $root -Soft
+    if (-not $selection) { return $true }
+    try { $remaining = [string]$selection.Element.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value } catch { $remaining = '' }
+    if (-not $remaining) { $remaining = Get-ElementText -Element $selection.Element }
+    if (-not ($remaining -and $remaining.Contains($EventId))) { return $true }
+    Start-Sleep -Milliseconds 300
+  }
+  return $false
+}
+
 function Invoke-AepPasteClipboard {
   param([string]$Value, [switch]$Replace)
   try { [System.Windows.Forms.Clipboard]::SetText($Value) } catch { Set-Clipboard -Value $Value }
@@ -358,7 +379,15 @@ function Write-Report {
     if ($dir) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
     [IO.File]::WriteAllText($ReceiptFile, $json, [System.Text.UTF8Encoding]::new($false))
   }
-  $json
+  # Do not hand the receipt to PowerShell's output stream: that puts the console
+  # encoder in the path, and an elevated process can start with an OEM code page
+  # that cannot represent Chinese.  Measured: the same text landed in -OutFile as
+  # correct UTF-8 while the JSON receipt arrived as "?" -- the work had succeeded
+  # and only the echo was destroyed.  Writing bytes removes the encoder.
+  $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes($json + "`n")
+  $stream = [Console]::OpenStandardOutput()
+  $stream.Write($bytes, 0, $bytes.Length)
+  $stream.Flush()
 }
 
 function Get-TargetWindows {
@@ -1332,16 +1361,42 @@ while ([DateTime]::UtcNow -lt $deadline) {
 
 # A transcript hit is insufficient if the event id is still sitting in the
 # composer. Require the composer to be cleared after the explicit send action.
+#
+# Check it until it clears rather than once: the transcript already contains the
+# composer, so the read-back loop above can succeed on its first poll while the
+# app has not yet processed the send.  Checking once there produced a false
+# negative -- the message had been delivered and the receipt still said
+# submitted-unconfirmed, which invites a duplicate send.
 $composerCleared = $false
+$composerPolls = 0
+$sendRetry = ''
 if ($selection) {
-  $verifyRoot = [System.Windows.Automation.AutomationElement]::FromHandle($window.Hwnd)
-  if ($verifyRoot) {
-    $verifySelection = Select-InputElement -Root $verifyRoot -Soft
-    if ($verifySelection) {
-      try { $remaining = [string]$verifySelection.Element.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value } catch { $remaining = '' }
-      if (-not $remaining) { $remaining = Get-ElementText -Element $verifySelection.Element }
-      $composerCleared = -not ($remaining -and $remaining.Contains($EventId))
-    } else { $composerCleared = $true }
+  $composerCleared = Wait-ComposerCleared -Hwnd $window.Hwnd -EventId $EventId `
+    -TimeoutSeconds $ReadBackTimeoutSeconds -Polls ([ref]$composerPolls)
+  if (-not $composerCleared) {
+    # ValuePattern updates the visual editor without firing the web app's input
+    # event, so its send control stays disabled and Enter does nothing.  Paste
+    # through the focused control, which does fire it, then send again.
+    try { $selection.Element.SetFocus() } catch { }
+    Invoke-AepPasteClipboard -Value $Text -Replace
+    Start-Sleep -Milliseconds 600
+    $retryRoot = [System.Windows.Automation.AutomationElement]::FromHandle($window.Hwnd)
+    if ($retryRoot) {
+      $retryMethod = Invoke-SendControl -Root $retryRoot -Hwnd $window.Hwnd -Mode $SendMode
+      if ($retryMethod) { $sendRetry = "paste+$retryMethod" }
+    }
+    if (-not $sendRetry) { Invoke-AepEnter; $sendRetry = 'paste+enter' }
+    $composerCleared = Wait-ComposerCleared -Hwnd $window.Hwnd -EventId $EventId `
+      -TimeoutSeconds $ReadBackTimeoutSeconds -Polls ([ref]$composerPolls)
+    if ($composerCleared) {
+      # The earlier transcript hit may have been the composer itself; re-read now
+      # that the composer is empty.
+      $afterRoot = [System.Windows.Automation.AutomationElement]::FromHandle($window.Hwnd)
+      if ($afterRoot) {
+        $after = Get-VisibleTranscript -Root $afterRoot -CapChars $MaxCaptureChars
+        if ($after.Text -and $after.Text.Contains($EventId)) { $visible = $true; $capturedText = $after.Text }
+      }
+    }
   }
 }
 $delivered = [bool]($visible -and $composerCleared)
@@ -1376,6 +1431,8 @@ Write-Report @{
   interject_action    = $interjectAction
   interject_evidence  = $activity.interject_evidence
   composer_cleared    = $composerCleared
+  composer_clear_polls = $composerPolls
+  send_retry          = $sendRetry
   activation          = $ActivationEvidence
   input_found         = [bool]$selection
   input_candidate_count = $(if ($selection) { $selection.CandidateCount } else { 0 })

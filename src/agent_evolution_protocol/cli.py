@@ -26,6 +26,7 @@ from agent_evolution_protocol.coordination.capability_roster import declare as d
 from agent_evolution_protocol.coordination.mechanism_audit import audit as audit_mechanism
 from agent_evolution_protocol.coordination import a11y
 from agent_evolution_protocol.coordination import process_info
+from agent_evolution_protocol.coordination import uia_argv
 from agent_evolution_protocol.coordination import ui_fallback
 from agent_evolution_protocol.coordination import evolution_gate
 from agent_evolution_protocol.coordination.volley_plan import plan as plan_volley
@@ -2413,13 +2414,17 @@ def coord_uia(args: argparse.Namespace) -> None:
         command += ["-OcrVerify"]
     command += ["-ReadBackTimeoutSeconds", str(max(1, min(args.timeout, 300)))]
     try:
-        completed = subprocess.run(command, text=True, capture_output=True,
-                                   env=ui_fallback.PowerShellUiaDriver._ui_env(profile),
-                                   timeout=max(args.timeout + 60, 120), check=False)
+        # Same runner the driver uses, for the same two reasons: a non-ASCII
+        # value such as -Text cannot survive the console code page, and the
+        # adapter writes UTF-8 while an elevated process reports cp1252.  Going
+        # around it made this command fail to find a window the scheduler found
+        # and made `deliver --text 中文` arrive as "?".
+        completed = uia_argv.run(command, timeout=max(args.timeout + 60, 120),
+                                 env=ui_fallback.PowerShellUiaDriver._ui_env(profile))
     except Exception as exc:  # noqa: BLE001
         raise ProtocolError(f"uia adapter failed: {exc}") from exc
     report = None
-    for line in reversed(completed.stdout.splitlines()):
+    for line in reversed((completed.stdout or "").splitlines()):
         try:
             candidate = json.loads(line)
         except json.JSONDecodeError:

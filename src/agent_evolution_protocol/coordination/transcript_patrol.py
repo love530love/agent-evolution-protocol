@@ -96,8 +96,8 @@ def capture(client: dict[str, Any], out_file: Path, timeout: int = 90) -> dict:
     if client.get("ocr_verify"):
         args.append("-OcrVerify")
     try:
-        done = subprocess.run(args, text=True, capture_output=True,
-                              timeout=timeout, check=False)
+        done = subprocess.run(args, text=True, encoding="utf-8", errors="replace",
+                              capture_output=True, timeout=timeout, check=False)
     except subprocess.TimeoutExpired:
         return {"ok": False, "reason": "capture_timeout"}
     text = out_file.read_text(encoding="utf-8", errors="replace") if out_file.is_file() else ""

@@ -46,7 +46,8 @@ def send_event(event: dict, *, channel_id: str, channel_type: int = 1,
                json.dumps(data, ensure_ascii=False, separators=(",", ":")),
                "--format", "json", "--no-retry", "--timeout", "15s"]
     try:
-        result = runner(command, capture_output=True, text=True, timeout=20, check=False)
+        result = runner(command, capture_output=True, text=True, encoding="utf-8",
+                        errors="replace", timeout=20, check=False)
     except (OSError, subprocess.TimeoutExpired) as exc:
         return {"state": "UNKNOWN_DELIVERY", "event_id": event["id"],
                 "reason": type(exc).__name__, "agent_accepted": False,

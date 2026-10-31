@@ -177,7 +177,9 @@ def _consume_unlocked(path: Path, *, dry_run: bool = False) -> int:
         str(path),
     ]
     try:
-        completed = subprocess.run(cmd, cwd=str(ROOT.parent.parent), text=True, capture_output=True, timeout=60, check=False)
+        completed = subprocess.run(cmd, cwd=str(ROOT.parent.parent), text=True,
+                                   encoding="utf-8", errors="replace",
+                                   capture_output=True, timeout=60, check=False)
     except Exception as exc:  # noqa: BLE001
         append_log(dict(at=stamp(), status="adapter-error", id=aid, to=target, task=event.get("task"), error=str(exc), monotonic=now))
         move_atomic(path, FAILED)
