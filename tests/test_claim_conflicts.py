@@ -153,6 +153,27 @@ class GateTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             cc.gate(self.root, agent="a", task="T", paths=[])
 
+    def test_an_agent_may_overlap_its_own_claim(self):
+        write_claim(self.root, "T-A", "alpha", ["src/pkg"])
+        result = cc.gate(self.root, agent="alpha", task="T-B", paths=["src/pkg/mod.py"],
+                         now="2026-10-30T11:00:00+00:00")
+        self.assertEqual(result["status"], "ALLOWED")
+        self.assertEqual(result["blocking"], [])
+        self.assertEqual([row["task"] for row in result["self_overlaps"]], ["T-A"])
+
+    def test_self_overlap_is_still_reported_not_hidden(self):
+        write_claim(self.root, "T-A", "alpha", ["src/pkg"])
+        result = cc.gate(self.root, agent="alpha", task="T-B", paths=["src/pkg"],
+                         now="2026-10-30T11:00:00+00:00")
+        self.assertEqual(result["self_overlaps"][0]["overlaps"],
+                         [{"wanted": "src/pkg", "claimed": "src/pkg"}])
+
+    def test_another_agent_still_blocks_on_the_same_path(self):
+        write_claim(self.root, "T-A", "alpha", ["src/pkg"])
+        result = cc.gate(self.root, agent="beta", task="T-B", paths=["src/pkg/mod.py"],
+                         now="2026-10-30T11:00:00+00:00")
+        self.assertEqual(result["status"], "BLOCKED")
+
 
 class RemediationTests(unittest.TestCase):
     def setUp(self):

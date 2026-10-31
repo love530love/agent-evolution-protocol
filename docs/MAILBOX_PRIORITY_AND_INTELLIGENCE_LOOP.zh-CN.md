@@ -64,6 +64,9 @@ pwsh -File K:\PythonProjects5\agent-evolution-protocol\scripts\join-agent.ps1 `
 - 将派发回执、UI 回执、Agent ACK、产物回传统一映射到 delivery truth matrix。
 - 建立单一 schema 注册表和 CI 校验，阻止文档与路由器各自发明版本名（历史复核已发现
   `aep-next-action-v1` 与 `agent-evolution-next-action-v1` 不一致）；消息、动作建议和消费端必须引用同一 canonical schema。
+  - 2026-10-31 进展：该处文档已改为真实输出，并由 `tests/test_route_guidance_doc.py`
+    比对文档示例与 `build_next_action()` 的字段集与 schema 名，漂移即失败。
+    **单一注册表仍未建**，目前只是这一对文档/代码有了守卫。
 
 ### P2：自进化
 

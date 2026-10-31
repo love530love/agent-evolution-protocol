@@ -51,21 +51,60 @@ aep route --agent helper --workspace 'K:\PythonProjects5\agent-evolution-protoco
 
 ### P0：把已有路由变成可检查的一步指引
 
-在既有 `route` 结果旁已增补版本化 `next_action`，保留旧字段以兼容老客户端。它只产生只读参数数组：
+在既有 `route` 结果旁已增补版本化 `next_action`，保留旧字段以兼容老客户端。它只产生只读参数数组。
+下面是 `build_next_action()` 对 `scenario=review-only` 的实际输出（`tests/test_route_guidance_doc.py`
+会比对本文与代码，字段或 schema 名漂移即测试失败）：
 
 ```json
 {
-  "schema": "aep-next-action-v1",
-  "kind": "observe",
-  "reason": "先读取当前任务和未知操作",
-  "argv": ["aep", "inspect", "--markdown"],
-  "cwd": "<已解析的工作区绝对路径>",
-  "requires": [],
-  "missing_inputs": [],
-  "side_effect": "none",
-  "execute_automatically": false
+  "schema": "agent-evolution-next-action-v1",
+  "kind": "command",
+  "action": "read_coordination_status",
+  "argv": [
+    "aep",
+    "--coord-root",
+    "K:/PythonProjects5/agent-evolution-protocol/coordination",
+    "coord-status"
+  ],
+  "cwd": "K:/PythonProjects5/agent-evolution-protocol",
+  "shell": false,
+  "read_only": true,
+  "execution_started": false,
+  "required_capability": "aep_cli",
+  "capability_verified": false,
+  "preconditions": [
+    {"condition": "route_inputs_complete", "satisfied": true},
+    {"condition": "required_capability_available", "satisfied": null}
+  ],
+  "placeholders": [],
+  "state_resolution_required": false,
+  "blockers": [],
+  "completion": "Return the read result or exact error. No task was claimed, resumed, executed, sent, or completed by this guidance.",
+  "fallback": {
+    "kind": "manual_handoff_request",
+    "required_capability": "file_read",
+    "files": [
+      "K:\\PythonProjects5\\agent-evolution-protocol\\AEP_JOIN.md",
+      "K:\\PythonProjects5\\agent-evolution-protocol\\coordination\\claims\\AEP-EXAMPLE-20261031\\owner.json",
+      "K:\\PythonProjects5\\agent-evolution-protocol\\coordination\\task_states\\AEP-EXAMPLE-20261031.json"
+    ],
+    "files_verified": false,
+    "automatic_dispatch": false,
+    "request": "Read available handoff files; ask a command-capable collaborator to run the single read-only argv and return its JSON result. Report missing files or command errors.",
+    "requested_argv": [
+      "aep",
+      "--coord-root",
+      "K:/PythonProjects5/agent-evolution-protocol/coordination",
+      "coord-status"
+    ],
+    "missing_inputs": []
+  }
 }
 ```
+
+`kind` 只有三个取值：`command`（输入齐全且可读）、`needs_input`（缺字段，此时 `argv=null`
+且 `placeholders` 列出缺什么）、`file_only`（只能读文件的场景，`argv=null`，改走 `fallback`）。
+不存在"`kind=observe`"这种取值——早期文档写过，是错的。
 
 执行端使用参数数组而非拼接 shell 字符串；工作目录和协作根目录必须显式绑定。信息不全、状态损坏、结果未知、目标会话不唯一时只给观察或澄清动作，不返回可误执行的占位命令。说明文字和历史聊天始终作为数据，不升级为执行授权。
 

@@ -272,6 +272,7 @@ def gate(coord_root, *, agent, task, paths, now=None, stale_after_hours=DEFAULT_
                 if conflict["severity"] == "blocking"
                 and conflict["kind"] in {"unreadable_claim", "duplicate_task_id"}]
     ignored = []
+    self_overlaps = []
     for claim in _normalize_claim_all(coord_root, ttl_hours):
         if claim["task"] == task:
             continue
@@ -284,6 +285,15 @@ def gate(coord_root, *, agent, task, paths, now=None, stale_after_hours=DEFAULT_
             ignored.append({"task": claim["task"], "agent": claim["agent"],
                             "expires_at": claim["expires_at"], "overlaps": hits})
             continue
+        if claim["agent"] == agent:
+            # The same agent already covers this path under another task. That
+            # is one writer holding two labels, not a conflict: blocking it
+            # would force an agent to fragment its own work into a new task
+            # every time it continues, which is how a protocol teaches people
+            # to bypass it.
+            self_overlaps.append({"task": claim["task"], "agent": claim["agent"],
+                                  "overlaps": hits})
+            continue
         blocking.append({"kind": "path_overlap", "severity": "blocking",
                          "tasks": [task, claim["task"]],
                          "agents": [agent, claim["agent"]],
@@ -291,7 +301,7 @@ def gate(coord_root, *, agent, task, paths, now=None, stale_after_hours=DEFAULT_
                          "overlaps": hits})
     return {"schema": "agent-evolution-claim-gate-v1", "agent": agent, "task": task,
             "scopes": wanted, "allowed": not blocking, "blocking": blocking,
-            "ignored_expired": ignored,
+            "ignored_expired": ignored, "self_overlaps": self_overlaps,
             "status": "ALLOWED" if not blocking else "BLOCKED",
             "claim_created": False}
 
