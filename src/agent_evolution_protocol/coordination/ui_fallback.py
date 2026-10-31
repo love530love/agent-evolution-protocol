@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 
+from agent_evolution_protocol.coordination import a11y
 from agent_evolution_protocol.coordination import uia_argv
 import re
 import secrets
@@ -138,6 +139,33 @@ class Driver(Protocol):
     def deliver(self, profile: dict, message: str, event_id: str, *, urgent: bool = False) -> dict: ...
 
 
+def annotate_elevation(report: dict) -> dict:
+    """Say up front when Windows will refuse to drive this window.
+
+    Running the clients elevated is a legitimate choice -- an unelevated agent
+    process that needs admin rights gets stuck on UAC.  The consequence is that
+    the executor must be elevated too: a medium-integrity process cannot
+    enumerate, move or type into a higher-integrity window, and every one of
+    those refusals is silent.  Without this annotation the caller sees
+    ``input_found: false`` and no reason for it.
+    """
+    if not report or not a11y.available():
+        return report
+    pid = report.get("pid")
+    if not pid:
+        return report
+    level = a11y.elevation(int(pid))
+    report["target_elevation"] = level
+    if level == "unknown":
+        report["drivable"] = False
+        report["blocked_by"] = "TARGET_NEEDS_ELEVATION"
+        report["hint"] = ("the target runs at a higher integrity level; start the executor "
+                          "elevated, or the client unelevated")
+    else:
+        report["drivable"] = True
+    return report
+
+
 class PowerShellUiaDriver:
     """Native UIA first; exact OCR composer hint only for opaque clients."""
 
@@ -206,7 +234,7 @@ class PowerShellUiaDriver:
             args = self._target(profile) + ["-Mode", "observe"]
             if profile.get("activity_ocr"):
                 args.append("-OcrVerify")
-            return self._run(UIA, args, env=self._ui_env(profile))
+            return annotate_elevation(self._run(UIA, args, env=self._ui_env(profile)))
         except RelayError as exc:
             if "LAUNCH_FORBIDDEN" in str(exc):
                 return {"status": "NO_WINDOW"}
@@ -268,7 +296,7 @@ class PowerShellUiaDriver:
         if profile.get("composer_x_ratio") and profile.get("composer_y_ratio"):
             args += ["-ComposerXRatio", str(profile["composer_x_ratio"]),
                      "-ComposerYRatio", str(profile["composer_y_ratio"])]
-        return self._run(UIA, args, timeout=75, env=self._ui_env(profile))
+        return annotate_elevation(self._run(UIA, args, timeout=75, env=self._ui_env(profile)))
 
 
 @contextmanager

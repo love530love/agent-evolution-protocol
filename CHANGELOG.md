@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.1 — Say why a window cannot be driven
+
+- The UI driver now annotates every receipt with `target_elevation`, `drivable`
+  and, when applicable, `blocked_by: TARGET_NEEDS_ELEVATION`. Running the
+  clients elevated is a legitimate operating choice -- an unelevated agent gets
+  stuck on UAC when it runs a command -- but Windows then refuses to let a
+  medium-integrity process enumerate, move or type into that window, and every
+  one of those refusals is silent. The caller used to see `input_found: false`
+  with no reason for it.
+- Documented the operating rule this implies: the executor runs elevated too.
+  A higher-integrity process can drive a lower one, not the reverse, so one
+  direction is enough. `K:` reports `FIXED` via GetDriveTypeW, so an elevated
+  process still sees the repository; a network-mapped drive would not.
+
 ## 0.6.0 — Ask the OS instead of guessing at pixels
 
 - Added `coord-a11y`: report or set the Windows screen-reader flag that gates

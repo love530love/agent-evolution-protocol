@@ -46,6 +46,32 @@ coord-a11y status --pid 22796
 
 把这条写进 `coord-a11y` 的回执，比让三步之后的输入静默失败要好。
 
+### 本机采用的操作规则
+
+客户端**一律以管理员运行**——这是有意的：Agent 自己执行命令时，非提权会被 UAC 卡住，
+任务就停在那里。既然目标恒为高完整性级别，那就让**执行器同样以管理员启动**。
+
+方向性只要求单向：提权进程可以驱动低权限窗口，反过来不行。所以执行器提权后，
+所有客户端（无论提权与否）都能驱动。
+
+```powershell
+# 在管理员终端里启动无人值守循环
+aep --coord-root coordination federate serve --interval 30 --agents qoder codex
+```
+
+验证一行：
+
+```powershell
+aep coord-a11y status --pid <目标pid>     # 期望 "drivable": true
+```
+
+两个配套事实：
+
+- 项目在 `K:`，`GetDriveTypeW` 返回 `FIXED`（本地盘），提权进程可见。
+  若把仓库放到**网络映射盘**，提权后会看不到该盘符——那是 UAC 的经典坑，与本项目无关但会咬人。
+- 驱动层会在回执里写 `target_elevation` / `drivable` / `blocked_by`。
+  看到 `blocked_by: TARGET_NEEDS_ELEVATION` 就是权限不匹配，不是选择器写错了。
+
 ## 已经落地的
 
 `coord-a11y`（`coordination/a11y.py`）：

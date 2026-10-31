@@ -12,7 +12,7 @@ import sys
 import unittest
 
 from agent_evolution_protocol import cli
-from agent_evolution_protocol.coordination import a11y
+from agent_evolution_protocol.coordination import a11y, ui_fallback
 
 
 class PlatformTests(unittest.TestCase):
@@ -56,6 +56,36 @@ class WindowsTests(unittest.TestCase):
         # the answer must be "unknown", never a silent yes.
         self.assertEqual(a11y.elevation(0), "unknown")
         self.assertFalse(a11y.check(0)["drivable"])
+
+
+class AnnotationTests(unittest.TestCase):
+    """The driver must say *why* a window cannot be driven, not just fail."""
+
+    def test_reports_are_left_alone_off_windows(self):
+        if sys.platform == "win32":
+            self.skipTest("this assertion is about the non-Windows path")
+        report = {"pid": 4}
+        self.assertEqual(ui_fallback.annotate_elevation(report), {"pid": 4})
+
+    def test_a_report_without_a_pid_is_untouched(self):
+        report = {"status": "NO_WINDOW"}
+        self.assertEqual(ui_fallback.annotate_elevation(report), {"status": "NO_WINDOW"})
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows accessibility APIs")
+    def test_an_unreadable_process_is_marked_undrivable(self):
+        # Pid 4 is System: opening its token always fails, which is the same
+        # answer an elevated client gives.
+        report = ui_fallback.annotate_elevation({"pid": 4})
+        self.assertEqual(report["target_elevation"], "unknown")
+        self.assertFalse(report["drivable"])
+        self.assertEqual(report["blocked_by"], "TARGET_NEEDS_ELEVATION")
+        self.assertIn("elevated", report["hint"])
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows accessibility APIs")
+    def test_our_own_process_is_drivable(self):
+        report = ui_fallback.annotate_elevation({"pid": os.getpid()})
+        self.assertTrue(report["drivable"])
+        self.assertNotIn("blocked_by", report)
 
 
 class CommandTests(unittest.TestCase):
