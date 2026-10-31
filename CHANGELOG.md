@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.6.7 — Both legs, and a rule for which one goes first
+
+- `vision_grounding.py`: a vision answer is a *proposal*, not an observation.
+  `admissible()` refuses low-confidence and out-of-window boxes instead of
+  clamping them; `from_normalised()` raises on values outside the model's
+  `[0, 999]` grid because a model that answers 1200 is answering a different
+  question. `require_provider()` reads the same `status` field that
+  `coord-providers promote` refuses to advance without evidence, and
+  `HttpGrounder` performs that check in `__init__`, so there is no way to hold
+  a usable model-backed grounder whose row was never probed.
+- `policy_executor.py`: the only thing that touches the desktop, under four
+  rules a model cannot be trusted to enforce on itself. The action vocabulary
+  is `desktop_providers.OPERATIONS`, so a primitive with no operation behind it
+  is refused rather than degraded (a double click becoming a single click is a
+  wrong action that looks like a successful one). Shell-shaped actions are
+  refused by name. Coordinates are range-checked before conversion. An
+  unverified step ends the run, and `verified is None` is not a pass.
+- `input_routing.py`: the ordering that makes the two legs complementary rather
+  than redundant. UIA with exactly one candidate is decisive, so the model is
+  **not** asked — a settled question must not be put to a weaker answerer.
+  Ambiguity (0 or >1 candidates) is the only window where perception adds
+  information. A configured region is the last resort and always needs
+  verification, because a hard-coded region is what types into the wrong box
+  after a UI change. `delivery_verdict()` defaults to defer; a write step with
+  no verifier counts as unaccounted for.
+- New `aep coord-vision ground|providers`, `aep coord-policy validate`,
+  `aep coord-route`. The last one replays a routing decision from recorded
+  receipts, so the choice between the legs can be argued with a fixture instead
+  of a live desktop.
+- `coord-policy` used `plan.get("actions") or plan.get("plan") or []`, so a
+  plan object with a misspelled key became an empty plan: zero steps,
+  `COMPLETED`, indistinguishable from a clean validation. It now refuses with
+  the reason and exit code 2.
+- Not wired yet, deliberately: `ui_fallback.run()` still only walks the UIA
+  path, and no provider is `probed`, so the vision leg has never run for real.
+  Both facts are recorded in `docs/releases/v0.6.7.md` rather than implied away.
+
 ## 0.6.6 — The registry became a gate instead of a list
 
 - `execution_provider_catalog.promote()` / `retire()` / `history()`. Fourteen

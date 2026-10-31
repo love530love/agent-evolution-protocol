@@ -340,6 +340,10 @@ step 2: review  -> done (beta)    _settled = True
 - **MCP 适配器、跨机联邦**：未做。`locking.py` 只是本机文件锁。
 - **Qoder 之外的客户端**：`chatgpt` 已实测（`input_found: true`、3 个输入候选、60978 字符），
   `codebuddy_cn` 只配了参数、未实测。
+- **视觉腿（v0.6.7）一次都没真跑过**：`vision_grounding` / `policy_executor` / `input_routing`
+  三层都有测试、都能离线回放（`aep coord-vision`、`aep coord-policy`、`aep coord-route`），
+  但 `mage_vl_cowork` 仍是 `candidate`，`ui_fallback.run()` 也仍只走 UIA。
+  所以「视觉能定位 composer」这件事在本机**尚未验证**，只验证了「没有 grounder 时不编数字」。
 
 ## 验收命令
 

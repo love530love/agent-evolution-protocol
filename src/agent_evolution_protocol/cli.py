@@ -8,6 +8,7 @@ Consult each command's preview, authorization and evidence boundaries.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -17,6 +18,7 @@ import sys
 import shutil
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from agent_evolution_protocol.coordination.cluster_kernel import ClusterKernel
@@ -37,6 +39,9 @@ from agent_evolution_protocol.coordination import reasoning_contract
 from agent_evolution_protocol.coordination import desktop_providers
 from agent_evolution_protocol.coordination import agent_mcp_registry
 from agent_evolution_protocol.coordination import execution_provider_catalog
+from agent_evolution_protocol.coordination import input_routing
+from agent_evolution_protocol.coordination import policy_executor
+from agent_evolution_protocol.coordination import vision_grounding
 from agent_evolution_protocol.coordination import desktop_runner
 from agent_evolution_protocol.coordination import desktop_ipc
 from agent_evolution_protocol.coordination import improvement
@@ -2448,6 +2453,146 @@ def coord_uia(args: argparse.Namespace) -> None:
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+def _parse_size(value: str) -> tuple[int, int]:
+    try:
+        width, height = (int(part) for part in str(value).lower().split("x", 1))
+    except (TypeError, ValueError) as exc:
+        raise ProtocolError(f"expected WIDTHxHEIGHT, got {value!r}") from exc
+    if width <= 0 or height <= 0:
+        raise ProtocolError("window size must be positive")
+    return width, height
+
+
+def _parse_region(value: str) -> vision_grounding.Region:
+    try:
+        x, y, width, height = (int(part) for part in str(value).split(","))
+    except (TypeError, ValueError) as exc:
+        raise ProtocolError(f"expected x,y,width,height, got {value!r}") from exc
+    return vision_grounding.Region(x=x, y=y, width=width, height=height)
+
+
+def coord_vision(args: argparse.Namespace) -> None:
+    """Ask a grounder where a control is, and compare it with a known answer.
+
+    The command is deliberately explicit about its inputs: without a window size
+    there is nothing to convert the model's 0-999 grid against, and without a
+    reference region there is nothing to compare, so it reports "no comparison"
+    rather than inventing a number.  That comparison is the only thing that
+    argues for or against adopting a vision model here.
+    """
+    if args.action == "providers":
+        rows = execution_provider_catalog.inventory(path=args.catalog, layer="desktop_visual")
+        order = execution_provider_catalog.STATUS_ORDER
+        print(json.dumps({"providers": [
+            {"id": row["id"], "status": row["status"],
+             "usable_for_grounding": row["status"] in order
+             and order.index(row["status"]) >= order.index("probed")}
+            for row in rows]}, ensure_ascii=False, indent=2))
+        return
+    width, height = _parse_size(args.window)
+    window = vision_grounding.Region(x=0, y=0, width=width, height=height)
+    reference = _parse_region(args.reference) if args.reference else None
+    if args.endpoint:
+        try:
+            grounder = vision_grounding.HttpGrounder(
+                args.endpoint, provider_id=args.provider, catalog_path=args.catalog)
+        except vision_grounding.GroundingRefused as exc:
+            raise ProtocolError(str(exc)) from exc
+    else:
+        grounder = vision_grounding.NullGrounder()
+    image = ""
+    if args.image:
+        image = base64.b64encode(Path(args.image).read_bytes()).decode("ascii")
+    proposal = grounder.ground({"target": args.target, "window": window, "image_data": image})
+    ok, reason = vision_grounding.admissible(proposal, window=window,
+                                             min_confidence=args.min_confidence)
+    payload = {"grounder": getattr(grounder, "name", "unknown"),
+               "target": args.target, "window": {"width": width, "height": height},
+               "proposal": proposal.as_dict() if proposal else None,
+               "admissible": ok, "refused_because": reason,
+               "reference": reference.as_dict() if reference else None}
+    if reference is not None:
+        payload["agreement"] = vision_grounding.agreement(proposal, reference)
+    else:
+        payload["agreement"] = {"agree": None, "reason": "MISSING_REFERENCE"}
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+def coord_policy(args: argparse.Namespace) -> None:
+    """Validate a proposed action plan without touching the desktop.
+
+    A dry run is the cheapest way to find out that a trace contains a shell
+    action, an unsupported primitive, or a click outside the window -- all of
+    which are refusals rather than errors, and all of which would otherwise be
+    discovered on a live session at the worst moment.
+    """
+    width, height = _parse_size(args.window)
+    window = vision_grounding.Region(x=0, y=0, width=width, height=height)
+    try:
+        plan = json.loads(Path(args.plan).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ProtocolError(f"cannot read plan: {exc}") from exc
+    if isinstance(plan, dict):
+        # An unrecognised key must not read as "this plan has nothing to do":
+        # silently running zero steps looks exactly like a clean validation.
+        for key in ("actions", "plan"):
+            if key in plan:
+                plan = plan[key]
+                break
+        else:
+            raise ProtocolError("plan object needs an 'actions' or 'plan' list")
+    if not isinstance(plan, list):
+        raise ProtocolError("plan must be a list of actions")
+
+    def dry(operation: str, arguments: dict) -> dict:
+        return {"dry_run": True, "operation": operation}
+
+    executor = policy_executor.PolicyExecutor(dry, window=window, max_steps=args.max_steps)
+    result = executor.run(policy_executor.ScriptedPolicy(plan), task=args.task or "")
+    result["dry_run"] = True
+    result["note"] = "no desktop action was executed; this only exercises the guards"
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+def coord_route(args: argparse.Namespace) -> None:
+    """Replay a routing decision from recorded receipts, offline.
+
+    The point of a replayable router is that the choice between the two legs
+    can be argued about with a fixture instead of a live desktop: same
+    observation, same answer, no window involved.
+    """
+    width, height = _parse_size(args.window)
+    window = vision_grounding.Region(x=0, y=0, width=width, height=height)
+    try:
+        observation = json.loads(Path(args.observation).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ProtocolError(f"cannot read observation: {exc}") from exc
+    if not isinstance(observation, dict):
+        raise ProtocolError("observation must be a JSON object")
+    reference = _parse_region(args.reference) if args.reference else None
+    grounder: Any = vision_grounding.NullGrounder()
+    if args.endpoint:
+        try:
+            grounder = vision_grounding.HttpGrounder(
+                args.endpoint, provider_id=args.provider, catalog_path=args.catalog)
+        except vision_grounding.GroundingRefused as exc:
+            raise ProtocolError(str(exc)) from exc
+    decision = input_routing.resolve_target(
+        observation, window=window, grounder=grounder, reference=reference,
+        min_confidence=args.min_confidence, target=args.target)
+    payload: dict[str, Any] = {"decision": decision}
+    if args.policy_result:
+        try:
+            result = json.loads(Path(args.policy_result).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ProtocolError(f"cannot read policy result: {exc}") from exc
+        if not isinstance(result, dict):
+            raise ProtocolError("policy result must be a JSON object")
+        payload["verdict"] = input_routing.delivery_verdict(locate=decision,
+                                                            policy_result=result)
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
 def coord_providers(args: argparse.Namespace) -> None:
     """List, promote or retire optional execution providers.
 
@@ -2942,6 +3087,38 @@ def build_parser() -> argparse.ArgumentParser:
     legion = commands.add_parser("coord-legion"); legion.add_argument("action", choices=("record", "scoreboard", "slacking", "challenge", "chase", "adjudicate", "incentive-board")); legion.add_argument("--agent"); legion.add_argument("--kind"); legion.add_argument("--reporter"); legion.add_argument("--reviewer"); legion.add_argument("--verdict", choices=("accepted", "rejected")); legion.add_argument("--event-id"); legion.add_argument("--task"); legion.add_argument("--signature"); legion.add_argument("--evidence", nargs="*", default=[]); legion.add_argument("--note"); legion.add_argument("--reason"); legion.add_argument("--alternative"); legion.add_argument("--predicted-signature"); legion.add_argument("--cheapest-test"); legion.add_argument("--stop-condition"); legion.add_argument("--expected", nargs="*", default=[]); legion.add_argument("--window-hours", type=float, default=24); legion.add_argument("--min-productive", type=int, default=1); legion.set_defaults(func=coord_legion)
     digest = commands.add_parser("coord-chat-digest"); digest.add_argument("--agent", required=True); digest.add_argument("--since-hours", type=float, default=24); digest.add_argument("--per-actor", type=int, default=4); digest.add_argument("--chars", type=int, default=240); digest.add_argument("--markdown", action="store_true"); digest.set_defaults(func=coord_chat_digest)
     uia = commands.add_parser("coord-uia"); uia.add_argument("action", choices=("observe", "capture", "deliver")); uia.add_argument("--agent", required=True); uia.add_argument("--process"); uia.add_argument("--exe"); uia.add_argument("--title"); uia.add_argument("--event-id"); uia.add_argument("--text"); uia.add_argument("--text-file", type=Path); uia.add_argument("--out-file"); uia.add_argument("--allow-unknown-path", action="store_true"); uia.add_argument("--allow-clipboard-paste", action="store_true"); uia.add_argument("--ocr", action="store_true"); uia.add_argument("--timeout", type=int, default=20); uia.set_defaults(func=coord_uia)
+
+    vision = commands.add_parser("coord-vision", help="ask a grounder where a control is, and compare it with a known answer")
+    vision.add_argument("action", choices=("ground", "providers"))
+    vision.add_argument("--target", default="composer", help="what to locate, e.g. composer or send button")
+    vision.add_argument("--window", help="WIDTHxHEIGHT of the target window; required to convert the 0-999 grid")
+    vision.add_argument("--reference", help="x,y,width,height the deterministic path reported, for the comparison")
+    vision.add_argument("--image", help="screenshot to send, if the grounder needs one")
+    vision.add_argument("--endpoint", help="grounding service base URL; omit to run with no grounder at all")
+    vision.add_argument("--provider", default="mage_vl_cowork")
+    vision.add_argument("--min-confidence", type=float, default=vision_grounding.DEFAULT_MIN_CONFIDENCE)
+    vision.add_argument("--catalog")
+    vision.set_defaults(func=coord_vision)
+
+    policy = commands.add_parser("coord-policy", help="dry-run a proposed action plan through the executor guards")
+    policy.add_argument("action", choices=("validate",))
+    policy.add_argument("--plan", required=True, help="JSON list of actions, or an object with an actions list")
+    policy.add_argument("--window", required=True, help="WIDTHxHEIGHT the coordinates refer to")
+    policy.add_argument("--task", default="")
+    policy.add_argument("--max-steps", type=int, default=15)
+    policy.set_defaults(func=coord_policy)
+
+    route = commands.add_parser("coord-route", help="decide which leg locates the input, from recorded receipts")
+    route.add_argument("--observation", required=True, help="a coord-uia observe receipt, as JSON")
+    route.add_argument("--window", required=True, help="WIDTHxHEIGHT the coordinates refer to")
+    route.add_argument("--target", default="composer")
+    route.add_argument("--reference", help="x,y,width,height of the configured region, if any")
+    route.add_argument("--endpoint", help="grounding service base URL; omit to route with no grounder")
+    route.add_argument("--provider", default="mage_vl_cowork")
+    route.add_argument("--min-confidence", type=float, default=vision_grounding.DEFAULT_MIN_CONFIDENCE)
+    route.add_argument("--policy-result", help="a coord-policy result, to include the send verdict")
+    route.add_argument("--catalog")
+    route.set_defaults(func=coord_route)
 
     providers = commands.add_parser("coord-providers", help="list, promote or retire optional execution providers")
     providers.add_argument("action", choices=("list", "promote", "retire", "history"))
