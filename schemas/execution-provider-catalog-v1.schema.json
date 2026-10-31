@@ -38,14 +38,15 @@
         "id": {"$ref": "#/$defs/slug"},
         "repository": {"type": "string", "format": "uri", "pattern": "^https://github\\.com/"},
         "layer": {"type": "string", "enum": ["browser", "desktop_visual", "desktop_windows", "terminal_execution", "code_engineering", "desktop_replay", "mobile", "reverse_engineering"]},
-        "integration": {"type": "string", "enum": ["skill+connector", "connector", "app+connector", "mcp+connector", "mcp", "cli+connector"]},
+        "integration": {"type": "string", "enum": ["skill+connector", "connector", "app+connector", "mcp+connector", "mcp", "cli+connector", "vision-service"]},
         "runtime": {"$ref": "#/$defs/stringList", "minItems": 1},
         "capabilities": {"$ref": "#/$defs/stringList", "minItems": 1},
         "strengths": {"$ref": "#/$defs/stringList", "minItems": 1},
         "limitations": {"$ref": "#/$defs/stringList", "minItems": 1},
         "acceptance": {"$ref": "#/$defs/stringList", "minItems": 1},
         "status": {"type": "string", "enum": ["candidate", "probed", "session-accepted", "task-tested", "retired"]},
-        "source_note": {"type": "string"}
+        "source_note": {"type": "string"},
+        "license_note": {"type": "string"}
       }
     }
   }

@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.6.6 — The registry became a gate instead of a list
+
+- `execution_provider_catalog.promote()` / `retire()` / `history()`. Fourteen
+  providers all sat at `candidate` and nothing had ever reached `probed`,
+  because `status` was a field anyone could retype. Promotion now refuses to
+  skip a step, refuses to advance without that step's evidence keys, and
+  refuses to advance on a failed measurement (`probe_result` / `task_outcome`
+  must be `pass` — a failed probe is a finding, not a status). Every change
+  appends to `provider_promotions.jsonl` beside the catalog, so how a row
+  reached `task-tested` stays answerable.
+- The shipped catalog and its schema were two standards: the catalog used
+  `integration: vision-service` and a `license_note` field, and the schema's
+  enum and `additionalProperties: false` allowed neither. No test ever read the
+  schema, so the permissive copy was the load-bearing one. Both values are now
+  in the schema, `validate_catalog` also enforces the layer/integration enums
+  and rejects undeclared fields, and a jsonschema validation of the shipped
+  file guards the pair from drifting again.
+- Registered `mage_vl_cowork` as `desktop_visual` / `vision-service` /
+  `candidate` with its real limits written down (the 66.04 OSWorld figure
+  includes an unrestricted bash channel; the GUI-only stage is 45.56;
+  perception cannot defeat UIPI; Linux pyautogui training domain;
+  `trust_remote_code=True` executes repository code at load time). Its four
+  acceptance criteria are measurable, and the assessment plus pre-registered
+  probe live in `docs/MAGE_VL_COWORK_ASSESSMENT_20261031.zh-CN.md`.
+- New `aep coord-providers list|promote|retire|history`, which turns a refusal
+  into one stderr line and exit code 2 instead of a traceback.
+
 ## 0.6.5 — The scheduler can deliver, and it refuses without burning the attempt
 
 - `commander.provider_readback` had the polarity backwards: it was a whitelist

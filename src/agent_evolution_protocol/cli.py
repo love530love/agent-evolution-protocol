@@ -2448,6 +2448,49 @@ def coord_uia(args: argparse.Namespace) -> None:
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+def coord_providers(args: argparse.Namespace) -> None:
+    """List, promote or retire optional execution providers.
+
+    A registry nobody can reach is a text file.  The status field only earns
+    its place because ``promote`` refuses to advance a row without the evidence
+    for the next step, so this command exists to make that refusal the normal
+    path rather than a library-only detail.
+    """
+    path = Path(args.catalog) if getattr(args, "catalog", None) else None
+    try:
+        if args.action == "list":
+            rows = execution_provider_catalog.inventory(
+                path, layer=args.layer or "", status=args.status or "")
+            print(json.dumps({
+                "count": len(rows),
+                "providers": [{key: row[key] for key in
+                               ("id", "layer", "integration", "status")} for row in rows],
+            }, ensure_ascii=False, indent=2))
+            return
+        if args.action == "history":
+            print(json.dumps({"history": execution_provider_catalog.history(path, args.id or "")},
+                             ensure_ascii=False, indent=2))
+            return
+        if not args.id:
+            raise ProtocolError("--id is required for promote and retire")
+        if args.action == "retire":
+            result = execution_provider_catalog.retire(path, args.id, reason=args.reason or "")
+        else:
+            evidence: dict[str, str] = {}
+            for item in args.evidence or []:
+                if "=" not in item:
+                    raise ProtocolError(f"--evidence expects key=value, got {item!r}")
+                key, value = item.split("=", 1)
+                evidence[key.strip()] = value.strip()
+            result = execution_provider_catalog.promote(path, args.id, to=args.to or "",
+                                                        evidence=evidence)
+    except ValueError as exc:
+        # A refusal is the normal outcome here, not a crash: an operator asking
+        # to promote without evidence should read the reason, not a traceback.
+        raise ProtocolError(str(exc)) from exc
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
 def coord_a11y(args: argparse.Namespace) -> None:
     """Report or set the Windows screen-reader flag that gates Electron UIA trees.
 
@@ -2899,6 +2942,18 @@ def build_parser() -> argparse.ArgumentParser:
     legion = commands.add_parser("coord-legion"); legion.add_argument("action", choices=("record", "scoreboard", "slacking", "challenge", "chase", "adjudicate", "incentive-board")); legion.add_argument("--agent"); legion.add_argument("--kind"); legion.add_argument("--reporter"); legion.add_argument("--reviewer"); legion.add_argument("--verdict", choices=("accepted", "rejected")); legion.add_argument("--event-id"); legion.add_argument("--task"); legion.add_argument("--signature"); legion.add_argument("--evidence", nargs="*", default=[]); legion.add_argument("--note"); legion.add_argument("--reason"); legion.add_argument("--alternative"); legion.add_argument("--predicted-signature"); legion.add_argument("--cheapest-test"); legion.add_argument("--stop-condition"); legion.add_argument("--expected", nargs="*", default=[]); legion.add_argument("--window-hours", type=float, default=24); legion.add_argument("--min-productive", type=int, default=1); legion.set_defaults(func=coord_legion)
     digest = commands.add_parser("coord-chat-digest"); digest.add_argument("--agent", required=True); digest.add_argument("--since-hours", type=float, default=24); digest.add_argument("--per-actor", type=int, default=4); digest.add_argument("--chars", type=int, default=240); digest.add_argument("--markdown", action="store_true"); digest.set_defaults(func=coord_chat_digest)
     uia = commands.add_parser("coord-uia"); uia.add_argument("action", choices=("observe", "capture", "deliver")); uia.add_argument("--agent", required=True); uia.add_argument("--process"); uia.add_argument("--exe"); uia.add_argument("--title"); uia.add_argument("--event-id"); uia.add_argument("--text"); uia.add_argument("--text-file", type=Path); uia.add_argument("--out-file"); uia.add_argument("--allow-unknown-path", action="store_true"); uia.add_argument("--allow-clipboard-paste", action="store_true"); uia.add_argument("--ocr", action="store_true"); uia.add_argument("--timeout", type=int, default=20); uia.set_defaults(func=coord_uia)
+
+    providers = commands.add_parser("coord-providers", help="list, promote or retire optional execution providers")
+    providers.add_argument("action", choices=("list", "promote", "retire", "history"))
+    providers.add_argument("--id")
+    providers.add_argument("--to", choices=("probed", "session-accepted", "task-tested"))
+    providers.add_argument("--evidence", nargs="*", default=[],
+                           help="key=value evidence for the step being claimed")
+    providers.add_argument("--reason")
+    providers.add_argument("--layer")
+    providers.add_argument("--status")
+    providers.add_argument("--catalog", help="catalog path; defaults to examples/execution-provider-catalog.json")
+    providers.set_defaults(func=coord_providers)
 
     acc = commands.add_parser("coord-a11y", help="report or set the Windows screen-reader flag that gates Electron UIA trees")
     acc.add_argument("action", choices=("status", "enable", "disable", "check"))

@@ -12,11 +12,29 @@
       "repository": "https://github.com/browser-use/browser-use",
       "layer": "browser",
       "integration": "skill+connector",
-      "runtime": ["python", "playwright"],
-      "capabilities": ["browser", "locate_session", "dispatch", "readback"],
-      "strengths": ["DOM-aware browser control", "reusable Python/CLI integration"],
-      "limitations": ["browser scope only", "requires an anchored browser profile"],
-      "acceptance": ["same-tab target", "event id in page/session readback", "independent result evidence"],
+      "runtime": [
+        "python",
+        "playwright"
+      ],
+      "capabilities": [
+        "browser",
+        "locate_session",
+        "dispatch",
+        "readback"
+      ],
+      "strengths": [
+        "DOM-aware browser control",
+        "reusable Python/CLI integration"
+      ],
+      "limitations": [
+        "browser scope only",
+        "requires an anchored browser profile"
+      ],
+      "acceptance": [
+        "same-tab target",
+        "event id in page/session readback",
+        "independent result evidence"
+      ],
       "status": "candidate"
     },
     {
@@ -24,11 +42,28 @@
       "repository": "https://github.com/Skyvern-AI/skyvern",
       "layer": "browser",
       "integration": "connector",
-      "runtime": ["python", "browser"],
-      "capabilities": ["browser", "readback", "screenshot"],
-      "strengths": ["long browser workflows", "persistent session concepts"],
-      "limitations": ["needs provider/session verification", "enterprise features vary by deployment"],
-      "acceptance": ["session pool identity", "form side effect receipt", "checkpoint recovery"],
+      "runtime": [
+        "python",
+        "browser"
+      ],
+      "capabilities": [
+        "browser",
+        "readback",
+        "screenshot"
+      ],
+      "strengths": [
+        "long browser workflows",
+        "persistent session concepts"
+      ],
+      "limitations": [
+        "needs provider/session verification",
+        "enterprise features vary by deployment"
+      ],
+      "acceptance": [
+        "session pool identity",
+        "form side effect receipt",
+        "checkpoint recovery"
+      ],
       "status": "candidate"
     },
     {
@@ -36,11 +71,27 @@
       "repository": "https://github.com/lavague-ai/LaVague",
       "layer": "browser",
       "integration": "skill+connector",
-      "runtime": ["python", "selenium", "playwright"],
-      "capabilities": ["browser", "readback"],
-      "strengths": ["world-model/action-engine separation", "spec-to-test workflows"],
-      "limitations": ["generated actions still require AEP evidence gates"],
-      "acceptance": ["action trace", "same-session replay", "negative-path test"],
+      "runtime": [
+        "python",
+        "selenium",
+        "playwright"
+      ],
+      "capabilities": [
+        "browser",
+        "readback"
+      ],
+      "strengths": [
+        "world-model/action-engine separation",
+        "spec-to-test workflows"
+      ],
+      "limitations": [
+        "generated actions still require AEP evidence gates"
+      ],
+      "acceptance": [
+        "action trace",
+        "same-session replay",
+        "negative-path test"
+      ],
       "status": "candidate"
     },
     {
@@ -48,11 +99,33 @@
       "repository": "https://github.com/bytedance/UI-TARS-desktop",
       "layer": "desktop_visual",
       "integration": "app+connector",
-      "runtime": ["desktop", "browser", "vision-model"],
-      "capabilities": ["launch_program", "locate_session", "wake", "dispatch", "readback", "screenshot"],
-      "strengths": ["visual desktop actions", "multi-surface workflow"],
-      "limitations": ["vision actions need action receipt and rate limits", "model/runtime availability varies"],
-      "acceptance": ["window anchor", "action trace", "post-action screenshot", "same-event readback"],
+      "runtime": [
+        "desktop",
+        "browser",
+        "vision-model"
+      ],
+      "capabilities": [
+        "launch_program",
+        "locate_session",
+        "wake",
+        "dispatch",
+        "readback",
+        "screenshot"
+      ],
+      "strengths": [
+        "visual desktop actions",
+        "multi-surface workflow"
+      ],
+      "limitations": [
+        "vision actions need action receipt and rate limits",
+        "model/runtime availability varies"
+      ],
+      "acceptance": [
+        "window anchor",
+        "action trace",
+        "post-action screenshot",
+        "same-event readback"
+      ],
       "status": "candidate"
     },
     {
@@ -60,11 +133,28 @@
       "repository": "https://github.com/microsoft/OmniParser",
       "layer": "desktop_visual",
       "integration": "vision-service",
-      "runtime": ["python", "vision-model"],
-      "capabilities": ["screenshot", "locate", "read"],
-      "strengths": ["structured screen element parsing", "shared visual locator for multiple desktop adapters"],
-      "limitations": ["parsing is not input injection", "model weights and GPU runtime are deployment-specific"],
-      "acceptance": ["screen capture hash", "element map with coordinates or bounds", "post-action evidence from a separate executor"],
+      "runtime": [
+        "python",
+        "vision-model"
+      ],
+      "capabilities": [
+        "screenshot",
+        "locate",
+        "read"
+      ],
+      "strengths": [
+        "structured screen element parsing",
+        "shared visual locator for multiple desktop adapters"
+      ],
+      "limitations": [
+        "parsing is not input injection",
+        "model weights and GPU runtime are deployment-specific"
+      ],
+      "acceptance": [
+        "screen capture hash",
+        "element map with coordinates or bounds",
+        "post-action evidence from a separate executor"
+      ],
       "status": "candidate"
     },
     {
@@ -72,11 +162,30 @@
       "repository": "https://github.com/microsoft/UFO",
       "layer": "desktop_windows",
       "integration": "app+connector",
-      "runtime": ["windows", "python", "vision-model"],
-      "capabilities": ["launch_program", "locate_session", "dispatch", "readback", "screenshot"],
-      "strengths": ["Windows-focused desktop planning", "multi-agent GUI decomposition"],
-      "limitations": ["Windows session and model prerequisites"],
-      "acceptance": ["interactive session anchor", "foreground/action evidence", "recovery checkpoint"],
+      "runtime": [
+        "windows",
+        "python",
+        "vision-model"
+      ],
+      "capabilities": [
+        "launch_program",
+        "locate_session",
+        "dispatch",
+        "readback",
+        "screenshot"
+      ],
+      "strengths": [
+        "Windows-focused desktop planning",
+        "multi-agent GUI decomposition"
+      ],
+      "limitations": [
+        "Windows session and model prerequisites"
+      ],
+      "acceptance": [
+        "interactive session anchor",
+        "foreground/action evidence",
+        "recovery checkpoint"
+      ],
       "status": "candidate"
     },
     {
@@ -84,11 +193,36 @@
       "repository": "https://github.com/trycua/cua",
       "layer": "desktop_windows",
       "integration": "mcp+connector",
-      "runtime": ["windows", "python", "rust", "mcp"],
-      "capabilities": ["launch_program", "locate_session", "dispatch", "readback", "screenshot"],
-      "strengths": ["typed cross-platform desktop actions", "stdio MCP boundary", "evidence-oriented action/refusal ledger", "background-capable actions where upstream supports them"],
-      "limitations": ["action support and background delivery vary by app/platform", "interactive Windows or RDP session is required for desktop E2E", "optional perception extension has separate AGPL-3.0-only components"],
-      "acceptance": ["initialize and tools/list", "unique window/session binding", "one-use capture_id attached to visual action", "same-event message visibility and Agent ACK"],
+      "runtime": [
+        "windows",
+        "python",
+        "rust",
+        "mcp"
+      ],
+      "capabilities": [
+        "launch_program",
+        "locate_session",
+        "dispatch",
+        "readback",
+        "screenshot"
+      ],
+      "strengths": [
+        "typed cross-platform desktop actions",
+        "stdio MCP boundary",
+        "evidence-oriented action/refusal ledger",
+        "background-capable actions where upstream supports them"
+      ],
+      "limitations": [
+        "action support and background delivery vary by app/platform",
+        "interactive Windows or RDP session is required for desktop E2E",
+        "optional perception extension has separate AGPL-3.0-only components"
+      ],
+      "acceptance": [
+        "initialize and tools/list",
+        "unique window/session binding",
+        "one-use capture_id attached to visual action",
+        "same-event message visibility and Agent ACK"
+      ],
       "source_note": "Installed locally in an isolated .tools/cua-runtime; catalog status remains candidate until a real original-session dispatch and readback are evidenced.",
       "license_note": "Main repository components are MIT or FSL-1.1-MIT by subproject; optional cua-perception includes AGPL-3.0-only OmniParser and other third-party notices. Verify the exact component before redistribution.",
       "status": "candidate"
@@ -98,11 +232,28 @@
       "repository": "https://github.com/simular-ai/Agent-S",
       "layer": "desktop_visual",
       "integration": "connector",
-      "runtime": ["python", "vision-model"],
-      "capabilities": ["locate_session", "dispatch", "readback", "screenshot"],
-      "strengths": ["hierarchical planning", "desktop benchmark orientation"],
-      "limitations": ["benchmark success does not prove provider ACK"],
-      "acceptance": ["bounded action plan", "same-session result", "failure classification"],
+      "runtime": [
+        "python",
+        "vision-model"
+      ],
+      "capabilities": [
+        "locate_session",
+        "dispatch",
+        "readback",
+        "screenshot"
+      ],
+      "strengths": [
+        "hierarchical planning",
+        "desktop benchmark orientation"
+      ],
+      "limitations": [
+        "benchmark success does not prove provider ACK"
+      ],
+      "acceptance": [
+        "bounded action plan",
+        "same-session result",
+        "failure classification"
+      ],
       "status": "candidate"
     },
     {
@@ -110,11 +261,28 @@
       "repository": "https://github.com/OthersideAI/self-operating-computer",
       "layer": "desktop_visual",
       "integration": "connector",
-      "runtime": ["python", "vision-model"],
-      "capabilities": ["screenshot", "dispatch", "readback"],
-      "strengths": ["simple screenshot-to-action baseline", "local model experiments"],
-      "limitations": ["coarse visual targeting", "must remain behind AEP evidence gates"],
-      "acceptance": ["action coordinate evidence", "post-action screenshot", "no blind retry"],
+      "runtime": [
+        "python",
+        "vision-model"
+      ],
+      "capabilities": [
+        "screenshot",
+        "dispatch",
+        "readback"
+      ],
+      "strengths": [
+        "simple screenshot-to-action baseline",
+        "local model experiments"
+      ],
+      "limitations": [
+        "coarse visual targeting",
+        "must remain behind AEP evidence gates"
+      ],
+      "acceptance": [
+        "action coordinate evidence",
+        "post-action screenshot",
+        "no blind retry"
+      ],
       "status": "candidate"
     },
     {
@@ -122,11 +290,29 @@
       "repository": "https://github.com/OpenInterpreter/open-interpreter",
       "layer": "terminal_execution",
       "integration": "skill+connector",
-      "runtime": ["python", "shell"],
-      "capabilities": ["launch_program", "filesystem", "readback", "rea"],
-      "strengths": ["terminal/file/code execution", "local model compatibility"],
-      "limitations": ["command side effects require workspace lease and evidence"],
-      "acceptance": ["command transcript", "exit code", "artifact checksum", "replayable environment"],
+      "runtime": [
+        "python",
+        "shell"
+      ],
+      "capabilities": [
+        "launch_program",
+        "filesystem",
+        "readback",
+        "rea"
+      ],
+      "strengths": [
+        "terminal/file/code execution",
+        "local model compatibility"
+      ],
+      "limitations": [
+        "command side effects require workspace lease and evidence"
+      ],
+      "acceptance": [
+        "command transcript",
+        "exit code",
+        "artifact checksum",
+        "replayable environment"
+      ],
       "status": "candidate"
     },
     {
@@ -134,11 +320,31 @@
       "repository": "https://github.com/All-Hands-AI/OpenHands",
       "layer": "code_engineering",
       "integration": "app+connector",
-      "runtime": ["python", "cli", "browser", "vm-or-local"],
-      "capabilities": ["filesystem", "browser", "dispatch", "readback"],
-      "strengths": ["engineering workflow", "multi-agent/team orchestration"],
-      "limitations": ["backend isolation and model credentials vary"],
-      "acceptance": ["workspace diff", "tests", "artifact manifest", "handoff checkpoint"],
+      "runtime": [
+        "python",
+        "cli",
+        "browser",
+        "vm-or-local"
+      ],
+      "capabilities": [
+        "filesystem",
+        "browser",
+        "dispatch",
+        "readback"
+      ],
+      "strengths": [
+        "engineering workflow",
+        "multi-agent/team orchestration"
+      ],
+      "limitations": [
+        "backend isolation and model credentials vary"
+      ],
+      "acceptance": [
+        "workspace diff",
+        "tests",
+        "artifact manifest",
+        "handoff checkpoint"
+      ],
       "status": "candidate"
     },
     {
@@ -146,11 +352,27 @@
       "repository": "https://github.com/OpenAdaptAI/OpenAdapt",
       "layer": "desktop_replay",
       "integration": "skill+connector",
-      "runtime": ["python", "desktop"],
-      "capabilities": ["screenshot", "dispatch", "readback"],
-      "strengths": ["demonstration-to-replay automation", "low-model repeat runs"],
-      "limitations": ["recording must be bound to an explicit workspace and app profile"],
-      "acceptance": ["recording provenance", "replay checksum", "exception fallback"],
+      "runtime": [
+        "python",
+        "desktop"
+      ],
+      "capabilities": [
+        "screenshot",
+        "dispatch",
+        "readback"
+      ],
+      "strengths": [
+        "demonstration-to-replay automation",
+        "low-model repeat runs"
+      ],
+      "limitations": [
+        "recording must be bound to an explicit workspace and app profile"
+      ],
+      "acceptance": [
+        "recording provenance",
+        "replay checksum",
+        "exception fallback"
+      ],
       "status": "candidate"
     },
     {
@@ -158,11 +380,29 @@
       "repository": "https://github.com/appium/appium",
       "layer": "mobile",
       "integration": "mcp+connector",
-      "runtime": ["node", "android", "ios"],
-      "capabilities": ["locate_session", "dispatch", "readback", "screenshot"],
-      "strengths": ["mobile device and simulator control", "CI-friendly automation"],
-      "limitations": ["device provisioning and signing remain external prerequisites"],
-      "acceptance": ["device/session id", "app state screenshot", "test artifact and logs"],
+      "runtime": [
+        "node",
+        "android",
+        "ios"
+      ],
+      "capabilities": [
+        "locate_session",
+        "dispatch",
+        "readback",
+        "screenshot"
+      ],
+      "strengths": [
+        "mobile device and simulator control",
+        "CI-friendly automation"
+      ],
+      "limitations": [
+        "device provisioning and signing remain external prerequisites"
+      ],
+      "acceptance": [
+        "device/session id",
+        "app state screenshot",
+        "test artifact and logs"
+      ],
       "source_note": "Appium is the upstream automation engine; the MCP adapter is deployment-specific and must be registered separately.",
       "status": "candidate"
     },
@@ -171,11 +411,69 @@
       "repository": "https://github.com/morluto/rea",
       "layer": "reverse_engineering",
       "integration": "mcp+connector",
-      "runtime": ["python", "cli"],
-      "capabilities": ["rea", "readback"],
-      "strengths": ["local artifact and runtime probing", "evidence-oriented reverse engineering"],
-      "limitations": ["probe results require a reproducible target and human-readable evidence"],
-      "acceptance": ["target identity", "probe transcript", "reproducible finding and artifact hash"],
+      "runtime": [
+        "python",
+        "cli"
+      ],
+      "capabilities": [
+        "rea",
+        "readback"
+      ],
+      "strengths": [
+        "local artifact and runtime probing",
+        "evidence-oriented reverse engineering"
+      ],
+      "limitations": [
+        "probe results require a reproducible target and human-readable evidence"
+      ],
+      "acceptance": [
+        "target identity",
+        "probe transcript",
+        "reproducible finding and artifact hash"
+      ],
+      "status": "candidate"
+    },
+    {
+      "id": "mage_vl_cowork",
+      "repository": "https://github.com/microsoft/Mage",
+      "layer": "desktop_visual",
+      "integration": "vision-service",
+      "runtime": [
+        "linux",
+        "wsl2",
+        "cuda",
+        "sglang",
+        "python"
+      ],
+      "capabilities": [
+        "screenshot",
+        "locate",
+        "click",
+        "type",
+        "keypress",
+        "scroll",
+        "readback"
+      ],
+      "strengths": [
+        "single 4B policy that switches between GUI actions and terminal/code actions per step",
+        "strong GUI grounding for its size (ScreenSpot-v2 87.2, OSWorld-G 56.9)",
+        "asymmetric working memory: last 3 screenshots, 4 full replies, folded Action history"
+      ],
+      "limitations": [
+        "66.04 OSWorld-Verified includes an unrestricted bash channel; the GUI-only stage scores 45.56",
+        "perception cannot defeat UIPI: an elevated target still refuses input from a lower integrity level",
+        "Linux 1920x1080 pyautogui training domain; Windows chrome, DPI scaling and fonts are out of distribution",
+        "custom llava_onevision2 architecture: trust_remote_code=True executes repository code at load time",
+        "trained and evaluated in disposable containers; no notion of leases, claims, ACKs or live user sessions"
+      ],
+      "acceptance": [
+        "served model answers /health on pinned SGLang 0.5.2 + torch 2.8.0+cu128 + flashinfer 0.3.1, revision hash recorded",
+        "grounding agreement measured against coord-uia observe on the same Windows window, disagreement rate published",
+        "no bash channel and no host path exposed: actions arrive as a proposed region and are executed by the CUA driver",
+        "one event delivered end to end with input_verified, composer_cleared and a same-event Agent ACK"
+      ],
+      "source_note": "Registered from the public Microsoft Mage release (weights and OSWorld harness published 2026-10-30). Not installed, not downloaded, not trusted: this row exists so that a probe has somewhere to land and so that its acceptance criteria are written down before any numbers are seen.",
+      "license_note": "Model weights and code are Apache-2.0. The llava_onevision2 modelling files are loaded with trust_remote_code=True, so the revision must be pinned and those two files audited before first load.",
       "status": "candidate"
     }
   ]
