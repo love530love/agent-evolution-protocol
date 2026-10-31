@@ -370,7 +370,8 @@ step 2: review  -> done (beta)    _settled = True
   数据在 `docs/VISION_GROUNDING_PROBE_20261031.zh-CN.md`。
 - **路由已接进活路径，但没在活会话上端到端跑过（v0.6.8）**。`ui_fallback.run()` 每次都调用
   `resolve_target()`，`state["route"]` 无条件落盘；UIA 决断时 grounder 调用 0 次；
-  `ocr` 传输把区域换成中心比例交给 `-AllowComposerGeometryFallback`（实测 `0.4948 / 0.9167`）；
+  `ocr` 传输把区域换成中心比例交给 `-AllowComposerGeometryFallback`（比例换算只有夹具断言
+  `0.4948 / 0.9167`，**没有**真实窗口读数）；
   `uia` 传输拿不到可用区域时**不发**并记 `TRANSPORT_CANNOT_USE_LOCATED_REGION`。
   接线由 `RouteWiringTests`（8 项）覆盖，但「路由决定 → 真打字 → 收到 ACK」这一步**还没有**。
 - **`rea` / `ida_pro_mcp` 只做了 catalog 登记**，没有调用规约、没有连接器。两者都留在
