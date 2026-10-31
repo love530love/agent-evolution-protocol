@@ -293,6 +293,13 @@ $DefaultComposerHints = @(
 
 function Get-WindowOcrText {
   param([IntPtr]$Hwnd, [string]$Language = '')
+  # Every caller inherits the script-level language unless it overrides it.
+  # Passing it at one call site only was the original defect: the nine other
+  # call sites silently fell back to the user profile recognizer (en-US here),
+  # which reads a Chinese UI as Latin look-alikes and never matches a marker.
+  # ``$script:`` is explicit on purpose: a bare ``$OcrLanguage`` depends on
+  # dynamic scoping, which is exactly how this stayed broken while looking wired.
+  if (-not $Language) { $Language = $script:OcrLanguage }
   $text = ''
   $shot = ''
   $lines = @()
@@ -629,7 +636,7 @@ function Get-ActivityEvidence {
   $ocrLanguage = ''
   if ($Ocr -and $Hwnd -ne [IntPtr]::Zero) {
     try {
-      $scan = Get-WindowOcrText -Hwnd $Hwnd -Language $OcrLanguage
+      $scan = Get-WindowOcrText -Hwnd $Hwnd
       $ocrText = [string]$scan.Text
       $ocrLanguage = [string]$scan.Language
     } catch { $ocrText = '' }
@@ -657,6 +664,10 @@ function Get-ActivityEvidence {
     input_ambiguous = $InputAmbiguous
     ocr_used = [bool]$Ocr
     ocr_language = $ocrLanguage
+    # Requested vs actual: a mismatch means the recognizer was unavailable or
+    # the request never reached it, and the two failures look identical in the
+    # transcript alone.
+    ocr_language_requested = [string]$script:OcrLanguage
   }
 }
 
@@ -835,6 +846,19 @@ $activity = Get-ActivityEvidence -Root $root -Hwnd $window.Hwnd `
   -Ocr:$OcrVerify -InterjectHints $InterjectHints
 
 if ($Mode -eq 'observe') {
+  $transcriptSource = 'uia'
+  # An Electron client exposes almost nothing to UIA (Qoder: 3 elements, no
+  # Document), so the transcript reads as empty even though the window is full
+  # of words.  Reporting 0 characters is the difference between "nothing to
+  # read" and "I cannot see", so fall back to OCR when it was asked for.
+  if ($OcrVerify -and $transcript.Text.Length -eq 0 -and $window.Hwnd -ne [IntPtr]::Zero) {
+    $ocrScan = Get-WindowOcrText -Hwnd $window.Hwnd
+    if ($ocrScan.Text) {
+      $transcript = [pscustomobject]@{ Text = [string]$ocrScan.Text; ElementCount = 0
+        LineCount = @($ocrScan.Lines).Count }
+      $transcriptSource = 'ocr'
+    }
+  }
   Write-Report @{
     status                 = 'window-observed'
     pid                    = $window.Pid
@@ -853,6 +877,7 @@ if ($Mode -eq 'observe') {
     transcript_chars       = $transcript.Text.Length
     transcript_lines       = $transcript.LineCount
     transcript_preview     = $(if ($transcript.Text.Length -gt 600) { $transcript.Text.Substring(0, 600) } else { $transcript.Text })
+    transcript_source      = $transcriptSource
     task_delivered         = $false
     method                 = 'uia-observe'
   }

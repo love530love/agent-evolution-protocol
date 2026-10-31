@@ -13,7 +13,13 @@ from pathlib import Path
 import tempfile
 import unittest
 
-import jsonschema
+try:
+    import jsonschema
+except ModuleNotFoundError:  # pragma: no cover - declared in the ``test`` extra
+    # A missing validator must not read as "conformance passed".  Importing
+    # cleanly and skipping with a reason keeps ``unittest discover`` usable on a
+    # bare interpreter, while CI installs the extra so the check really runs.
+    jsonschema = None
 
 from agent_evolution_protocol.federation import adapter, engine, handoff, snapshot, store
 
@@ -21,6 +27,13 @@ from agent_evolution_protocol.federation import adapter, engine, handoff, snapsh
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMAS = ROOT / "schemas"
 NOW = datetime(2026, 10, 30, 12, 0, tzinfo=timezone.utc)
+
+
+def setUpModule():
+    if jsonschema is None:
+        raise unittest.SkipTest(
+            "jsonschema is not installed, so no document was actually "
+            "validated; install the test extra (pip install -e .[test])")
 
 
 def schema(name):

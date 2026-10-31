@@ -51,12 +51,17 @@ class RunTests(unittest.TestCase):
 
     def test_override_file_is_written_utf8_and_removed(self):
         import sys
+        # The child prints ASCII-escaped JSON on purpose: its stdout encoding is
+        # the platform locale (cp1252 on a CI Windows runner), so printing raw
+        # Chinese would fail for a reason that has nothing to do with this
+        # module.  The file is still read as UTF-8, so a wrong encoding on
+        # write would break the decode and change the decoded value.
         script = (
             "import json,sys,io\n"
             "argv=sys.argv[1:]\n"
             "path=argv[argv.index('-ParamFile')+1]\n"
             "data=json.load(io.open(path,encoding='utf-8'))\n"
-            "print(json.dumps(data,ensure_ascii=False))\n"
+            "print(json.dumps(data,ensure_ascii=True))\n"
         )
         result = uia_argv.run([sys.executable, "-c", script, "-Text", "中文正文"],
                               timeout=60)

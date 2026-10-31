@@ -37,6 +37,15 @@ try {
   if (-not $engine) { $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages() }
   if (-not $engine) { throw 'OCR_ENGINE_UNAVAILABLE' }
   $result = Await-Ocr ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
+  # Windows OCR puts a space between adjacent CJK glyphs ("插 话"), so a marker
+  # written the way a person writes it ("插话") never matches.  Collapsing
+  # whitespace between two CJK characters fixes every consumer at once; Latin
+  # word spacing is left alone, and the box geometry is untouched.
+  $cjk = '[\u3400-\u4DBF\u4E00-\u9FFF\u3000-\u303F\uFF00-\uFFEF]'
+  function Normalize-OcrText([string]$Value) {
+    if (-not $Value) { return '' }
+    return [regex]::Replace($Value, "(?<=$cjk)\s+(?=$cjk)", '')
+  }
   $lines = @($result.Lines | ForEach-Object {
     $words = @($_.Words)
     if ($words.Count -eq 0) { return }
@@ -48,9 +57,9 @@ try {
       $maxX = [Math]::Max($maxX, $box.X + $box.Width)
       $maxY = [Math]::Max($maxY, $box.Y + $box.Height)
     }
-    [pscustomobject]@{ Text = [string]$_.Text; X = [int]$minX; Y = [int]$minY; W = [int]($maxX - $minX); H = [int]($maxY - $minY) }
+    [pscustomobject]@{ Text = (Normalize-OcrText ([string]$_.Text)); X = [int]$minX; Y = [int]$minY; W = [int]($maxX - $minX); H = [int]($maxY - $minY) }
   })
-  [pscustomobject]@{ Text = [string]$result.Text; Lines = $lines; Error = '';
+  [pscustomobject]@{ Text = (Normalize-OcrText ([string]$result.Text)); Lines = $lines; Error = '';
     Language = [string]$engine.RecognizerLanguage.LanguageTag } | ConvertTo-Json -Compress -Depth 5
 } catch {
   [pscustomobject]@{ Text = ''; Lines = @(); Error = $_.Exception.Message; Language = '' } | ConvertTo-Json -Compress -Depth 5

@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.5.1 — The OCR was blind, not missing
+
+- Declared the test extra (`pytest`, `jsonschema`) and made CI install it. The
+  federation conformance test imported `jsonschema` at module scope while CI
+  installed only `pytest`, so `unittest discover` died on every platform with
+  `ModuleNotFoundError`. A missing validator now skips with a reason instead of
+  aborting discovery, so a bare interpreter still runs the rest of the suite.
+- Fixed the conformance test's own portability bug: it printed Chinese to a
+  child process whose stdout encoding is the platform locale (cp1252 on a
+  Windows runner), which failed with `UnicodeEncodeError` for reasons unrelated
+  to what the test checks.
+- Fixed OCR being silently monolingual: `-OcrLanguage` reached one of ten
+  `Get-WindowOcrText` call sites, so the nine that locate the session, find the
+  send button and read the reply all used the user-profile recognizer (en-US).
+  An English recognizer reading a Chinese UI returns plausible Latin look-alikes
+  and raises no error, so every Chinese marker missed. The function now inherits
+  `$script:OcrLanguage`, and the receipt reports `ocr_language_requested`
+  next to `ocr_language`.
+- Fixed Chinese OCR text never matching: Windows OCR emits a space between
+  adjacent CJK glyphs (`插 话`), so `Contains("插话")` was always false. The
+  whitespace between two CJK characters is now collapsed at the OCR boundary;
+  Latin spacing and CJK/Latin boundaries are preserved.
+- Fixed `observe` reporting an empty transcript for Electron clients, which
+  expose no text to UIA. It now falls back to OCR and says so in
+  `transcript_source`.
+- Corrected `docs/HANDS_AND_FEET_STATUS_20261031.zh-CN.md`: the previous version
+  claimed this machine lacked the Chinese OCR recognizer and told the reader to
+  install it. The recognizer was installed all along (`zh-Hans-CN`), and the
+  install command fails on the newer shell with "class not registered".
+
 ## 0.5.0 — Persistent Federation Workspace
 
 - Added the `federation` package: hash-chained event ledger, three-zone snapshot,
