@@ -1,4 +1,7 @@
 from pathlib import Path
+import sys
+
+import pytest
 
 from agent_evolution_protocol.coordination import desktop_runner
 
@@ -47,6 +50,8 @@ def test_launch_defaults_to_preview(monkeypatch, tmp_path):
     assert result["execution_started"] is False
 
 
+@pytest.mark.skipif(sys.platform != "win32",
+                    reason="enumerating desktop windows goes through ctypes.windll")
 def test_ensure_session_preview_does_not_launch(monkeypatch, tmp_path):
     monkeypatch.setattr(desktop_runner.client_registry, "profile", lambda _root, _agent: {
         "agent": "qoder_cn", "exe": "C:/Qoder/Qoder.exe", "launch_args": []
