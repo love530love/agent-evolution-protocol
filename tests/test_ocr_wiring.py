@@ -63,10 +63,14 @@ class LanguageWiringTests(unittest.TestCase):
         self.assertIn("if (-not $Language) { $Language = $script:OcrLanguage }", SESSION)
 
     def test_the_driver_forwards_the_profile_language(self):
-        profile = ui_fallback.load_profile(ROOT / "coordination/ui_profiles/qoder.json")
+        # Built inline on purpose: coordination/ui_profiles/*.json is a live
+        # runtime file and is not committed, so reading it made this test pass
+        # on one machine and fail with FileNotFoundError everywhere else.
+        profile = {"agent": "qoder", "process": "Qoder", "title": "Qoder",
+                   "exe": "Qoder.exe", "ocr_language": "zh-Hans-CN"}
         args = ui_fallback.PowerShellUiaDriver._target(profile)
         self.assertIn("-OcrLanguage", args)
-        self.assertEqual(args[args.index("-OcrLanguage") + 1], profile["ocr_language"])
+        self.assertEqual(args[args.index("-OcrLanguage") + 1], "zh-Hans-CN")
 
     def test_a_profile_without_a_language_does_not_invent_one(self):
         profile = {"agent": "x", "process": "x", "title": "x", "exe": "x"}
