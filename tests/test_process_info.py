@@ -40,12 +40,23 @@ class PathCheckTests(unittest.TestCase):
         self.assertIn("not the path", result["reason"])
         self.assertEqual(result["actual"], r"D:\Apps\Qoder\0.5.1\Qoder.exe")
 
+    @unittest.skipUnless(sys.platform == "win32", "normcase folds case only on Windows")
     def test_case_and_separator_differences_are_not_drift(self):
         with mock.patch.object(process_info, "available", return_value=True), \
                 mock.patch.object(process_info, "image_path",
                                   return_value=r"D:\Apps\Qoder\0.5.1\Qoder.exe"):
             result = process_info.path_check(r"d:/apps/qoder/0.5.1/Qoder.exe", 1234)
         self.assertTrue(result["match"])
+
+    def test_normalisation_follows_the_platform_rather_than_assuming_one(self):
+        # os.path.normcase folds case and separators only on Windows.  Asserting
+        # the Windows outcome everywhere would be a test that fails on Linux for
+        # being right about Windows -- which is exactly what CI caught.
+        folded = process_info._normalise(r"D:\Apps\Qoder.exe")
+        if sys.platform == "win32":
+            self.assertEqual(folded, r"d:\apps\qoder.exe")
+        else:
+            self.assertEqual(folded, r"D:\Apps\Qoder.exe")
 
     @unittest.skipUnless(sys.platform == "win32", "Windows process queries")
     def test_our_own_process_path_is_readable(self):
