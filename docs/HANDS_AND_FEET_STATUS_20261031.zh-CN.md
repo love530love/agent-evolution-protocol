@@ -114,7 +114,8 @@ $cjk = '[\u3400-\u4DBF\u4E00-\u9FFF\u3000-\u303F\uFF00-\uFFEF]'
 只合并**两个中文字之间**的空白；`Send while running` 的空格、以及中英文交界处的空格都保留
 （把中文和英文粘在一起会同时毁掉两者）。逐行文本和整体文本都过一遍，否则只修一半症状。
 
-守卫：`tests/test_ocr_wiring.py`（8 项）。它从 ps1 里读出 `$cjk` 和替换式再跑，
+守卫：`tests/test_ocr_wiring.py`（当时 8 项，v0.6.8 追加 4 项后共 12 项）。
+它从 ps1 里读出 `$cjk` 和替换式再跑，
 所以改脚本时测试会跟着变，不会变成第二套实现。
 
 ## 顺带修掉的第四个缺口：`observe` 读不到 Electron 的文本
@@ -373,7 +374,7 @@ step 2: review  -> done (beta)    _settled = True
   `ocr` 传输把区域换成中心比例交给 `-AllowComposerGeometryFallback`（比例换算只有夹具断言
   `0.4948 / 0.9167`，**没有**真实窗口读数）；
   `uia` 传输拿不到可用区域时**不发**并记 `TRANSPORT_CANNOT_USE_LOCATED_REGION`。
-  接线由 `RouteWiringTests`（8 项）覆盖，但「路由决定 → 真打字 → 收到 ACK」这一步**还没有**。
+  接线由 `RouteWiringTests`（9 项）覆盖，但「路由决定 → 真打字 → 收到 ACK」这一步**还没有**。
 - **`rea` / `ida_pro_mcp` 只做了 catalog 登记**，没有调用规约、没有连接器。两者都留在
   `candidate`——登记一个工具的能力和风险，不等于把它接进执行面。
 - **Mage 本身仍未跑**。`mage_vl_cowork` 仍是 `candidate`，本轮没给它增加任何证据。
