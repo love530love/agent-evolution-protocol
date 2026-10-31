@@ -91,7 +91,8 @@ def update(root, workspace_id, change, *, timeout=None):
         return result
 
 
-def add_task(root, state, *, task_id, requirement, deps=(), moment=None):
+def add_task(root, state, *, task_id, requirement, deps=(), capability="",
+             preferred="", moment=None):
     if not isinstance(task_id, str) or not task_id.strip():
         raise ValueError("task_id is required")
     if task_id in state["tasks"]:
@@ -103,11 +104,27 @@ def add_task(root, state, *, task_id, requirement, deps=(), moment=None):
             raise ValueError(f"unknown dependency {dep}")
     state["tasks"][task_id] = {"id": task_id, "requirement": requirement.strip(),
                                "deps": sorted(set(deps)), "state": "pending",
-                               "owner": "", "attempts": 0, "signal": "", "note": ""}
+                               "owner": "", "attempts": 0, "signal": "", "note": "",
+                               "capability": str(capability or "").strip(),
+                               "preferred": str(preferred or "").strip()}
     EventLog(root, state["workspace_id"]).append(
         "task_added", actor="kernel", payload={"task": task_id, "deps": sorted(set(deps))}, moment=moment)
     save(root, state)
     return state["tasks"][task_id]
+
+
+def _needs(task):
+    """The capability key used to pick an owner.
+
+    ``requirement`` started life as a capability name ("collect", "review"),
+    and the first workspaces were written that way.  A real assignment, though,
+    is a sentence: "run every command in the README and show the evidence".
+    Matching a sentence against a capability set can never succeed, so the key
+    moved to ``capability`` and ``requirement`` keeps its literal meaning.
+    Tasks written before this field existed still match on ``requirement``,
+    which is why the fallback stays.
+    """
+    return str(task.get("capability") or task.get("requirement") or "").strip()
 
 
 def ready_tasks(state):
@@ -230,6 +247,20 @@ def checkpoint(root, state, *, moment=None, reason="checkpoint"):
     return built
 
 
+def _order_candidates(task, candidates):
+    """Put a declared preference first without letting it override capability.
+
+    Independence needs a *different* agent, not a different capability: any
+    agent can review, but only one that did not do the work can review it
+    independently.  A preference that is not capable is ignored, never
+    promoted.
+    """
+    preferred = str(task.get("preferred") or "").strip()
+    if preferred and preferred in candidates:
+        return [preferred] + [item for item in candidates if item != preferred]
+    return list(candidates)
+
+
 def _eligible(state, adapters, requirement, *, exclude=()):
     """Capable agents minus the excluded ones and minus archived agents.
 
@@ -246,8 +277,9 @@ def _handoff(root, state, task, adapters, *, reason, moment, exclude=(), remedy=
     """Snapshot, build a packet, and let the first capable agent accept it."""
     built = _snapshot(root, state, moment)
     requirement = task["requirement"]
-    candidates = _eligible(state, adapters, requirement,
-                           exclude={task["owner"], *exclude} if task["owner"] else exclude)
+    candidates = _order_candidates(task, _eligible(
+        state, adapters, _needs(task),
+        exclude={task["owner"], *exclude} if task["owner"] else exclude))
     if not candidates:
         task["state"] = "blocked"
         task["note"] = "no capable successor agent"
@@ -345,7 +377,7 @@ def _tick(root, state, adapters, *, now=None, heartbeat_timeout=900, moment=None
 
     for task_id in ready_tasks(state):
         task = state["tasks"][task_id]
-        candidates = _eligible(state, adapters, task["requirement"])
+        candidates = _order_candidates(task, _eligible(state, adapters, _needs(task)))
         if not candidates:
             task["state"] = "blocked"
             task["note"] = "no capable agent"
@@ -369,43 +401,57 @@ def _tick(root, state, adapters, *, now=None, heartbeat_timeout=900, moment=None
             continue
         # A bare "failed" carries no cause, so it is escalated rather than
         # silently retried; only a named signal may trigger an automatic retry.
-        task["signal"] = signal or {"refused": "refusal"}.get(status, "unclassified")
-        decision = diagnosis.classify(task["signal"], attempts=task["attempts"])
-        action = decision["action"]
-        strategy = _strategy_for(state, task["signal"], action)
-        task["strategy"] = strategy["id"] if strategy is not None else ""
-        if strategy is not None and strategy["params"]["action"] != action:
-            action = strategy["params"]["action"]
-            EventLog(root, state["workspace_id"]).append(
-                "strategy_applied", actor="kernel",
-                payload={"task": task_id, "signal": task["signal"],
-                         "default": decision["action"], "chosen": action,
-                         "strategy": strategy["id"]}, moment=moment)
-        if action == "handoff":
-            packet = _handoff(root, state, task, adapters, reason=task["signal"], moment=moment)
-            actions.append({"task": task_id, "action": "handoff", "agent": owner,
-                            "handoff": bool(packet), "reason": decision["reason"]})
-        elif action == "switch_agent":
-            # Keep the real cause when the packet's reason vocabulary has it;
-            # "stalled" is the honest fallback, not a catch-all label.
-            reason = (task["signal"] if task["signal"] in handoff_mod.REASONS
-                      else "stalled")
-            packet = _handoff(root, state, task, adapters, reason=reason, moment=moment,
-                              remedy="switch_agent")
-            actions.append({"task": task_id, "action": "switch_agent", "agent": owner,
-                            "handoff": bool(packet), "reason": decision["reason"]})
-        elif action == "retry" and task["attempts"] <= diagnosis.MAX_RETRY:
-            task["state"] = "pending"
-            task["owner"] = ""
-            task["remedy"] = "retry"
-            actions.append({"task": task_id, "action": "retry", "agent": owner})
-        else:
-            task["state"] = "failed"
-            actions.append({"task": task_id, "action": action, "agent": owner,
-                            "reason": decision["reason"]})
-            _learn(root, state, task, "failure", moment)
+        _apply_failure(root, state, task, adapters, moment=moment, actions=actions,
+                       signal=signal or {"refused": "refusal"}.get(status, "unclassified"))
     save(root, state)
     return {"status": "TICKED", "actions": actions}
+
+
+def _apply_failure(root, state, task, adapters, *, signal, moment, actions):
+    """The single decision table for a dead delivery or a dead owner.
+
+    ``_tick`` and :func:`fail_task` both end here on purpose.  A second copy of
+    this table would let the two paths disagree about when to hand off, and the
+    whole point of a diagnosis table is that one signal always maps to one
+    action.
+    """
+    task_id, owner = task["id"], task["owner"]
+    task["signal"] = signal
+    decision = diagnosis.classify(task["signal"], attempts=task["attempts"])
+    action = decision["action"]
+    strategy = _strategy_for(state, task["signal"], action)
+    task["strategy"] = strategy["id"] if strategy is not None else ""
+    if strategy is not None and strategy["params"]["action"] != action:
+        action = strategy["params"]["action"]
+        EventLog(root, state["workspace_id"]).append(
+            "strategy_applied", actor="kernel",
+            payload={"task": task_id, "signal": task["signal"],
+                     "default": decision["action"], "chosen": action,
+                     "strategy": strategy["id"]}, moment=moment)
+    if action == "handoff":
+        packet = _handoff(root, state, task, adapters, reason=task["signal"], moment=moment)
+        actions.append({"task": task_id, "action": "handoff", "agent": owner,
+                        "handoff": bool(packet), "reason": decision["reason"]})
+    elif action == "switch_agent":
+        # Keep the real cause when the packet's reason vocabulary has it;
+        # "stalled" is the honest fallback, not a catch-all label.
+        reason = (task["signal"] if task["signal"] in handoff_mod.REASONS
+                  else "stalled")
+        packet = _handoff(root, state, task, adapters, reason=reason, moment=moment,
+                          remedy="switch_agent")
+        actions.append({"task": task_id, "action": "switch_agent", "agent": owner,
+                        "handoff": bool(packet), "reason": decision["reason"]})
+    elif action == "retry" and task["attempts"] <= diagnosis.MAX_RETRY:
+        task["state"] = "pending"
+        task["owner"] = ""
+        task["remedy"] = "retry"
+        actions.append({"task": task_id, "action": "retry", "agent": owner})
+    else:
+        task["state"] = "failed"
+        actions.append({"task": task_id, "action": action, "agent": owner,
+                        "reason": decision["reason"]})
+        _learn(root, state, task, "failure", moment)
+    return decision
 
 
 def complete(root, state, *, task_id, artifact_path=None, moment=None):
@@ -423,6 +469,37 @@ def complete(root, state, *, task_id, artifact_path=None, moment=None):
     _learn(root, state, task, "success", moment)
     save(root, state)
     return task
+
+
+def fail_task(root, state, adapters, *, task_id, signal, moment=None, actions=None):
+    """Replace a running task's owner now, without waiting for a timeout.
+
+    ``_tick`` only notices a dead owner when its heartbeat goes stale, which is
+    correct but slow: a client that crashes at minute two would hold the task
+    for the whole heartbeat window.  A supervisor that can *see* the delivery
+    die should be able to say so, and the replacement then follows the same
+    decision table as every other failure.
+    """
+    actions = [] if actions is None else actions
+    if not isinstance(task_id, str) or not task_id.strip():
+        raise ValueError("task_id is required")
+    if not isinstance(signal, str) or not signal.strip():
+        raise ValueError("signal is required")
+    with workspace_lock(lock_path(root, state["workspace_id"])):
+        fresh = load(root, state["workspace_id"])
+        task = fresh["tasks"].get(task_id)
+        if task is None:
+            raise ValueError("unknown task")
+        if task["state"] != "running":
+            raise ValueError("only a running task can be failed")
+        decision = _apply_failure(root, fresh, task, adapters,
+                                  signal=signal.strip(), moment=moment, actions=actions)
+        save(root, fresh)
+        if fresh != state:
+            state.clear()
+            state.update(fresh)
+        return {"task": task_id, "signal": signal.strip(),
+                "action": decision["action"], "actions": actions}
 
 
 def ingest_external(root, state, message, *, moment=None):

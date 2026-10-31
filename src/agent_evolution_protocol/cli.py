@@ -54,6 +54,7 @@ from agent_evolution_protocol.coordination import dependency_inventory
 from agent_evolution_protocol.coordination import wheel_compare
 from agent_evolution_protocol.coordination import dependency_gate
 from agent_evolution_protocol.coordination import delivery_audit
+from agent_evolution_protocol.coordination import claim_conflicts
 from agent_evolution_protocol.coordination import process_probe
 from agent_evolution_protocol.coordination import capability_bridge
 from agent_evolution_protocol.routing import classify_intent, load_route_config
@@ -1256,21 +1257,44 @@ def coord_task_state(args: argparse.Namespace) -> None:
     print(json.dumps(state, ensure_ascii=False, indent=2))
 
 
-def coord_claim(args: argparse.Namespace) -> None:
+def coord_claim(args: argparse.Namespace) -> dict:
     root = coord_root(args)
     who = valid_agent(args.agent)
     task_name = valid_task(args.task)
+    ttl_hours = float(getattr(args, "ttl_hours", claim_conflicts.DEFAULT_CLAIM_TTL_HOURS))
+    if ttl_hours <= 0:
+        raise ProtocolError("ttl-hours must be positive")
+    paths = list(getattr(args, "paths", None) or [])
+    # Scoped claims use the write-side gate/lease API.  It performs conflict
+    # detection before creating the directory, so a rejected claim leaves no
+    # partial owner record behind.
+    if paths:
+        try:
+            result = claim_conflicts.claim(root, agent=who, task=task_name,
+                                          paths=paths, ttl_hours=ttl_hours)
+        except (OSError, ValueError) as exc:
+            raise ProtocolError(str(exc)) from exc
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return result
     folder = coord_file(root, "claims", task_name)
     owner = folder / "owner.json"
     try:
         folder.mkdir(parents=True, exist_ok=False)
     except FileExistsError:
         payload = read_json(owner) if owner.exists() else {"task": task_name, "state": "pending"}
-        print(json.dumps({"claimed": False, "task": task_name, "owner": payload}, ensure_ascii=False, indent=2))
-        return
-    data = {"task": task_name, "agent": who, "at": utc_now(), "paths": args.paths or []}
+        result = {"claimed": False, "task": task_name, "owner": payload}
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return result
+    now = utc_now()
+    expiry = (datetime.fromisoformat(now.replace("Z", "+00:00")) +
+              timedelta(hours=ttl_hours)).isoformat()
+    data = {"task": task_name, "agent": who, "at": now, "paths": [],
+            "expires_at": expiry,
+            "gate": {"status": "TASK_ONLY", "allowed": True}}
     atomic_write_json(owner, data)
-    print(json.dumps({"claimed": True, **data}, ensure_ascii=False, indent=2))
+    result = {"claimed": True, **data}
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return result
 
 
 def coord_release(args: argparse.Namespace) -> None:
@@ -1290,6 +1314,21 @@ def coord_release(args: argparse.Namespace) -> None:
     except OSError:
         pass
     print(json.dumps({"released": True, "task": task_name, "agent": who}, ensure_ascii=False, indent=2))
+
+
+def coord_claim_renew(args: argparse.Namespace) -> None:
+    """Extend the caller's claim lease through the normal ``aep`` entrypoint."""
+    root = coord_root(args)
+    who = valid_agent(args.agent)
+    task_name = valid_task(args.task)
+    ttl_hours = float(getattr(args, "ttl_hours", claim_conflicts.DEFAULT_CLAIM_TTL_HOURS))
+    if ttl_hours <= 0:
+        raise ProtocolError("ttl-hours must be positive")
+    try:
+        result = claim_conflicts.renew(root, agent=who, task=task_name, ttl_hours=ttl_hours)
+    except (OSError, ValueError) as exc:
+        raise ProtocolError(str(exc)) from exc
+    print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
 def coord_archive_stale(args: argparse.Namespace) -> None:
@@ -1335,6 +1374,7 @@ def coord_onboarding(args: argparse.Namespace) -> None:
         "unread_digest_command": f"agent-evolution --coord-root {root} coord-digest --agent {who}",
         "status_command": f"agent-evolution --coord-root {root} coord-status",
         "claim_command": f"agent-evolution --coord-root {root} coord-claim --agent {who} --task <TASK>",
+        "renew_claim_command": f"agent-evolution --coord-root {root} coord-claim-renew --agent {who} --task <TASK> --ttl-hours 24",
         "task_state_command": f"agent-evolution --coord-root {root} coord-task-state --agent {who} --task <TASK> --phase working --goal <GOAL> --next-action <NEXT>",
         "continuation_plan_command": f"agent-evolution --kernel-root {kernel_root(args)} kernel-continuation-plan --agent {who} --workspace <WORKSPACE>",
         "rules": [
@@ -2187,7 +2227,11 @@ def kernel_checkpoint(args: argparse.Namespace) -> None:
 
 UIA_CLIENTS = {
     "workbuddy": {"process": "WorkBuddy", "exe": r"D:\Programs\WorkBuddy\WorkBuddy.exe", "title": "WorkBuddy"},
-    "qoder": {"process": "Qoder", "exe": r"D:\Programs\Qoder\Qoder.exe", "title": "Qoder"},
+    # International Qoder and Qoder CN are separate products.  Keep the
+    # versioned executable path so launch/anchor fallback cannot drift to the
+    # unversioned updater stub or accidentally cross-match the CN client.
+    "qoder": {"process": "Qoder", "exe": r"D:\Programs\Qoder\.qoder-versions\0.4.11\Qoder.exe", "title": "Qoder"},
+    "qoder_cn": {"process": "Qoder CN", "exe": r"D:\Programs\QoderCN\Qoder CN\.qoder-versions\0.4.11\Qoder CN.exe", "title": "Qoder CN"},
 }
 
 
@@ -2499,7 +2543,8 @@ def coord_commander(args: argparse.Namespace) -> None:
             root, target=valid_agent(args.target), task=args.task or "GENERAL", text=text,
             sender=valid_agent(args.sender), priority=args.priority,
             event_id=args.event_id or "", allow_launch=args.allow_launch,
-            transport=args.transport, expires_minutes=args.expires_minutes)
+            transport=args.transport, expires_minutes=args.expires_minutes,
+            urgent_interject=bool(getattr(args, "urgent_interject", False)))
         print(json.dumps(order, ensure_ascii=False, indent=2))
         return
     if action == "perceive":
@@ -2535,6 +2580,103 @@ def coord_clawchat(args: argparse.Namespace) -> None:
         host=args.host, port=args.port, room=args.room, timeout=args.timeout),
         message, execute=bool(args.execute))
     print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+def _federate_text(args: argparse.Namespace, *, inline: str, file_field: str) -> str:
+    path = getattr(args, file_field, None)
+    if path:
+        return Path(path).read_text(encoding="utf-8")
+    value = getattr(args, inline, None)
+    if value and str(value).strip():
+        return str(value)
+    raise ProtocolError(f"--{inline.replace('_', '-')} or --{file_field.replace('_', '-')} is required")
+
+
+def _federate_agents(args: argparse.Namespace) -> list[str]:
+    """Explicit agents first; otherwise whoever the client registry knows."""
+    explicit = [item.strip() for item in (getattr(args, "agents", None) or []) if item.strip()]
+    if explicit:
+        return explicit
+    from agent_evolution_protocol.coordination import client_registry
+    known = [item for item in client_registry.known(coord_root(args)) if item.strip()]
+    if not known:
+        raise ProtocolError("no agents given and the client registry is empty")
+    return known
+
+
+def _federate_capabilities(args: argparse.Namespace) -> dict:
+    mapping: dict[str, list[str]] = {}
+    for item in getattr(args, "capability", None) or []:
+        if ":" not in item:
+            raise ProtocolError("--capability must look like agent:cap1,cap2")
+        agent, caps = item.split(":", 1)
+        mapping[valid_agent(agent)] = [cap.strip() for cap in caps.split(",") if cap.strip()]
+    return mapping
+
+
+def coord_assign(args: argparse.Namespace) -> None:
+    """One call that writes a DAG node, takes the lease and deposits the order."""
+    from agent_evolution_protocol.federation import assignment
+    requirement = _federate_text(args, inline="requirement", file_field="requirement_file")
+    receipt = assignment.assign(
+        coord_root(args), workspace_id=args.workspace, task_id=valid_task(args.task),
+        requirement=requirement, target=valid_agent(args.target),
+        paths=list(args.paths or []), deps=[valid_task(item) for item in (args.deps or [])],
+        sender=valid_agent(args.sender), priority=args.priority,
+        ttl_hours=args.ttl_hours, allow_launch=args.allow_launch,
+        transport=args.transport, urgent_interject=args.urgent_interject,
+        federation_root=str(args.federation_root))
+    print(json.dumps(receipt, ensure_ascii=False, indent=2))
+
+
+def federate(args: argparse.Namespace) -> None:
+    """Heartbeat, intake and status for the persistent federation workspace."""
+    from agent_evolution_protocol.federation import engine, intake as intake_mod, supervisor
+
+    root = Path(args.federation_root)
+    coord = coord_root(args)
+    if args.action == "intake":
+        result = intake_mod.intake(
+            root, coord, text=_federate_text(args, inline="text", file_field="text_file"),
+            agents=_federate_agents(args), workspace_id=args.workspace or "",
+            goal=args.goal or "", shape=args.shape,
+            capabilities=_federate_capabilities(args), sender=valid_agent(args.sender),
+            priority=args.priority, allow_launch=args.allow_launch)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return
+    if not args.workspace:
+        raise ProtocolError("--workspace is required for this action")
+    adapters = supervisor.build_adapters(
+        coord_root=str(coord), agents=_federate_agents(args),
+        capabilities=_federate_capabilities(args), sender=valid_agent(args.sender),
+        allow_launch=args.allow_launch, workspace_id=args.workspace,
+        urgent_interject=args.urgent_interject)
+    if args.action == "step":
+        result = supervisor.step(root, str(coord), args.workspace, adapters,
+                                 heartbeat_timeout=args.heartbeat_timeout,
+                                 dispatch=not args.no_dispatch)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return
+    if args.action == "serve":
+        ticks = supervisor.serve(root, str(coord), args.workspace, adapters,
+                                 interval=args.interval, max_ticks=args.max_ticks,
+                                 heartbeat_timeout=args.heartbeat_timeout,
+                                 dispatch=not args.no_dispatch, stream=sys.stdout)
+        print(json.dumps({"schema": "aep-federate-serve-v1", "workspace": args.workspace,
+                          "ticks": ticks}, ensure_ascii=False, indent=2))
+        return
+    state = engine.load(root, args.workspace)
+    print(json.dumps({
+        "schema": "aep-federate-status-v1", "workspace": args.workspace,
+        "paused": bool(state.get("paused")),
+        "tasks": {task_id: {key: row.get(key) for key in
+                            ("state", "owner", "attempts", "signal", "note", "deps", "paths")}
+                  for task_id, row in sorted(state["tasks"].items())},
+        "agents": state.get("agents", {}),
+        "handoffs": len(state.get("handoffs") or []),
+        "adapters": [{"agent": item.agent, "capabilities": sorted(item.capabilities())}
+                     for item in adapters],
+    }, ensure_ascii=False, indent=2))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -2671,7 +2813,8 @@ def build_parser() -> argparse.ArgumentParser:
     onboarding = commands.add_parser("coord-onboarding"); onboarding.add_argument("--agent", required=True); onboarding.set_defaults(func=coord_onboarding)
     retry = commands.add_parser("coord-guided-retry"); retry.add_argument("--attempted-action", required=True); retry.add_argument("--error", required=True); retry.add_argument("--risk-level", choices=RISK_LEVELS, default="medium"); retry.add_argument("--goal"); retry.set_defaults(func=coord_guided_retry)
     task_state = commands.add_parser("coord-task-state"); task_state.add_argument("--agent", required=True); task_state.add_argument("--task", required=True); task_state.add_argument("--phase", required=True); task_state.add_argument("--goal", required=True); task_state.add_argument("--evidence", nargs="*"); task_state.add_argument("--blocked-reason"); task_state.add_argument("--next-action"); task_state.add_argument("--wake-phrase"); task_state.add_argument("--human-required", action="store_true"); task_state.add_argument("--stale-after-hours", type=float, default=12); task_state.set_defaults(func=coord_task_state)
-    claim = commands.add_parser("coord-claim"); claim.add_argument("--agent", required=True); claim.add_argument("--task", required=True); claim.add_argument("--paths", nargs="*"); claim.set_defaults(func=coord_claim)
+    claim = commands.add_parser("coord-claim"); claim.add_argument("--agent", required=True); claim.add_argument("--task", required=True); claim.add_argument("--paths", nargs="*"); claim.add_argument("--ttl-hours", type=float, default=48.0); claim.set_defaults(func=coord_claim)
+    renew_claim = commands.add_parser("coord-claim-renew"); renew_claim.add_argument("--agent", required=True); renew_claim.add_argument("--task", required=True); renew_claim.add_argument("--ttl-hours", type=float, default=48.0); renew_claim.set_defaults(func=coord_claim_renew)
     release = commands.add_parser("coord-release"); release.add_argument("--agent", required=True); release.add_argument("--task", required=True); release.set_defaults(func=coord_release)
     commands.add_parser("kernel-status").set_defaults(func=kernel_status)
     lease_acquire = commands.add_parser("kernel-lease-acquire"); lease_acquire.add_argument("--lease-type", choices=("TASK_WRITE_LEASE", "UPLOAD_INTENT_LEASE", "BROWSER_SESSION_LEASE"), required=True); lease_acquire.add_argument("--resource", required=True); lease_acquire.add_argument("--executor", required=True); lease_acquire.add_argument("--task-id"); lease_acquire.add_argument("--artifact-sha"); lease_acquire.add_argument("--ttl-seconds", type=int, default=300); lease_acquire.set_defaults(func=kernel_lease_acquire)
@@ -2692,7 +2835,29 @@ def build_parser() -> argparse.ArgumentParser:
     cdp_cmd = commands.add_parser("coord-cdp"); cdp_cmd.add_argument("action", choices=("scan", "targets", "read", "send")); cdp_cmd.add_argument("--port", type=int, default=9222); cdp_cmd.add_argument("--title"); cdp_cmd.add_argument("--text"); cdp_cmd.add_argument("--text-file"); cdp_cmd.add_argument("--event-id"); cdp_cmd.add_argument("--out-file"); cdp_cmd.add_argument("--preview-chars", type=int, default=600); cdp_cmd.add_argument("--timeout", type=int, default=10); cdp_cmd.set_defaults(func=coord_cdp)
     claw = commands.add_parser("coord-clawchat"); claw.add_argument("--host", default="127.0.0.1"); claw.add_argument("--port", type=int, default=0); claw.add_argument("--room", default="workspace"); claw.add_argument("--sender", required=True); claw.add_argument("--target", required=True); claw.add_argument("--task"); claw.add_argument("--event-id", required=True); claw.add_argument("--text"); claw.add_argument("--text-file"); claw.add_argument("--timeout", type=float, default=5); claw.add_argument("--execute", action="store_true"); claw.set_defaults(func=coord_clawchat)
 
-    cmdr = commands.add_parser("coord-commander"); cmdr.add_argument("action", choices=("submit", "perceive", "tick", "ack", "status", "watch", "resume-deferred")); cmdr.add_argument("--target"); cmdr.add_argument("--order-id"); cmdr.add_argument("--sender", default="human"); cmdr.add_argument("--task"); cmdr.add_argument("--text"); cmdr.add_argument("--text-file"); cmdr.add_argument("--event-id"); cmdr.add_argument("--priority", choices=("urgent", "normal", "low"), default="normal"); cmdr.add_argument("--transport", default="auto"); cmdr.add_argument("--expires-minutes", type=int, default=120); cmdr.add_argument("--allow-launch", action="store_true"); cmdr.add_argument("--no-perceive", action="store_true"); cmdr.add_argument("--agent"); cmdr.add_argument("--limit", type=int, default=20); cmdr.add_argument("--interval", type=float, default=30); cmdr.add_argument("--max-ticks", type=int, default=0); cmdr.set_defaults(func=coord_commander)
+    cmdr = commands.add_parser("coord-commander"); cmdr.add_argument("action", choices=("submit", "perceive", "tick", "ack", "status", "watch", "resume-deferred")); cmdr.add_argument("--target"); cmdr.add_argument("--order-id"); cmdr.add_argument("--sender", default="human"); cmdr.add_argument("--task"); cmdr.add_argument("--text"); cmdr.add_argument("--text-file"); cmdr.add_argument("--event-id"); cmdr.add_argument("--priority", choices=("urgent", "normal", "low"), default="normal"); cmdr.add_argument("--transport", default="auto"); cmdr.add_argument("--expires-minutes", type=int, default=120); cmdr.add_argument("--allow-launch", action="store_true"); cmdr.add_argument("--urgent-interject", action="store_true", help="send through an exact non-interrupting interject action while the agent is busy"); cmdr.add_argument("--no-perceive", action="store_true"); cmdr.add_argument("--agent"); cmdr.add_argument("--limit", type=int, default=20); cmdr.add_argument("--interval", type=float, default=30); cmdr.add_argument("--max-ticks", type=int, default=0);     cmdr.set_defaults(func=coord_commander)
+
+    assign = commands.add_parser("coord-assign", help="assign a task through the mailbox: DAG node + lease + order in one call")
+    assign.add_argument("--workspace", required=True); assign.add_argument("--task", required=True)
+    assign.add_argument("--target", required=True); assign.add_argument("--requirement"); assign.add_argument("--requirement-file", type=Path)
+    assign.add_argument("--paths", nargs="*", default=[]); assign.add_argument("--deps", nargs="*", default=[])
+    assign.add_argument("--sender", default="kernel"); assign.add_argument("--priority", choices=("urgent", "normal", "low"), default="normal")
+    assign.add_argument("--ttl-hours", type=float, default=24.0); assign.add_argument("--transport", default="auto")
+    assign.add_argument("--allow-launch", action="store_true"); assign.add_argument("--urgent-interject", action="store_true")
+    assign.add_argument("--federation-root", type=Path, default=Path(".agent-evolution"))
+    assign.set_defaults(func=coord_assign)
+
+    fed = commands.add_parser("federate", help="one input -> the whole swarm finishes unattended")
+    fed.add_argument("action", choices=("intake", "step", "serve", "status"))
+    fed.add_argument("--workspace"); fed.add_argument("--goal"); fed.add_argument("--text"); fed.add_argument("--text-file", type=Path)
+    fed.add_argument("--agents", nargs="*", default=[]); fed.add_argument("--capability", nargs="*", default=[])
+    fed.add_argument("--shape", choices=("single", "reviewed"), default="single")
+    fed.add_argument("--sender", default="kernel"); fed.add_argument("--priority", choices=("urgent", "normal", "low"), default="normal")
+    fed.add_argument("--interval", type=float, default=30.0); fed.add_argument("--max-ticks", type=int, default=0)
+    fed.add_argument("--heartbeat-timeout", type=float, default=900.0); fed.add_argument("--no-dispatch", action="store_true")
+    fed.add_argument("--allow-launch", action="store_true"); fed.add_argument("--urgent-interject", action="store_true")
+    fed.add_argument("--federation-root", type=Path, default=Path(".agent-evolution"))
+    fed.set_defaults(func=federate)
     return parser
 
 
@@ -2703,7 +2868,9 @@ def main() -> int:
         sys.stderr.reconfigure(encoding="utf-8")
     try:
         args = build_parser().parse_args()
-        args.func(args)
+        result = args.func(args)
+        if isinstance(result, dict) and result.get("schema") == "agent-evolution-claim-result-v1" and not result.get("claimed"):
+            return 3
         return 0
     except ProtocolError as exc:
         print(f"protocol error: {exc}", file=sys.stderr)

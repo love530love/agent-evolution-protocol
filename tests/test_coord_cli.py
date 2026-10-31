@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from agent_evolution_protocol import cli
+from agent_evolution_protocol.coordination import claim_conflicts
 
 
 class CoordinationCliTest(unittest.TestCase):
@@ -145,6 +146,74 @@ class CoordinationCliTest(unittest.TestCase):
 
             cli.coord_release(SimpleNamespace(coord_root=root, agent="codex", task="T125"))
             self.assertFalse((root / "claims" / "T125" / "owner.json").exists())
+
+    def test_coord_claim_scoped_path_uses_gate_and_leaves_no_record_on_conflict(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with redirect_stdout(StringIO()):
+                cli.coord_claim(SimpleNamespace(
+                    coord_root=root, agent="codex", task="T140-A", paths=["src/shared"], ttl_hours=48,
+                ))
+            output = StringIO()
+            with redirect_stdout(output):
+                cli.coord_claim(SimpleNamespace(
+                    coord_root=root, agent="qoder", task="T140-B", paths=["src/shared/file.py"], ttl_hours=48,
+                ))
+            payload = json.loads(output.getvalue())
+            self.assertFalse(payload["claimed"])
+            self.assertEqual("scope_conflict", payload["reason"])
+            self.assertFalse((root / "claims" / "T140-B").exists())
+
+    def test_coord_claim_task_only_stamps_a_lease_for_legacy_callers(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            output = StringIO()
+            with redirect_stdout(output):
+                cli.coord_claim(SimpleNamespace(
+                    coord_root=root, agent="codex", task="T141", paths=[], ttl_hours=6,
+                ))
+            payload = json.loads(output.getvalue())
+            owner = json.loads((root / "claims" / "T141" / "owner.json").read_text(encoding="utf-8"))
+            self.assertTrue(payload["claimed"])
+            self.assertEqual("TASK_ONLY", owner["gate"]["status"])
+            self.assertTrue(owner["expires_at"])
+
+    def test_coord_claim_scoped_path_allows_expired_lease_and_reports_it(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            old = claim_conflicts.claim(
+                root, agent="codex", task="T142-A", paths=["src/expired"],
+                ttl_hours=1, now="2026-01-01T00:00:00+00:00",
+            )
+            self.assertTrue(old["claimed"])
+            output = StringIO()
+            with redirect_stdout(output):
+                result = claim_conflicts.claim(
+                    root, agent="qoder", task="T142-B", paths=["src/expired/file.py"],
+                    ttl_hours=1, now="2026-01-02T00:00:00+00:00",
+                )
+            self.assertTrue(result["claimed"])
+            self.assertEqual(["T142-A"], result["gate"]["ignored_expired"])
+
+    def test_coord_claim_renew_is_owner_only_and_reachable_from_cli(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with redirect_stdout(StringIO()):
+                cli.coord_claim(SimpleNamespace(
+                    coord_root=root, agent="codex", task="T143", paths=["src/lease.py"], ttl_hours=1,
+                ))
+            with self.assertRaisesRegex(cli.ProtocolError, "only the owner"):
+                cli.coord_claim_renew(SimpleNamespace(
+                    coord_root=root, agent="qoder", task="T143", ttl_hours=4,
+                ))
+            output = StringIO()
+            with redirect_stdout(output):
+                cli.coord_claim_renew(SimpleNamespace(
+                    coord_root=root, agent="codex", task="T143", ttl_hours=4,
+                ))
+            payload = json.loads(output.getvalue())
+            self.assertEqual("codex", payload["agent"])
+            self.assertTrue(payload["expires_at"])
 
     def test_t132_claim_prevents_another_agent_overwriting_task_state(self):
         with tempfile.TemporaryDirectory() as temporary:
