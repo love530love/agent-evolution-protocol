@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from agent_evolution_protocol.coordination import ui_fallback as ui
+from agent_evolution_protocol.coordination import vision_grounding
 from agent_evolution_protocol.coordination import wake_daemon
 
 
@@ -19,7 +20,9 @@ class FakeDriver:
     def __init__(self, *, model=True, session=True, input_found=True, no_window=False,
                  send_status="submitted-unconfirmed", activity_state="ready",
                  interject_ready=False, interruption=False, drivable=None,
-                 blocked_by=None, answers=True, delivered=None):
+                 blocked_by=None, answers=True, delivered=None,
+                 input_candidate_count=None, input_ambiguous=False,
+                 window_size=None, input_region=None):
         self.model = model
         self.session = session
         self.input_found = input_found
@@ -32,19 +35,31 @@ class FakeDriver:
         self.blocked_by = blocked_by
         self.answers = answers
         self.delivered = delivered
+        self.input_candidate_count = input_candidate_count
+        self.input_ambiguous = input_ambiguous
+        self.window_size = window_size
+        self.input_region = input_region
         self.sent = 0
         self.launched = 0
         self.selected = 0
         self.captured = 0
         self.expected_ack = ""
+        self.ratios = []
 
     def observe(self, profile):
         if self.no_window:
             return {"status": "NO_WINDOW"}
         report = {"status": "window-observed", "pid": 1234, "input_found": self.input_found,
-                  "input_ambiguous": False, "activity_state": self.activity_state,
+                  "input_ambiguous": self.input_ambiguous,
+                  "activity_state": self.activity_state,
                   "interject_evidence": {"ready": self.interject_ready,
                                          "interrupt_only": False}}
+        if self.input_candidate_count is not None:
+            report["input_candidate_count"] = self.input_candidate_count
+        if self.window_size is not None:
+            report["window_size"] = self.window_size
+        if self.input_region is not None:
+            report["input_region"] = self.input_region
         if self.drivable is not None:
             report["drivable"] = self.drivable
             report["target_elevation"] = "unknown" if not self.drivable else "standard"
@@ -70,8 +85,9 @@ class FakeDriver:
         self.launched += 1
         self.no_window = False
 
-    def deliver(self, profile, message, event_id, *, urgent=False):
+    def deliver(self, profile, message, event_id, *, urgent=False, composer_ratios=None):
         self.sent += 1
+        self.ratios.append(composer_ratios)
         if not self.answers:
             return {"status": self.send_status,
                     "task_delivered": self.delivered is True,
@@ -323,6 +339,147 @@ class UiFallbackTests(unittest.TestCase):
         self.assertIn("-SendMode", captured["args"])
         self.assertIn("enter", captured["args"])
         self.assertIn("-UrgentInterject", captured["args"])
+
+
+class RouteWiringTests(unittest.TestCase):
+    """The router is consulted on every attempt, including the ones UIA settles.
+
+    A receipt that only records the interesting cases cannot answer "did we ask
+    a model here?" afterwards, so the route is written even when the answer is
+    the boring one.
+    """
+
+    def setUp(self):
+        self.temp = TemporaryDirectory()
+        self.folder = Path(self.temp.name)
+        self.receipt = self.folder / "receipt.json"
+        self.lock = self.folder / "desktop.lock"
+        self.composer = vision_grounding.Region(x=700, y=960, width=500, height=60)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def run_relay(self, driver, profile=None, **kwargs):
+        return ui.run(profile or PROFILE, "Analyze the error", event_id="EVT-ROUTE-1",
+                      receipt_path=self.receipt, lock_path=self.lock,
+                      driver=driver, poll_seconds=0.1, **kwargs)
+
+    def _grounder(self, confidence=0.9):
+        return vision_grounding.StaticGrounder({"composer": vision_grounding.Proposal(
+            target="composer", region=self.composer, confidence=confidence, source="static")})
+
+    def test_a_settled_uia_hit_is_recorded_and_no_model_is_asked(self):
+        grounder = self._grounder()
+        driver = FakeDriver(window_size={"width": 1920, "height": 1080},
+                            input_region={"x": 700, "y": 960, "width": 500, "height": 60})
+        result = self.run_relay(driver, grounder=grounder)
+        self.assertEqual(result["state"], "AGENT_REPLY_VERIFIED")
+        self.assertEqual(result["route"]["locate_source"], "uia")
+        self.assertFalse(result["route"]["needs_verification"])
+        self.assertEqual(grounder.calls, 0)
+        self.assertEqual(driver.ratios, [None])
+
+    def test_an_ambiguous_hit_keeps_the_old_state_and_names_the_reason(self):
+        driver = FakeDriver(input_candidate_count=3, input_ambiguous=True,
+                            window_size={"width": 1920, "height": 1080})
+        result = self.run_relay(driver)
+        self.assertEqual(result["state"], "WINDOW_OR_INPUT_AMBIGUOUS")
+        self.assertEqual(result["route_reason"], "NO_TARGET")
+        self.assertIsNone(result["located_by"])
+        self.assertEqual(driver.sent, 0)
+
+    def test_a_located_region_is_recorded_but_not_typed_into_over_uia(self):
+        # ValuePattern needs a control UIA identified; the only alternative the
+        # adapter offers is a blind paste, so the box is recorded and the
+        # attempt defers.
+        driver = FakeDriver(input_candidate_count=3, input_ambiguous=True,
+                            window_size={"width": 1920, "height": 1080})
+        result = self.run_relay(driver, grounder=self._grounder())
+        self.assertEqual(result["state"], "WINDOW_OR_INPUT_AMBIGUOUS")
+        self.assertEqual(result["located_by"], "vision")
+        self.assertEqual(result["located_region"]["width"], 500)
+        self.assertEqual(driver.sent, 0)
+
+    def test_the_ocr_transport_hands_the_located_region_to_the_adapter(self):
+        profile = {**PROFILE, "transport": "ocr"}
+        driver = FakeDriver(input_candidate_count=3, input_ambiguous=True,
+                            window_size={"width": 1920, "height": 1080})
+        result = self.run_relay(driver, profile=profile, grounder=self._grounder())
+        self.assertEqual(driver.sent, 1)
+        self.assertEqual(result["located_by"], "vision")
+        ratio_x, ratio_y = result["composer_ratios"]
+        self.assertAlmostEqual(ratio_x, 950 / 1920, places=3)
+        self.assertAlmostEqual(ratio_y, 990 / 1080, places=3)
+        self.assertEqual(driver.ratios[0], (ratio_x, ratio_y))
+
+    def test_a_low_confidence_proposal_falls_back_to_a_configured_region(self):
+        profile = {**PROFILE, "transport": "ocr"}
+        driver = FakeDriver(input_candidate_count=3, input_ambiguous=True,
+                            window_size={"width": 1920, "height": 1080})
+        reference = {"x": 700, "y": 960, "width": 500, "height": 60}
+        result = self.run_relay(driver, profile=profile, grounder=self._grounder(0.1),
+                                reference_region=reference)
+        self.assertEqual(result["located_by"], "geometry")
+        self.assertEqual(driver.sent, 1)
+
+    def test_a_region_without_a_window_size_is_refused_not_approximated(self):
+        # A ratio needs a denominator.  Guessing 1920x1080 would silently
+        # misplace the click on any other window.
+        profile = {**PROFILE, "transport": "ocr"}
+        driver = FakeDriver(input_candidate_count=3, input_ambiguous=True)
+        reference = {"x": 700, "y": 960, "width": 500, "height": 60}
+        result = self.run_relay(driver, profile=profile, grounder=self._grounder(),
+                                reference_region=reference)
+        self.assertEqual(result["state"], "ROUTE_REGION_UNUSABLE")
+        self.assertEqual(driver.sent, 0)
+        reasons = [row.get("reason") for row in result["route"]["considered"]
+                   if row["source"] == "vision"]
+        self.assertEqual(reasons, ["NO_WINDOW_GEOMETRY"])
+
+    def test_a_driver_that_cannot_take_a_region_defers_instead_of_dropping_it(self):
+        class OldDriver(FakeDriver):
+            def deliver(self, profile, message, event_id, *, urgent=False):
+                self.sent += 1
+                return {"status": "message-visible", "task_delivered": True}
+
+        profile = {**PROFILE, "transport": "ocr"}
+        driver = OldDriver(input_candidate_count=3, input_ambiguous=True,
+                           window_size={"width": 1920, "height": 1080})
+        result = self.run_relay(driver, profile=profile, grounder=self._grounder())
+        self.assertEqual(result["state"], "ROUTE_UNSUPPORTED_BY_DRIVER")
+        self.assertEqual(driver.sent, 0)
+        # Nothing was typed, so a retry must not be blocked by the receipt.
+        self.assertTrue(ui._preinput_receipt_retryable(result))
+
+    def test_the_powershell_driver_forwards_the_ratios_and_the_authorisation(self):
+        driver = ui.PowerShellUiaDriver.__new__(ui.PowerShellUiaDriver)
+        driver.pwsh = "pwsh.exe"
+        captured = {}
+
+        def fake_run(script, args, **kwargs):
+            captured["args"] = args
+            return {"status": "submitted-unconfirmed", "task_delivered": False}
+
+        driver._run = fake_run
+        profile = {**PROFILE, "transport": "ocr"}
+        driver.deliver(profile, "EVT-PS-2", "EVT-PS-2", composer_ratios=(0.49, 0.92))
+        self.assertIn("-AllowComposerGeometryFallback", captured["args"])
+        self.assertIn("-ComposerXRatio", captured["args"])
+        self.assertIn("0.49", captured["args"])
+        self.assertIn("0.92", captured["args"])
+
+    def test_without_a_region_the_adapter_gets_no_geometry_authorisation(self):
+        driver = ui.PowerShellUiaDriver.__new__(ui.PowerShellUiaDriver)
+        driver.pwsh = "pwsh.exe"
+        captured = {}
+
+        def fake_run(script, args, **kwargs):
+            captured["args"] = args
+            return {"status": "message-visible", "task_delivered": True}
+
+        driver._run = fake_run
+        driver.deliver({**PROFILE, "transport": "ocr"}, "EVT-PS-3", "EVT-PS-3")
+        self.assertNotIn("-AllowComposerGeometryFallback", captured["args"])
 
 
 if __name__ == "__main__":

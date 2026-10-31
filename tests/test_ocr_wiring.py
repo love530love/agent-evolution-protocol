@@ -84,5 +84,39 @@ class LanguageWiringTests(unittest.TestCase):
         self.assertIn("$transcriptSource = 'ocr'", SESSION)
 
 
+class OutputEncodingTests(unittest.TestCase):
+    """The OCR result has to survive leaving its own process.
+
+    Measured on this host: a piped call turned every Chinese character into
+    "?" and turned two unrecognised glyphs into raw 0x07 bytes.  A control byte
+    inside a JSON string makes the object invalid, so any consumer parsing it
+    across a process boundary failed outright -- and the "?" version failed
+    silently, because a marker written in Chinese simply never matched.
+    """
+
+    def test_the_island_emits_utf8_instead_of_trusting_the_code_page(self):
+        self.assertIn("[System.Text.UTF8Encoding]::new($false).GetBytes($json", COMPAT)
+        self.assertIn("[Console]::OpenStandardOutput()", COMPAT)
+
+    def test_the_island_can_hand_the_result_over_as_a_file(self):
+        # A file removes the console code page from the path entirely, which is
+        # what the in-process caller needs: reading UTF-8 bytes back with the
+        # parent's code page produced mojibake that still looked like a
+        # non-empty transcript.
+        self.assertIn("[string]$OutFile = ''", COMPAT)
+        self.assertIn("[System.IO.File]::WriteAllText($OutFile, $json", COMPAT)
+
+    def test_the_session_reads_that_file_as_utf8(self):
+        self.assertIn("-OutFile $ocrFile", SESSION)
+        self.assertIn("[IO.File]::ReadAllText($ocrFile, [System.Text.UTF8Encoding]::new($false))",
+                      SESSION)
+
+    def test_the_failure_path_uses_the_same_channel(self):
+        # A caller that parses stdout cannot tell "no text" from "the engine
+        # died" unless the failure is also a well-formed object.
+        self.assertIn("$failure = [pscustomobject]@{ Text = ''; Lines = @()", COMPAT)
+        self.assertIn("[System.Text.UTF8Encoding]::new($false).GetBytes($failure", COMPAT)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,6 @@
 # 「手—脚—心脏」落地现状与阻断点（2026-10-31）
 
-更新：2026-10-31 晚（第三次修订，`INPUT_SUBMITTED` 起已实测达成）
+更新：2026-10-31 晚（第四次修订，路由已接进活路径 + 视觉腿已真跑 + OCR 输出非法 JSON 已修）
 范围：`federation.commander_adapter`、`federation.assignment`、`federation.supervisor`、
 `federation.intake`、`coordination.uia_argv`、`wake_adapters/uia_session.ps1`、`windows_ocr_compat.ps1`
 
@@ -291,6 +291,29 @@ send_status: message-visible   send_retry: paste+enter   composer_clear_polls: 1
 **送达和应答都发生了，只是应答比窗口晚**——因此 `reply_timeout_seconds` 由 60 提到 120。
 迟到的应答目前**没有被回收**（没有只读步骤去把订单升级成已接受），这是下一步。
 
+### 缺陷十一：OCR 回执根本不是合法 JSON（v0.6.8）
+
+这一条是查视觉探针「为什么读不到中文」时撞出来的，但它跟视觉无关，是手这一层的缺陷。
+
+`windows_ocr_compat.ps1` 把 JSON 交给 PowerShell 输出流，控制台编码器进了链路：
+中文变 `?`，两个未识别字形变**裸 `0x07`（BEL）**。于是 `ConvertTo-Json` 的输出不是合法 JSON，
+`json.loads` 在 offset 205 直接抛错。后果不是「少几个字」，是**整段 OCR 文本被丢掉**，
+中文 marker 永不命中——一个「字明明认出来了、下游全丢」的静默失败。
+Qoder 这类只能走 OCR 的 Electron 客户端，送达路径就卡在这里。
+
+修法三层，缺一层都不行：
+
+1. 脚本自己 `[Console]::OpenStandardOutput()` 写 UTF-8 字节，绕开编码器（与缺陷四同类）。
+2. 新增 `-OutFile`，调用方走文件交接，彻底不进管道。
+3. `uia_session.ps1` 用 `ReadAllText($f, UTF8Encoding)` 读回——否则文件是 UTF-8、
+   读的人按 GBK 解，变成 `σ¢ù Q τ╝ûµùº`。
+
+诊断过程本身也值得记：先用 `'#'` 替换 BEL 做标记、又插桩打印 `IndexOf([char]7)`，
+两次都显示「没找到」。那不是缺陷不存在，是**我改的那一段不在缺陷路径上**。
+最后是「中文也一起变 `?`」这条线索把方向拨正的——两个症状同一个病因。
+
+守卫：`tests/test_ocr_wiring.py` 的 `OutputEncodingTests`（4 项）。
+
 ## 三块新机制（可用，有测试）
 
 ### 1. 信箱派工：`coord-assign`
@@ -340,10 +363,19 @@ step 2: review  -> done (beta)    _settled = True
 - **MCP 适配器、跨机联邦**：未做。`locking.py` 只是本机文件锁。
 - **Qoder 之外的客户端**：`chatgpt` 已实测（`input_found: true`、3 个输入候选、60978 字符），
   `codebuddy_cn` 只配了参数、未实测。
-- **视觉腿（v0.6.7）一次都没真跑过**：`vision_grounding` / `policy_executor` / `input_routing`
-  三层都有测试、都能离线回放（`aep coord-vision`、`aep coord-policy`、`aep coord-route`），
-  但 `mage_vl_cowork` 仍是 `candidate`，`ui_fallback.run()` 也仍只走 UIA。
-  所以「视觉能定位 composer」这件事在本机**尚未验证**，只验证了「没有 grounder 时不编数字」。
+- **视觉腿已真跑，但只对了一格（v0.6.8）**。3 个真实窗口 × 2 种坐标格式 × 2 种说法 = 12 格，
+  `admissible()` 通过 4 格，**只有 1 格框对了输入框**（Qoder，像素格式 + 人话描述，
+  同时命中人标定点与 OCR 占位符）。像素 + `composer` 那 3 格置信度 0.99~1.0 却全错，
+  所以**闸门管合法性、不管对错**。用的是 `Qwen2.5-VL-3B`（Research License，不是 Mage），
+  数据在 `docs/VISION_GROUNDING_PROBE_20261031.zh-CN.md`。
+- **路由已接进活路径，但没在活会话上端到端跑过（v0.6.8）**。`ui_fallback.run()` 每次都调用
+  `resolve_target()`，`state["route"]` 无条件落盘；UIA 决断时 grounder 调用 0 次；
+  `ocr` 传输把区域换成中心比例交给 `-AllowComposerGeometryFallback`（实测 `0.4948 / 0.9167`）；
+  `uia` 传输拿不到可用区域时**不发**并记 `TRANSPORT_CANNOT_USE_LOCATED_REGION`。
+  接线由 `RouteWiringTests`（8 项）覆盖，但「路由决定 → 真打字 → 收到 ACK」这一步**还没有**。
+- **`rea` / `ida_pro_mcp` 只做了 catalog 登记**，没有调用规约、没有连接器。两者都留在
+  `candidate`——登记一个工具的能力和风险，不等于把它接进执行面。
+- **Mage 本身仍未跑**。`mage_vl_cowork` 仍是 `candidate`，本轮没给它增加任何证据。
 
 ## 验收命令
 

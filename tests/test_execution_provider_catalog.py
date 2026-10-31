@@ -80,6 +80,29 @@ def test_mage_is_registered_as_an_untrusted_desktop_visual_candidate():
     assert any("trust_remote_code" in item for item in row["limitations"])
 
 
+def test_the_reverse_engineering_rows_record_what_makes_them_dangerous():
+    # A row that only lists strengths is marketing.  These two tools both reach
+    # a licensed, write-capable product, so the limits have to be in the file
+    # that the promotion gate reads, not only in a chat message.
+    catalog = execution_provider_catalog.load(ROOT / "examples" / "execution-provider-catalog.json")
+    rows = {row["id"]: row for row in catalog["providers"]}
+    rea, ida = rows["rea"], rows["ida_pro_mcp"]
+    assert (rea["layer"], ida["layer"]) == ("reverse_engineering", "reverse_engineering")
+    assert (rea["status"], ida["status"]) == ("candidate", "candidate")
+    # rea-agents is an npm package; the previous entry claimed a python runtime.
+    assert "node" in rea["runtime"] and "python" not in rea["runtime"]
+    assert any("Node ^22.23.4" in item for item in rea["limitations"])
+    assert any("crash dumps" in item for item in rea["limitations"])
+    # ida-pro-mcp is a write-capable shell into a commercial product.
+    assert any("py_eval" in item for item in ida["limitations"])
+    assert any("IDA Free is not supported" in item for item in ida["limitations"])
+    assert any("deprecated" in item for item in ida["limitations"])
+    assert any("read-only subset" in item for item in ida["acceptance"])
+    for row in (rea, ida):
+        assert "MIT" in row["license_note"]
+        assert row["source_note"]
+
+
 class TestPromotionGate:
     """Promotion is a gate: one step at a time, only with that step's evidence."""
 

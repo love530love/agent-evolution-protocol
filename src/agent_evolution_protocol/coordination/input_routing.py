@@ -5,11 +5,12 @@ The perception leg (``vision_grounding``) and the policy leg
 they fail differently, so the routing order follows what each one can actually
 prove.
 
-* **UIA can prove it found *the* input.** ``input_candidate_count == 1`` plus a
-  ``write_method`` is an observation.  When that exists, asking a vision model
-  the same question produces a second, weaker answer about a question that was
-  already settled -- so the model is skipped, not consulted.  Consulting it
-  anyway is how a good deterministic answer gets outvoted by a guess.
+* **UIA can prove it found *the* input.** ``input_found`` with the adapter not
+  reporting ambiguity is an observation, whatever the candidate count.  When
+  that exists, asking a vision model the same question produces a second,
+  weaker answer about a question that was already settled -- so the model is
+  skipped, not consulted.  Consulting it anyway is how a good deterministic
+  answer gets outvoted by a guess.
 * **UIA is silent when it finds nothing or finds three candidates.** That is
   where a vision proposal earns its place: it is admissible only if it clears
   the confidence and window tests, and even then it is a guess, so the step it
@@ -70,6 +71,22 @@ def candidate_count(observation: dict[str, Any]) -> int:
     return 1 if observation.get("input_found") else 0
 
 
+def is_ambiguous(observation: dict[str, Any]) -> bool:
+    """Whether UIA could not settle on one control.
+
+    ``input_ambiguous`` is the adapter's own verdict and wins when present: it
+    is entirely possible to find two candidate inputs and still know which one
+    is the composer (the measured ChatGPT receipt reports
+    ``input_candidate_count: 2`` with no ambiguity).  Treating a count of two as
+    ambiguity would have thrown away a working path, so the count is only a
+    fallback for receipts that predate the flag.
+    """
+    flag = observation.get("input_ambiguous")
+    if isinstance(flag, bool):
+        return flag
+    return candidate_count(observation) > 1
+
+
 def resolve_target(observation: dict[str, Any], *, window: vision_grounding.Region,
                    grounder: Any = None, reference: vision_grounding.Region | None = None,
                    min_confidence: float = vision_grounding.DEFAULT_MIN_CONFIDENCE,
@@ -92,19 +109,25 @@ def resolve_target(observation: dict[str, Any], *, window: vision_grounding.Regi
                               "seeing the control would not let anything be typed")
 
     count = candidate_count(observation)
-    considered.append({"source": "uia", "candidates": count,
+    ambiguous = is_ambiguous(observation)
+    considered.append({"source": "uia", "candidates": count, "ambiguous": ambiguous,
                        "write_method": observation.get("write_method")})
-    if count == 1:
+    if observation.get("input_found") and not ambiguous:
         region = observation.get("input_region")
         return _decision(
             "uia", reason="", considered=considered,
             region=region if isinstance(region, dict) else None,
-            note="UIA found exactly one candidate, so no model is asked the same question")
+            note="UIA settled on one control, so no model is asked the same question")
 
     # Ambiguous or absent: this is the only window in which perception adds
     # information rather than noise.
     proposal = None
-    if grounder is not None:
+    if grounder is not None and window is None:
+        # A 0-999 answer has no meaning without a size to multiply it by, so
+        # asking would produce a number nobody could place on screen.
+        considered.append({"source": "vision", "admissible": False,
+                           "reason": "NO_WINDOW_GEOMETRY"})
+    elif grounder is not None:
         try:
             proposal = grounder.ground({"target": target, "window": window,
                                         "image_data": observation.get("image_data", "")})

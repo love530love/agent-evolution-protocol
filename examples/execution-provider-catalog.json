@@ -410,28 +410,113 @@
       "id": "rea",
       "repository": "https://github.com/morluto/rea",
       "layer": "reverse_engineering",
-      "integration": "mcp+connector",
+      "integration": "mcp",
       "runtime": [
-        "python",
+        "node",
         "cli"
       ],
       "capabilities": [
-        "rea",
-        "readback"
+        "native_binary_analysis",
+        "static_js_electron_analysis",
+        "dotnet_assembly_analysis",
+        "firmware_container_parsing",
+        "evidence_backed_findings"
       ],
       "strengths": [
-        "local artifact and runtime probing",
-        "evidence-oriented reverse engineering"
+        "analysis runs locally and every finding carries its evidence and limitations",
+        "reuses an existing Ghidra/IDA/Hopper/Rizin/Frida/JADX install instead of shipping its own engine",
+        "static JavaScript/Electron analysis needs no native engine at all"
       ],
       "limitations": [
-        "probe results require a reproducible target and human-readable evidence"
+        "runtime is Node ^22.23.4 || ^24.22.1 || >=26.12.1; the installer will not upgrade Node for you, and older versions are a documented breaking change",
+        "native analysis needs Ghidra/IDA/Hopper/Rizin already installed; only the JS/Electron path is self-contained",
+        "the README lists binaries, JS/Electron (ASAR), .NET assemblies, websites and firmware containers (UF2/DfuSe/HEX); crash dumps and network captures are not listed -- HAR appears only in commit history",
+        "on Linux the static paths need a procps-compatible ps for process ownership checks",
+        "driving a commercial engine (IDA, Hopper) still requires that engine's own licence"
       ],
       "acceptance": [
-        "target identity",
-        "probe transcript",
-        "reproducible finding and artifact hash"
+        "`rea --help` prints a version, and the probe receipt records it with the Node version",
+        "one finding on a pinned artifact, with the artifact SHA-256 and the tool transcript",
+        "the same finding reproduces from a directory outside the target project",
+        "the receipt names the engine behind each claim, so a static-only result is not written up as runtime-proven"
       ],
-      "status": "candidate"
+      "status": "candidate",
+      "source_note": "Registered 2026-10-31 from the repository README and LICENSE. The previous entry said runtime python and integration mcp+connector; rea-agents is an npm package that ships an MCP server and a CLI, and no AEP connector exists for it, so both fields were wrong.",
+      "license_note": "MIT (morluto/rea). The engines it drives (IDA Pro, Hopper, Ghidra) carry their own licences and are not redistributed by rea."
+    },
+    {
+      "id": "ida_pro_mcp",
+      "repository": "https://github.com/mrexodia/ida-pro-mcp",
+      "layer": "reverse_engineering",
+      "integration": "mcp",
+      "runtime": [
+        "python",
+        "idalib",
+        "cli"
+      ],
+      "capabilities": [
+        "decompile",
+        "disassemble",
+        "xrefs",
+        "type_recovery",
+        "headless_analysis_via_idalib",
+        "database_mutation"
+      ],
+      "strengths": [
+        "headless mode through idalib means no IDA GUI has to stay open",
+        "each database runs in its own worker process, so a supervisor can reattach instead of restarting analysis",
+        "read-only resources plus decompile/disasm/xrefs cover most of what an analysis needs before any write"
+      ],
+      "limitations": [
+        "requires IDA Pro 8.3 or newer (9 recommended) and a commercial licence; IDA Free is not supported at all",
+        "the upstream README now recommends Hex-Rays' official ida-mcp and marks the GUI plugin path deprecated, so this entry may be superseded rather than promoted",
+        "exposes py_eval, which runs arbitrary Python inside IDA, and patch/patch_asm/rename/set_comments, which mutate the database -- an unqualified connection is a write-capable shell into a licensed product",
+        "GUI mode needs a running IDA instance; headless mode needs idalib activated globally plus uv",
+        "every tool call must name its database explicitly, so a caller that assumes a current database will fail"
+      ],
+      "acceptance": [
+        "`idalib-mcp --stdio` answers ida://idb/metadata for a pinned sample, and the receipt records the IDA version",
+        "the exposed tool list is restricted to the read-only subset: no py_eval, no patch*, no rename, and the allowlist is recorded in the receipt",
+        "analysis runs against a copy of the IDB and the original file hash is unchanged afterwards",
+        "one decompiled function is quoted with its address, so a reader can re-check the claim instead of trusting the summary"
+      ],
+      "status": "candidate",
+      "source_note": "Registered 2026-10-31 from the repository README and LICENSE. Deliberately left at candidate: nothing here has been run, and the py_eval/patch surface means the first probe has to prove the allowlist before anything else.",
+      "license_note": "MIT (Duncan Ogilvie / mrexodia). IDA Pro and idalib are commercial Hex-Rays products and are not redistributable; this entry references them, it does not ship them."
+    },
+    {
+      "id": "qwen2_5_vl_3b",
+      "repository": "https://github.com/QwenLM/Qwen2.5-VL",
+      "layer": "desktop_visual",
+      "integration": "vision-service",
+      "runtime": [
+        "python",
+        "transformers",
+        "cuda"
+      ],
+      "capabilities": [
+        "grounding_proposal",
+        "screenshot_reading"
+      ],
+      "strengths": [
+        "runs on one 24 GB card in bfloat16 through plain transformers, with no SGLang or custom serving stack",
+        "answers absolute pixel coordinates, which is the format it was trained on"
+      ],
+      "limitations": [
+        "measured on 3 real windows x 2 prompt formats x 2 phrasings: 4 of 12 answers were admissible and only 1 of those 4 was correct, so admissibility is not correctness",
+        "with the 0-999 grid prompt this repository uses for Mage, all 6 answers fell outside the grid (width or height 1000-1021) and were refused rather than clamped",
+        "with pixel coordinates and the single word 'composer', all 3 answers were admissible and all 3 were wrong: the boxes landed on the sidebar, the top of the transcript and a right-panel table cell",
+        "only pixel coordinates plus a plain-language description produced a correct box (Qoder), and the other two windows were then refused for overflowing the window",
+        "the weights ship under the Qwen RESEARCH LICENSE AGREEMENT, not Apache-2.0, so this cannot be the production grounding service regardless of accuracy"
+      ],
+      "acceptance": [
+        "one composer located on a real window and confirmed by OCR text inside the returned box, not by the model's own confidence",
+        "the reference is independent of the model: an OCR line box or a human-calibrated ratio from the client profile",
+        "the disagreement rate is reported per prompt format, because the format changed the answer more than the model did"
+      ],
+      "status": "candidate",
+      "source_note": "Registered 2026-10-31 after actually running it: 12 measured cells recorded in docs/VISION_GROUNDING_PROBE_20261031.zh-CN.md. Left at candidate because the only correct answer came from one prompt format on one window.",
+      "license_note": "Qwen RESEARCH LICENSE AGREEMENT (verified from the model card on 2026-10-31), not Apache-2.0. Weights are downloaded at run time and are not redistributed here."
     },
     {
       "id": "mage_vl_cowork",

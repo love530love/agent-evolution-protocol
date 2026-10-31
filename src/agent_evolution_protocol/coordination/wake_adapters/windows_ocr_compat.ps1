@@ -1,4 +1,5 @@
-param([Parameter(Mandatory = $true)][string]$ImagePath, [string]$Language = '')
+param([Parameter(Mandatory = $true)][string]$ImagePath, [string]$Language = '',
+      [string]$OutFile = '')
 
 # Windows PowerShell 5.1 compatibility island: PowerShell 7 cannot resolve
 # Windows.Media.Ocr WinRT types on this host. No UI input occurs here.
@@ -59,9 +60,32 @@ try {
     }
     [pscustomobject]@{ Text = (Normalize-OcrText ([string]$_.Text)); X = [int]$minX; Y = [int]$minY; W = [int]($maxX - $minX); H = [int]($maxY - $minY) }
   })
-  [pscustomobject]@{ Text = (Normalize-OcrText ([string]$result.Text)); Lines = $lines; Error = '';
+  # The result leaves as UTF-8 either way, but the *channel* matters.  Measured
+  # on this host: a piped call turned every Chinese character into "?" and two
+  # unrecognised glyphs into raw 0x07 bytes, which makes the object invalid JSON
+  # for any consumer parsing it across a process boundary.  Writing the bytes
+  # ourselves fixes the pipe; a caller that can name a file gets the file, which
+  # removes the console code page from the path entirely.
+  $json = [pscustomobject]@{ Text = (Normalize-OcrText ([string]$result.Text)); Lines = $lines; Error = '';
     Language = [string]$engine.RecognizerLanguage.LanguageTag } | ConvertTo-Json -Compress -Depth 5
+  if ($OutFile) {
+    [System.IO.File]::WriteAllText($OutFile, $json, [System.Text.UTF8Encoding]::new($false))
+  } else {
+    $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes($json + "`n")
+    $stream = [Console]::OpenStandardOutput()
+    $stream.Write($bytes, 0, $bytes.Length)
+    $stream.Flush()
+  }
 } catch {
-  [pscustomobject]@{ Text = ''; Lines = @(); Error = $_.Exception.Message; Language = '' } | ConvertTo-Json -Compress -Depth 5
+  $failure = [pscustomobject]@{ Text = ''; Lines = @(); Error = $_.Exception.Message; Language = '' } |
+    ConvertTo-Json -Compress -Depth 5
+  if ($OutFile) {
+    [System.IO.File]::WriteAllText($OutFile, $failure, [System.Text.UTF8Encoding]::new($false))
+  } else {
+    $failureBytes = [System.Text.UTF8Encoding]::new($false).GetBytes($failure + "`n")
+    $failureStream = [Console]::OpenStandardOutput()
+    $failureStream.Write($failureBytes, 0, $failureBytes.Length)
+    $failureStream.Flush()
+  }
   exit 1
 }

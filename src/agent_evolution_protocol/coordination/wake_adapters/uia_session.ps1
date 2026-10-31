@@ -344,9 +344,19 @@ function Get-WindowOcrText {
   try {
     $compat = Join-Path $PSScriptRoot 'windows_ocr_compat.ps1'
     $shell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    $raw = & $shell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $compat -ImagePath $shot -Language $Language
-    if ($LASTEXITCODE -ne 0) { throw "OCR_COMPAT_FAILED: $raw" }
-    $decoded = $raw | ConvertFrom-Json
+    # Hand the result over as a file rather than as text on a pipe.  The compat
+    # island writes UTF-8 on purpose (the console encoder turned every Chinese
+    # character into "?" and two glyphs into raw 0x07, which is invalid JSON),
+    # and a pipe would then be decoded with whatever code page this process
+    # happens to use -- measured here as UTF-8 read as GBK, so every Chinese
+    # marker missed while the transcript still looked non-empty.
+    $ocrFile = [IO.Path]::Combine([IO.Path]::GetDirectoryName($shot), 'ocr.json')
+    & $shell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $compat `
+      -ImagePath $shot -Language $Language -OutFile $ocrFile | Out-Null
+    if ($LASTEXITCODE -ne 0 -and -not (Test-Path -LiteralPath $ocrFile)) {
+      throw 'OCR_COMPAT_FAILED: no result file'
+    }
+    $decoded = [IO.File]::ReadAllText($ocrFile, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
     $text = [string]$decoded.Text
     $lines = @($decoded.Lines)
     # Recorded so a mojibake transcript is diagnosable: an en-US recognizer
@@ -874,6 +884,36 @@ $activity = Get-ActivityEvidence -Root $root -Hwnd $window.Hwnd `
   -InputFound ([bool]$selection) -InputAmbiguous $(if ($selection) { [bool]$selection.Ambiguous } else { $false }) `
   -Ocr:$OcrVerify -InterjectHints $InterjectHints
 
+# Window geometry and the input's own box, both in window-relative pixels.
+# Without these, a caller cannot tell a located control from a guess: a vision
+# answer arrives on a 0-999 grid and a ratio has no denominator.  Reporting them
+# is what lets the router compare two locators instead of trusting one.
+$windowRegion = $null
+$inputRegion = $null
+$rectForRegion = New-Object AepUiWindow+RECT
+if ([AepUiWindow]::GetWindowRect($window.Hwnd, [ref]$rectForRegion)) {
+  $regionWidth = $rectForRegion.Right - $rectForRegion.Left
+  $regionHeight = $rectForRegion.Bottom - $rectForRegion.Top
+  if ($regionWidth -gt 0 -and $regionHeight -gt 0) {
+    $windowRegion = @{ width = $regionWidth; height = $regionHeight }
+    if ($selection) {
+      try {
+        $inputBox = $selection.Element.Current.BoundingRectangle
+        $inputWidth = [int]$inputBox.Width
+        $inputHeight = [int]$inputBox.Height
+        if ($inputWidth -gt 0 -and $inputHeight -gt 0) {
+          $inputRegion = @{
+            x = [int]($inputBox.Left - $rectForRegion.Left)
+            y = [int]($inputBox.Top - $rectForRegion.Top)
+            width = $inputWidth
+            height = $inputHeight
+          }
+        }
+      } catch { }
+    }
+  }
+}
+
 if ($Mode -eq 'observe') {
   $transcriptSource = 'uia'
   # An Electron client exposes almost nothing to UIA (Qoder: 3 elements, no
@@ -899,6 +939,8 @@ if ($Mode -eq 'observe') {
     input_candidate_count  = $(if ($selection) { $selection.CandidateCount } else { 0 })
     input_ambiguous        = $(if ($selection) { $selection.Ambiguous } else { $false })
     input_candidates       = $(if ($selection) { $selection.List } else { @() })
+    window_size            = $windowRegion
+    input_region           = $inputRegion
     activity_state         = $activity.state
     activity_evidence      = $activity
     interject_evidence     = $activity.interject_evidence

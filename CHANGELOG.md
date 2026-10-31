@@ -1,5 +1,57 @@
 # Changelog
 
+## 0.6.8 — Put the rule on the live path, then find out it doesn't know what's right
+
+- `ui_fallback.py`: `input_routing.resolve_target()` now runs on every attempt of
+  the live delivery path, and `state["route"]` is written unconditionally —
+  including the attempts UIA settles. A receipt that only records the
+  interesting cases cannot answer "did we ask a model here?" afterwards.
+  The two transports are treated differently and both say why: a `uia`
+  transport types through a control UIA itself identified, so a located region
+  is recorded and the send is *deferred* (`TRANSPORT_CANNOT_USE_LOCATED_REGION`)
+  rather than silently pasted into whatever has focus; an `ocr` transport
+  converts the region to centre ratios and hands them to the existing
+  `-AllowComposerGeometryFallback`. `_deliver()` detects drivers that cannot
+  accept a region and returns `composer-region-unsupported` instead of dropping
+  it, because a route that is computed and ignored looks exactly like a route
+  that was never needed.
+- `input_routing.py`: the decisive test is `input_found and not is_ambiguous`,
+  not `candidate_count == 1`. Measured: ChatGPT reports
+  `input_candidate_count: 2` with `input_ambiguous: false` and delivers fine;
+  reading the count as ambiguity threw away a working path. The adapter's own
+  verdict wins when present. A receipt with no `window_size` is now
+  `NO_WINDOW_GEOMETRY` and the grounder is not called at all — a 0-999 answer
+  has no meaning without a denominator.
+- **The vision leg ran for real: 12 cells, 4 pass the gate, 1 is correct.**
+  The gate checks legality, not correctness — the three "pixels + `composer`"
+  cells all scored 0.99-1.0 confidence and all framed the wrong thing (left
+  sidebar, conversation header, right-hand table cell), proven by the OCR text
+  inside each box. Using `admissible()` as "safe to click" would have clicked
+  wrong three times out of four. Prompt *format* mattered more than the model:
+  the repo's `[0, 999]` grid produced 6/6 out-of-bounds answers on this model,
+  which had been trained on absolute pixels. Data in
+  `docs/VISION_GROUNDING_PROBE_20261031.zh-CN.md`.
+- `windows_ocr_compat.ps1`: the piped JSON was **not valid JSON**. The console
+  encoder turned Chinese into `?` and two unrecognised glyphs into a bare `0x07`,
+  so `json.loads` failed and the whole transcript was dropped — OCR recognised
+  the text and everything downstream threw it away. Fixed at three layers:
+  write UTF-8 bytes to stdout directly, add `-OutFile` for file hand-off, and
+  read it back with an explicit `UTF8Encoding` (otherwise the file is UTF-8 and
+  the reader decodes it as GBK).
+- `examples/execution-provider-catalog.json`: `rea` corrected on two facts — it
+  is a **Node** package (`^22.23.4 || ^24.22.1 || >=26.12.1`), not Python, and
+  it has no AEP connector. `source_note` records what the previous entry got
+  wrong. `ida_pro_mcp` registered as `candidate` with its risks written down:
+  needs IDA Pro 8.3+ (no IDA Free), exposes `py_eval` and `patch*` (arbitrary
+  Python in the target binary, and byte patching), upstream already recommends
+  the official `ida-mcp` instead. `qwen2_5_vl_3b` registered as `candidate` with
+  the measured 4/12 pass, 1/12 correct, and a `license_note` that it is the
+  Qwen **Research** License, not Apache-2.0.
+- Not done, deliberately: the route is wired but has never delivered a message
+  end-to-end on a live session; Mage itself still has not run, so every vision
+  number here belongs to a *different* model; `rea` and `ida_pro_mcp` are
+  catalog rows only, with no calling convention and no connector.
+
 ## 0.6.7 — Both legs, and a rule for which one goes first
 
 - `vision_grounding.py`: a vision answer is a *proposal*, not an observation.

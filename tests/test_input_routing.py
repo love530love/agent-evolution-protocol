@@ -48,7 +48,23 @@ class TestUiaComesFirstWhenItIsDecisive:
 
     def test_the_reason_says_why_no_model_was_consulted(self):
         decision = resolve_target(_observe(), window=WINDOW, grounder=StaticGrounder({}))
-        assert "exactly one candidate" in decision["note"]
+        assert "no model is asked" in decision["note"]
+
+    def test_two_candidates_are_not_ambiguity_when_the_adapter_says_so(self):
+        # The measured ChatGPT receipt reports input_candidate_count 2 with no
+        # ambiguity, and that path delivers.  Reading the count as ambiguity
+        # would have thrown away a working transport.
+        grounder = StaticGrounder({"composer": _proposal()})
+        decision = resolve_target(_observe(input_candidate_count=2, input_ambiguous=False),
+                                  window=WINDOW, grounder=grounder)
+        assert decision["locate_source"] == "uia"
+        assert grounder.calls == 0
+
+    def test_an_ambiguous_flag_beats_a_single_candidate(self):
+        decision = resolve_target(_observe(input_candidate_count=1, input_ambiguous=True),
+                                  window=WINDOW, grounder=StaticGrounder({}))
+        assert decision["locate_source"] is None
+        assert decision["reason"] == "NO_TARGET"
 
     def test_an_older_receipt_without_a_count_still_counts_as_one(self):
         decision = resolve_target({"input_found": True}, window=WINDOW)

@@ -14,7 +14,9 @@ import os
 from pathlib import Path
 
 from agent_evolution_protocol.coordination import a11y
+from agent_evolution_protocol.coordination import input_routing
 from agent_evolution_protocol.coordination import uia_argv
+from agent_evolution_protocol.coordination import vision_grounding
 import re
 import secrets
 import shutil
@@ -136,7 +138,8 @@ class Driver(Protocol):
     def capture(self, profile: dict) -> str: ...
     def select_session(self, profile: dict) -> dict: ...
     def launch(self, profile: dict) -> None: ...
-    def deliver(self, profile: dict, message: str, event_id: str, *, urgent: bool = False) -> dict: ...
+    def deliver(self, profile: dict, message: str, event_id: str, *, urgent: bool = False,
+                composer_ratios: tuple[float, float] | None = None) -> dict: ...
 
 
 def annotate_elevation(report: dict) -> dict:
@@ -337,11 +340,20 @@ class PowerShellUiaDriver:
             raise RelayError("EXECUTABLE_MISSING")
         subprocess.Popen([str(executable)], cwd=str(executable.parent), close_fds=True)
 
-    def deliver(self, profile: dict, message: str, event_id: str, *, urgent: bool = False) -> dict:
+    def deliver(self, profile: dict, message: str, event_id: str, *, urgent: bool = False,
+                composer_ratios: tuple[float, float] | None = None) -> dict:
         args = self._target(profile) + [
             "-Mode", "compose" if profile["transport"] == "ocr" else "deliver",
             "-Text", message, "-EventId", event_id, "-ReadBackTimeoutSeconds", "5",
             "-SendMode", profile.get("send_mode", "enter")]
+        if composer_ratios is not None:
+            # Authorised by the router, not by the profile: the bounded geometry
+            # fallback only runs because something outside the adapter produced
+            # a box, and the adapter's own paste verification still has to pass
+            # before any send control is clicked.
+            ratio_x, ratio_y = composer_ratios
+            args += ["-AllowComposerGeometryFallback",
+                     "-ComposerXRatio", f"{ratio_x}", "-ComposerYRatio", f"{ratio_y}"]
         if urgent:
             args.append("-UrgentInterject")
         return annotate_elevation(self._run(UIA, args, timeout=75, env=self._ui_env(profile)))
@@ -395,7 +407,7 @@ def _preinput_receipt_retryable(existing: dict) -> bool:
         "URGENT_INTERJECT_UNAVAILABLE",
         "WINDOW_OR_INPUT_AMBIGUOUS", "NO_SAFE_COMPOSER",
         "SESSION_NOT_VERIFIED", "MODEL_NOT_VERIFIED",
-        "EXECUTOR_TOO_LOW",
+        "EXECUTOR_TOO_LOW", "ROUTE_REGION_UNUSABLE", "ROUTE_UNSUPPORTED_BY_DRIVER",
     }:
         return True
     if existing.get("state") != "SEND_UNCERTAIN":
@@ -411,11 +423,16 @@ def _preinput_receipt_retryable(existing: dict) -> bool:
               "ParameterBindingException" in error)))
 
 
-def _deliver(driver: Driver, profile: dict, message: str, event_id: str, *, urgent: bool) -> dict:
+def _deliver(driver: Driver, profile: dict, message: str, event_id: str, *, urgent: bool,
+             composer_ratios: tuple[float, float] | None = None) -> dict:
     """Call both new and legacy drivers without turning a legacy driver into a
     false urgent success.  Normal dispatch remains compatible with older
     adapters; urgent interjection requires an adapter that explicitly accepts
     the urgent keyword.
+
+    The same rule covers a located composer: an adapter that cannot take a
+    region must say so rather than drop it, because a route that is computed and
+    then ignored looks exactly like a route that was never needed.
     """
     import inspect
 
@@ -424,16 +441,60 @@ def _deliver(driver: Driver, profile: dict, message: str, event_id: str, *, urge
     except (TypeError, ValueError):
         parameters = {}
     supports_urgent = "urgent" in parameters
+    supports_region = "composer_ratios" in parameters
     if urgent and not supports_urgent:
         return {"status": "urgent-interject-unsupported", "interruption": False}
+    if composer_ratios is not None and not supports_region:
+        return {"status": "composer-region-unsupported", "interruption": False}
+    kwargs: dict = {}
     if supports_urgent:
-        return driver.deliver(profile, message, event_id, urgent=urgent)
-    return driver.deliver(profile, message, event_id)
+        kwargs["urgent"] = urgent
+    if supports_region and composer_ratios is not None:
+        kwargs["composer_ratios"] = composer_ratios
+    return driver.deliver(profile, message, event_id, **kwargs)
+
+
+def _window_from(observation: dict) -> vision_grounding.Region | None:
+    """The window box the observation was taken against, if it reported one.
+
+    A router cannot convert a 0-999 answer without a denominator, and a ratio
+    cannot be computed without a size, so an observation from an older executor
+    routes as "no geometry" instead of guessing a resolution.
+    """
+    size = observation.get("window_size") or {}
+    try:
+        width, height = int(size["width"]), int(size["height"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    return vision_grounding.Region(x=0, y=0, width=width, height=height)
+
+
+def _composer_ratios(region: dict | None,
+                     window: vision_grounding.Region | None) -> tuple[float, float] | None:
+    """Turn a window-relative box into the centre ratios the adapter accepts."""
+    if not region or window is None:
+        return None
+    try:
+        x, y = int(region["x"]), int(region["y"])
+        width, height = int(region["width"]), int(region["height"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    ratio_x = (x + width / 2) / window.width
+    ratio_y = (y + height / 2) / window.height
+    if not (0 < ratio_x < 1 and 0 < ratio_y < 1):
+        return None
+    return round(ratio_x, 4), round(ratio_y, 4)
 
 
 def run(profile: dict, message: str, *, event_id: str, receipt_path: Path,
         lock_path: Path, driver: Driver, allow_launch: bool = False,
-        poll_seconds: float = 1.5, urgent: bool = False) -> dict:
+        poll_seconds: float = 1.5, urgent: bool = False,
+        grounder=None, reference_region: dict | None = None,
+        min_confidence: float = vision_grounding.DEFAULT_MIN_CONFIDENCE) -> dict:
     if not EVENT.fullmatch(event_id) or not message.strip():
         raise ValueError("event_id and message required")
     if poll_seconds < 0.1:
@@ -520,12 +581,31 @@ def run(profile: dict, message: str, *, event_id: str, receipt_path: Path,
             _atomic(receipt_path, state)
             return state
         pid = observation.get("pid")
-        if not pid or (profile["transport"] == "uia" and observation.get("input_ambiguous")):
-            state.update(state="WINDOW_OR_INPUT_AMBIGUOUS")
+        if not pid:
+            state.update(state="WINDOW_OR_INPUT_AMBIGUOUS", route_reason="NO_PID")
             _atomic(receipt_path, state)
             return state
-        if profile["transport"] == "uia" and not observation.get("input_found"):
-            state.update(state="NO_SAFE_COMPOSER")
+        # Which leg located the input, and what it would take to use it.  This
+        # runs for every attempt, including the ones UIA settles, because a
+        # receipt that only records the interesting cases cannot answer "did we
+        # ask a model here?" after the fact.
+        window = _window_from(observation)
+        route = input_routing.resolve_target(
+            observation, window=window, grounder=grounder,
+            reference=vision_grounding.Region(**reference_region) if reference_region else None,
+            min_confidence=min_confidence)
+        state["route"] = route
+        if profile["transport"] == "uia" and route["locate_source"] != "uia":
+            # The uia transport types through a control UIA itself identified.
+            # A region from a model or a profile cannot be handed to
+            # ValuePattern, and the only alternative the adapter offers is a
+            # blind paste into whatever has focus -- which is why the located
+            # box is recorded here instead of acted on.
+            ambiguous = bool(observation.get("input_ambiguous")) or bool(observation.get("input_found"))
+            state.update(state="WINDOW_OR_INPUT_AMBIGUOUS" if ambiguous else "NO_SAFE_COMPOSER",
+                         located_by=route["locate_source"],
+                         located_region=route["region"],
+                         route_reason=route["reason"] or "TRANSPORT_CANNOT_USE_LOCATED_REGION")
             _atomic(receipt_path, state)
             return state
         state["pid"] = pid
@@ -567,15 +647,41 @@ def run(profile: dict, message: str, *, event_id: str, receipt_path: Path,
         state.update(state="SEND_ATTEMPTED", session_marker=profile["session_marker"],
                      model_marker=profile["model_marker"], challenge=nonce,
                      expected_ack=expected_ack, outgoing_chars=len(outgoing))
+        # A located region is only usable where the transport can act on one.
+        # The OCR compose path accepts a bounded, profiled geometry fallback and
+        # still verifies the paste before clicking send; the uia path has no
+        # such mode, which is why it deferred above instead of pasting blind.
+        composer_ratios = None
+        if route["locate_source"] in {"vision", "geometry"}:
+            composer_ratios = _composer_ratios(route.get("region"), window)
+            if composer_ratios is None:
+                state.update(state="ROUTE_REGION_UNUSABLE",
+                             located_by=route["locate_source"],
+                             located_region=route.get("region"),
+                             route_reason="NO_USABLE_RATIO")
+                _atomic(receipt_path, state)
+                return state
+            state["composer_ratios"] = list(composer_ratios)
+            state["located_by"] = route["locate_source"]
         # Persist before touching the UI: after a crash, a retry may not send again.
         _atomic(receipt_path, state)
         try:
-            sent = _deliver(driver, profile, outgoing, event_id, urgent=urgent)
+            sent = _deliver(driver, profile, outgoing, event_id, urgent=urgent,
+                            composer_ratios=composer_ratios)
         except Exception as exc:  # noqa: BLE001
             state.update(state="SEND_UNCERTAIN", error=str(exc)[:800])
             _atomic(receipt_path, state)
             return state
         state["send_report"] = sent
+        if sent.get("status") == "composer-region-unsupported":
+            # The router located the composer and the driver cannot use it.
+            # Nothing was typed, so this is a retryable deferral rather than an
+            # uncertain send -- but it is not a success either.
+            state.update(state="ROUTE_UNSUPPORTED_BY_DRIVER",
+                         reason="the driver cannot type into a located region; nothing was sent",
+                         located_by=route["locate_source"])
+            _atomic(receipt_path, state)
+            return state
         accepted_statuses = {"message-visible", "submitted-unconfirmed"}
         if urgent:
             accepted_statuses |= {"urgent-interject-visible", "urgent-interject-submitted"}
@@ -639,13 +745,32 @@ def main() -> int:
     parser.add_argument("--allow-launch", action="store_true")
     parser.add_argument("--urgent-interject", action="store_true",
                         help="use a profiled non-interrupting interject action while the agent is busy")
+    parser.add_argument("--route-endpoint",
+                        help="grounding service base URL; the router only consults it when UIA is not decisive")
+    parser.add_argument("--route-provider", default="mage_vl_cowork")
+    parser.add_argument("--route-reference",
+                        help="x,y,width,height of a configured composer region, used only as the last resort")
+    parser.add_argument("--route-min-confidence", type=float,
+                        default=vision_grounding.DEFAULT_MIN_CONFIDENCE)
     args = parser.parse_args()
     try:
         profile = load_profile(args.profile)
         message = args.message_file.read_text(encoding="utf-8")
+        grounder = None
+        if args.route_endpoint:
+            grounder = vision_grounding.HttpGrounder(args.route_endpoint,
+                                                     provider_id=args.route_provider)
+        reference = None
+        if args.route_reference:
+            parts = [int(part) for part in args.route_reference.split(",")]
+            if len(parts) != 4:
+                raise ValueError("--route-reference needs x,y,width,height")
+            reference = dict(zip(("x", "y", "width", "height"), parts))
         output = run(profile, message, event_id=args.event_id, receipt_path=args.receipt,
                      lock_path=args.lock, driver=PowerShellUiaDriver(), allow_launch=args.allow_launch,
-                     urgent=args.urgent_interject)
+                     urgent=args.urgent_interject, grounder=grounder,
+                     reference_region=reference,
+                     min_confidence=args.route_min_confidence)
         if output["state"] == "AGENT_REPLY_VERIFIED":
             from .presence import signal
             signal(args.lock.parent, agent=profile["agent"], state="online",
