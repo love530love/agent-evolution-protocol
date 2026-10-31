@@ -58,6 +58,12 @@ UIPI 会拦下所有输入注入。详见「剩余阻断」。
 `WINDOW_OR_TAB_LOCATED` 通过的含义只是"窗口找到了、截图读到了字"，
 **不等于**"消息会发给正确的会话"。这一点沿用 `docs/DESKTOP_SEND_AND_URGENT_INTERJECT.zh-CN.md` 的判定。
 
+上表的数字来自操作者命令（`coord-uia`）。调度引擎（`ui_fallback.run`）另跑了一次，
+同样到达 `MESSAGE_VISIBLE` 并拿回挑战应答：`send_status: message-visible`、
+`send_retry: paste+enter`、`composer_clear_polls: 16`、读回 `AEP-ACK: C0F5868E719945`。
+应答比引擎的 60 秒窗口晚到约一分钟，所以引擎自己记的是 `NO_REPLY_WITHIN_TIMEOUT`
+（`task_delivered: true`、`agent_accepted: false`）——见「调度路径实测」。
+
 ## 缺陷一：中文参数在命令行边界就被吞成 `?`
 
 子进程控制台代码页是 **ibm437**，所以 `-Text` / `-SessionLabel` / `-ComposerHint` /
@@ -231,6 +237,60 @@ lines_outside_our_message: ["ACK AEP-UI-PROBE-20261031T203037 | ACK AEP-UI-PROBE
 发送按钮按颜色可定位。`SPI_SETSCREENREADER` 让 Chromium 建树之后，ChatGPT 侧
 元素从 3 个变成 400 个，Qoder 侧同理。
 
+## 调度路径（`ui_fallback.run`）也通了，且先修了四件事
+
+上面那一条走的是**操作者命令**（`coord-uia`）。调度器和心跳走的是另一条代码
+`ui_fallback.run`，它更严格：要验会话、验模型，才允许输入。第一次真跑它是失败的，
+失败点逐层暴露了四个缺陷：
+
+### 缺陷七：打不动就先说，别烧掉 75 秒再谎称「可能发了」
+
+`annotate_elevation` 一直把 `drivable` / `blocked_by` 写在回执上，但**没人据此行动**。
+普通权限执行器对着提权客户端会走完整个 UI 尝试，最后记成
+`CEASED / SUBMISSION_UNCONFIRMED: possible send`——而 UIPI 保证一个字都没打进去。
+
+现在 `ui_fallback.run` 在观察到窗口之后、任何写操作之前判定，返回 `EXECUTOR_TOO_LOW`；
+`commander` 记成可续跑的 `DEFERRED`。两侧实测（探针的 `deliver` 故意抛异常，两种情况都不可能真打字）：
+
+| 执行器 | state | capture | deliver |
+|---|---|---|---|
+| 普通权限 | `EXECUTOR_TOO_LOW` / `TARGET_NEEDS_ELEVATION` | 0 | 0 |
+| 管理员 | 过闸门，走到 deliver 才被探针拦下 | 1 | 1 |
+
+### 缺陷八：profile 的会话标记和真实窗口差一个字
+
+```
+SESSION_LABEL_NOT_UNIQUE_IN_SIDEBAR: 0
+```
+
+对照 74,891 字符的真实读回：`赛事守冠执行` 0 次 / `赛事夺冠执行` 5 次；
+`FlagGems-sgIang` 0 次 / `FlagGems-sglang` 8 次。于是**每一次**调度都在会话校验处
+`DEFERRED`，且永远等不到 ready。profile 已按实测改正；`SESSION_NOT_VERIFIED` 回执现在
+写出找的是哪个字符串、在不在、读回多少字符。
+
+### 缺陷九：`transport: ocr` 已经不是该走的通道
+
+改对标记后仍失败在 `send_status: composer-not-confirmed`——OCR/几何兜底的 compose 通路
+读不回输入框内容，于是拒绝按 Enter（这是对的）。`transport` 改为 `uia` 后，同一段代码
+立刻得到 `message-visible` + `send_retry: paste+enter`。无障碍树能建起来之后，OCR 只该是退路。
+
+### 缺陷十：「已送达」不能因为「没回话」被抹掉
+
+消息 `message-visible` 之后等回复，超时后回执里 `task_delivered` 仍是初始的 `false`。
+现在 `task_delivered` 来自发送回执、`agent_accepted` 只认目标自己的应答，状态名改为
+`NO_REPLY_WITHIN_TIMEOUT`（只陈述确定的事实）。
+
+### 调度路径实测
+
+```
+send_status: message-visible   send_retry: paste+enter   composer_clear_polls: 16
+读回: AEP-ACK: C0F5868E719945      <- 正是那次的 expected_ack（反序校验串）
+```
+
+探针 20:54 发出，引擎 60 秒窗口内没等到回复，20:55 会话里出现了应答。
+**送达和应答都发生了，只是应答比窗口晚**——因此 `reply_timeout_seconds` 由 60 提到 120。
+迟到的应答目前**没有被回收**（没有只读步骤去把订单升级成已接受），这是下一步。
+
 ## 三块新机制（可用，有测试）
 
 ### 1. 信箱派工：`coord-assign`
@@ -267,9 +327,12 @@ step 2: review  -> done (beta)    _settled = True
 
 ## 未验证 / 未做
 
-- **端到端真发**：`INPUT_SUBMITTED` / `MESSAGE_VISIBLE` / `AGENT_ACK` 已达成（提权执行器，
-  `AEP-UI-PROBE-20261031T203037`）。但**只跑通了这一条路径**：`--urgent-interject` 没有在
-  真实忙碌会话上验过，`codebuddy_cn` 没有实测，跨重启的时间线也没有。
+- **端到端真发**：`INPUT_SUBMITTED` / `MESSAGE_VISIBLE` / `AGENT_ACK` 已达成，两条代码都验过——
+  操作者命令（`AEP-UI-PROBE-20261031T203037`）和调度引擎（`AEP-SCHED-PROBE-20261031T1`，
+  挑战应答 `AEP-ACK:C0F5868E719945`）。但**只跑通了这一条路径**：`--urgent-interject`
+  没有在真实忙碌会话上验过，`codebuddy_cn` 没有实测，跨重启的时间线也没有。
+- **迟到的应答没有被回收**：`NO_REPLY_WITHIN_TIMEOUT` 之后没有只读步骤去读回 `expected_ack`
+  并把订单升级成已接受。现在只能靠人再看一眼。
 - **`TASK_RESULT_READBACK`**：能读回屏幕文本，但"按任务号取回结果并判定完成"还没有读取器。
 - **紧急插话**：`--urgent-interject` 有测试，且插话提示现在**能被 OCR 识别**（`interject_hits` 命中），
   但**没有在真实忙碌会话上跑过**。代码不会点停止按钮。

@@ -170,6 +170,29 @@ def annotate_elevation(report: dict) -> dict:
     return report
 
 
+def drivability_block(observation: dict) -> dict:
+    """Return the deferral fields when this executor provably cannot drive.
+
+    ``annotate_elevation`` already puts the verdict on the observation, but
+    nothing acted on it: an unelevated executor pointed at an elevated client
+    spent the full 75-second UI attempt, then recorded ``CEASED`` with
+    ``SUBMISSION_UNCONFIRMED: possible send``.  That note is the worst of both
+    worlds -- it costs a minute, and it claims a send *may* have happened when
+    UIPI guarantees that nothing was typed at all.
+
+    An empty dict means "no objection", including on hosts where the check is
+    unavailable, so this can never become a new way to block delivery.
+    """
+    if not observation or observation.get("drivable") is not False:
+        return {}
+    blocked = {"drivable": False,
+               "target_elevation": observation.get("target_elevation"),
+               "executor_elevation": observation.get("executor_elevation")}
+    if observation.get("blocked_by"):
+        blocked["blocked_by"] = observation["blocked_by"]
+    return blocked
+
+
 def profile_args(profile: dict) -> list[str]:
     """Adapter flags implied by a UI profile.
 
@@ -372,6 +395,7 @@ def _preinput_receipt_retryable(existing: dict) -> bool:
         "URGENT_INTERJECT_UNAVAILABLE",
         "WINDOW_OR_INPUT_AMBIGUOUS", "NO_SAFE_COMPOSER",
         "SESSION_NOT_VERIFIED", "MODEL_NOT_VERIFIED",
+        "EXECUTOR_TOO_LOW",
     }:
         return True
     if existing.get("state") != "SEND_UNCERTAIN":
@@ -449,6 +473,18 @@ def run(profile: dict, message: str, *, event_id: str, receipt_path: Path,
                 _atomic(receipt_path, state)
                 return state
             state["launched"] = True
+        # Refuse before spending the attempt, not after.  This runs before the
+        # busy/readiness checks on purpose: when the executor cannot drive the
+        # window at all, "busy, wait for ready" is an answer that can never
+        # become true, and a supervisor polling on it would wait forever.
+        blocked = drivability_block(observation)
+        if blocked:
+            state.update(state="EXECUTOR_TOO_LOW",
+                         pid=observation.get("pid"),
+                         reason="UIPI refuses input from a lower integrity level, so nothing was typed",
+                         hint=observation.get("hint", ""), **blocked)
+            _atomic(receipt_path, state)
+            return state
         # A visible window is not necessarily ready for another task.  In
         # particular, Qoder/WorkBuddy can keep the composer visible while a
         # tool run is still active.  Never type over that run: defer and let
@@ -501,7 +537,15 @@ def run(profile: dict, message: str, *, event_id: str, receipt_path: Path,
             before = driver.capture(profile)
         if not _evidence_present(before, profile["session_marker"],
                                  profile.get("session_evidence_markers", [])):
-            state.update(state="SESSION_NOT_VERIFIED")
+            # Record what was looked for.  A profile whose marker does not match
+            # the live window is indistinguishable from "the session is gone"
+            # unless the receipt names the marker, and a one-character typo in
+            # a local profile then stalls every tick forever.
+            state.update(state="SESSION_NOT_VERIFIED",
+                         session_marker=profile["session_marker"],
+                         session_evidence_markers=list(profile.get("session_evidence_markers", [])),
+                         session_marker_present=bool(profile["session_marker"] in before),
+                         captured_chars=len(before))
             _atomic(receipt_path, state)
             return state
         if not _evidence_present(before, profile["model_marker"],
@@ -545,6 +589,12 @@ def run(profile: dict, message: str, *, event_id: str, receipt_path: Path,
             state.update(state="SEND_UNCERTAIN")
             _atomic(receipt_path, state)
             return state
+        # A visible message is delivered whether or not the reply arrives.
+        # Leaving task_delivered at its initial False made a delivered message
+        # read as undelivered, which is the same false negative that invites a
+        # duplicate send.  Acceptance stays separate: only the target's own
+        # token sets agent_accepted.
+        state["task_delivered"] = sent.get("task_delivered") is True
         state["state"] = "WAITING_REPLY"
         _atomic(receipt_path, state)
         deadline = time.monotonic() + profile["reply_timeout_seconds"]
@@ -569,7 +619,12 @@ def run(profile: dict, message: str, *, event_id: str, receipt_path: Path,
                              replied_at=_utc())
                 break
         else:
-            state.update(state="REPLY_TIMEOUT_UNCERTAIN")
+            # The old name was REPLY_TIMEOUT_UNCERTAIN, which mixed up two
+            # claims: whether the message arrived and whether the target
+            # answered.  The state now names only the certain fact -- no reply
+            # arrived in time -- and leaves the delivery claim to
+            # task_delivered, which the send receipt already proved.
+            state.update(state="NO_REPLY_WITHIN_TIMEOUT")
         _atomic(receipt_path, state)
         return state
 

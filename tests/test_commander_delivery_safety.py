@@ -236,6 +236,34 @@ class CommanderDeliverySafetyTests(unittest.TestCase):
         self.assertIn("PREINPUT_NOT_READY", result["attempts"][-1]["note"])
         profiled.assert_called_once()
 
+    def test_executor_too_low_is_a_retryable_deferral_not_a_possible_send(self):
+        # The receipt proves nothing was typed (UIPI refuses input from a lower
+        # integrity level), so CEASED/"possible send" would be both wasteful and
+        # false -- and would leave the order unresumable after the operator
+        # elevates the executor.
+        order = commander.submit_order(self.root, target="qoder", task="notice",
+                                       text="Read this warning", sender="codex")
+        profile = self.root / "ui_profiles" / "qoder.json"
+        profile.parent.mkdir(parents=True)
+        profile.write_text("{}", encoding="utf-8")
+        client = {"agent": "qoder", "windows": [{"pid": 123}],
+                  "unique": True, "anchored": False}
+        receipt = {"status": "EXECUTOR_TOO_LOW", "task_delivered": False,
+                   "agent_accepted": False, "wait_for_ready": False,
+                   "drivable": False, "blocked_by": "TARGET_NEEDS_ELEVATION",
+                   "target_elevation": "unknown", "executor_elevation": "standard"}
+        with (patch.object(commander.registry, "discover", return_value={"clients": [client]}),
+              patch.object(commander, "_pick_transport", return_value=("profiled-ui", {})),
+              patch.object(commander, "_profiled_deliver", return_value=receipt)):
+            result = commander.dispatch(self.root, order=order)
+        self.assertEqual(result["state"], "DEFERRED")
+        attempt = result["attempts"][-1]
+        self.assertIn("EXECUTOR_TOO_LOW", attempt["note"])
+        self.assertEqual(attempt["receipt"]["blocked_by"], "TARGET_NEEDS_ELEVATION")
+        with patch.object(commander, "dispatch", return_value=order) as dispatch:
+            commander.resume_deferred(self.root, order_id=order["id"])
+        self.assertEqual(dispatch.call_args.kwargs["order"]["event_id"], order["event_id"])
+
     def test_tick_resumes_only_after_readiness_edge(self):
         order = commander.submit_order(self.root, target="qoder", task="notice",
                                        text="Read this warning", sender="codex")

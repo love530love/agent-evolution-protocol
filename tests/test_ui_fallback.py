@@ -18,7 +18,8 @@ PROFILE = {"agent": "fake_agent", "process": "FakeAgent", "title": "Fake Agent",
 class FakeDriver:
     def __init__(self, *, model=True, session=True, input_found=True, no_window=False,
                  send_status="submitted-unconfirmed", activity_state="ready",
-                 interject_ready=False, interruption=False):
+                 interject_ready=False, interruption=False, drivable=None,
+                 blocked_by=None, answers=True, delivered=None):
         self.model = model
         self.session = session
         self.input_found = input_found
@@ -27,20 +28,33 @@ class FakeDriver:
         self.activity_state = activity_state
         self.interject_ready = interject_ready
         self.interruption = interruption
+        self.drivable = drivable
+        self.blocked_by = blocked_by
+        self.answers = answers
+        self.delivered = delivered
         self.sent = 0
         self.launched = 0
         self.selected = 0
+        self.captured = 0
         self.expected_ack = ""
 
     def observe(self, profile):
         if self.no_window:
             return {"status": "NO_WINDOW"}
-        return {"status": "window-observed", "pid": 1234, "input_found": self.input_found,
-                "input_ambiguous": False, "activity_state": self.activity_state,
-                "interject_evidence": {"ready": self.interject_ready,
-                                       "interrupt_only": False}}
+        report = {"status": "window-observed", "pid": 1234, "input_found": self.input_found,
+                  "input_ambiguous": False, "activity_state": self.activity_state,
+                  "interject_evidence": {"ready": self.interject_ready,
+                                         "interrupt_only": False}}
+        if self.drivable is not None:
+            report["drivable"] = self.drivable
+            report["target_elevation"] = "unknown" if not self.drivable else "standard"
+            report["executor_elevation"] = "standard"
+            if self.blocked_by:
+                report["blocked_by"] = self.blocked_by
+        return report
 
     def capture(self, profile):
+        self.captured += 1
         text = ("Original task chat " if self.session else "Other chat ")
         text += "Model X" if self.model else "Different model"
         if self.expected_ack:
@@ -58,6 +72,11 @@ class FakeDriver:
 
     def deliver(self, profile, message, event_id, *, urgent=False):
         self.sent += 1
+        if not self.answers:
+            return {"status": self.send_status,
+                    "task_delivered": self.delivered is True,
+                    "interruption": self.interruption,
+                    "interject_action": "Interject" if urgent else ""}
         import re
         match = re.search(r"校验串 ([0-9A-F]+) 的倒序", message)
         assert match
@@ -87,6 +106,22 @@ class UiFallbackTests(unittest.TestCase):
         driver = FakeDriver(model=False)
         result = self.run_relay(driver)
         self.assertEqual(result["state"], "MODEL_NOT_VERIFIED")
+        self.assertEqual(driver.sent, 0)
+
+    def test_unverified_session_names_the_marker_it_looked_for(self):
+        # "session not verified" and "the profile marker is a typo" look
+        # identical from outside unless the receipt says which string was
+        # required.  Measured live: a profile said 赛事守冠执行 while the window
+        # showed 赛事夺冠执行, and every scheduled delivery deferred forever.
+        profile = {**PROFILE, "session_marker": "Original task chatX"}
+        driver = FakeDriver(session=False)
+        result = ui.run(profile, "Analyze the error", event_id="EVT-MARKER-1",
+                        receipt_path=self.receipt, lock_path=self.lock,
+                        driver=driver, poll_seconds=0.1)
+        self.assertEqual(result["state"], "SESSION_NOT_VERIFIED")
+        self.assertEqual(result["session_marker"], "Original task chatX")
+        self.assertFalse(result["session_marker_present"])
+        self.assertGreater(result["captured_chars"], 0)
         self.assertEqual(driver.sent, 0)
 
     def test_selects_original_session_then_confirms_distinct_reply(self):
@@ -172,6 +207,77 @@ class UiFallbackTests(unittest.TestCase):
 
     def test_enter_is_the_profile_default(self):
         self.assertEqual(PROFILE["send_mode"], "enter")
+
+    def test_a_visible_message_counts_as_delivered_even_without_a_reply(self):
+        # Measured on the scheduler engine: send_status message-visible, then
+        # the reply never came, and the receipt still said task_delivered false.
+        # Delivered and accepted are separate claims and must not collapse.
+        profile = {**PROFILE, "reply_timeout_seconds": 0.2}
+        driver = FakeDriver(send_status="message-visible", answers=False, delivered=True)
+        result = ui.run(profile, "Analyze the error", event_id="EVT-NOREPLY-1",
+                        receipt_path=self.receipt, lock_path=self.lock,
+                        driver=driver, poll_seconds=0.1)
+        self.assertEqual(result["state"], "NO_REPLY_WITHIN_TIMEOUT")
+        self.assertTrue(result["task_delivered"])
+        self.assertFalse(result["agent_accepted"])
+
+    def test_an_unconfirmed_send_is_not_promoted_to_delivered(self):
+        profile = {**PROFILE, "reply_timeout_seconds": 0.2}
+        driver = FakeDriver(send_status="submitted-unconfirmed", answers=False, delivered=False)
+        result = ui.run(profile, "Analyze the error", event_id="EVT-UNCONF-1",
+                        receipt_path=self.receipt, lock_path=self.lock,
+                        driver=driver, poll_seconds=0.1)
+        self.assertEqual(result["state"], "NO_REPLY_WITHIN_TIMEOUT")
+        self.assertFalse(result["task_delivered"])
+        self.assertFalse(result["agent_accepted"])
+
+    def test_undrivable_window_is_refused_before_any_ui_work(self):
+        # An unelevated executor pointed at an elevated client used to spend the
+        # full 75-second attempt and then record "possible send".  UIPI is not a
+        # race: nothing can have been typed, so refuse before capturing.
+        driver = FakeDriver(drivable=False, blocked_by="TARGET_NEEDS_ELEVATION")
+        result = ui.run(PROFILE, "Analyze the error", event_id="EVT-ELEV-1",
+                        receipt_path=self.receipt, lock_path=self.lock,
+                        driver=driver, poll_seconds=0.1)
+        self.assertEqual(result["state"], "EXECUTOR_TOO_LOW")
+        self.assertEqual(result["blocked_by"], "TARGET_NEEDS_ELEVATION")
+        self.assertEqual((result["target_elevation"], result["executor_elevation"]),
+                         ("unknown", "standard"))
+        self.assertEqual(result["pid"], 1234)  # say which window was refused
+        self.assertEqual((driver.captured, driver.sent), (0, 0))
+
+    def test_a_drivability_refusal_is_retryable_after_the_executor_is_elevated(self):
+        driver = FakeDriver(drivable=False, blocked_by="TARGET_NEEDS_ELEVATION")
+        first = ui.run(PROFILE, "Analyze the error", event_id="EVT-ELEV-RETRY-1",
+                       receipt_path=self.receipt, lock_path=self.lock,
+                       driver=driver, poll_seconds=0.1)
+        self.assertEqual(first["state"], "EXECUTOR_TOO_LOW")
+        # Same event id: nothing was typed, so a retry cannot duplicate a message.
+        driver.drivable = True
+        second = ui.run(PROFILE, "Analyze the error", event_id="EVT-ELEV-RETRY-1",
+                        receipt_path=self.receipt, lock_path=self.lock,
+                        driver=driver, poll_seconds=0.1)
+        self.assertEqual(second["state"], "AGENT_REPLY_VERIFIED")
+        self.assertEqual(driver.sent, 1)
+
+    def test_a_missing_verdict_is_not_a_refusal(self):
+        # The check is Windows-only and needs a pid.  Absent evidence must never
+        # become a new way to block delivery.
+        self.assertEqual(ui.drivability_block({}), {})
+        self.assertEqual(ui.drivability_block({"drivable": True}), {})
+        self.assertEqual(ui.drivability_block({"status": "NO_WINDOW"}), {})
+        self.assertEqual(ui.drivability_block(None), {})
+
+    def test_the_refusal_carries_the_verdict_without_inventing_one(self):
+        blocked = ui.drivability_block({"drivable": False,
+                                        "target_elevation": "elevated",
+                                        "executor_elevation": "standard",
+                                        "blocked_by": "TARGET_NEEDS_ELEVATION"})
+        self.assertEqual(blocked, {"drivable": False, "target_elevation": "elevated",
+                                   "executor_elevation": "standard",
+                                   "blocked_by": "TARGET_NEEDS_ELEVATION"})
+        self.assertNotIn("blocked_by", ui.drivability_block(
+            {"drivable": False, "target_elevation": "unknown", "executor_elevation": "standard"}))
 
     def test_busy_urgent_interject_requires_explicit_non_interrupting_action(self):
         profile = {**PROFILE, "allow_busy_interject": True}

@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.6.5 — The scheduler can deliver, and it refuses without burning the attempt
+
+- `commander.provider_readback` had the polarity backwards: it was a whitelist
+  of failure statuses with everything else falling through to
+  `INPUT_SUBMITTED`. Measured, all four of these came back as proof that input
+  was entered: `urgent-interject-unavailable`, `composer-not-confirmed`,
+  `composer-confirmed-no-send`, `LAUNCH_FORBIDDEN`. A receipt now has to earn
+  `INPUT_SUBMITTED` (`input_verified` / `composer_verified` /
+  `submitted-unconfirmed`), otherwise it is `FAILED` and keeps the status as
+  the error.
+- `ui_fallback.run` acts on the drivability verdict instead of only reporting
+  it. An unelevated executor pointed at an elevated client used to run the
+  whole UI attempt and then record `CEASED` / "possible send" -- a minute
+  spent, and a claim that something may have been typed when UIPI guarantees
+  nothing was. It now returns `EXECUTOR_TOO_LOW` before any capture, and the
+  commander records that as a resumable `DEFERRED`. Measured both ways with a
+  probe whose `deliver` raises: standard executor -> refused, 0 captures,
+  0 delivers; elevated -> past the gate, 1 capture, 1 deliver.
+- `SESSION_NOT_VERIFIED` now names the marker it looked for, whether it was
+  present, and how many characters were captured. A local profile said
+  赛事守冠执行 while the window shows 赛事夺冠执行 (5 occurrences) and listed an
+  OCR-mangled `FlagGems-sgIang` where the window shows `FlagGems-sglang`
+  (8 occurrences); every scheduled delivery deferred at session verification
+  and could never become ready. The live profile is corrected.
+- The same profile used `transport: ocr`, so the scheduler took the
+  OCR/geometry composer path, which cannot confirm the composer
+  (`send_status: composer-not-confirmed`, and it correctly refused to press
+  Enter). With `transport: uia` -- the path the operator command already proved
+  -- the scheduler delivered: `message-visible`, `send_retry: paste+enter`,
+  `composer_clear_polls: 16`, and the challenge-response came back as
+  `AEP-ACK: C0F5868E719945`.
+- Delivered and accepted are no longer the same field. A visible send used to
+  leave `task_delivered` at its initial `false` when the reply did not arrive in
+  time; `task_delivered` now comes from the send receipt and `agent_accepted`
+  only from the target's own answer. The state is renamed
+  `NO_REPLY_WITHIN_TIMEOUT` because it states only what is certain.
+  `reply_timeout_seconds` goes 60 -> 120 on measurement: the reply arrived
+  about a minute later, outside the old window.
+
 ## 0.6.4 — An elevated executor can now deliver, and its receipt survives the trip
 
 - `Write-Report` no longer hands the receipt to PowerShell's output stream, which

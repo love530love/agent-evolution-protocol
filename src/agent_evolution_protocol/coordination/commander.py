@@ -47,21 +47,33 @@ ORDER_STATES = ("DEPOSITED", "DEFERRED", "DISPATCHING", "WINDOW_FOUND", "INPUT_S
 
 
 def provider_readback(provider: str, event_id: str, raw: dict) -> dict:
-    """Normalize adapter receipts; visibility never becomes an ACK."""
+    """Normalize adapter receipts; visibility never becomes an ACK.
+
+    The default is "not sent", not "sent".  This used to be a whitelist of
+    failure statuses with everything else falling through to
+    ``INPUT_SUBMITTED``, which meant every status nobody had taught it about --
+    ``urgent-interject-unavailable``, ``composer-not-confirmed``,
+    ``composer-confirmed-no-send``, ``LAUNCH_FORBIDDEN`` -- was recorded as
+    proof that input had been entered.  A receipt has to earn
+    ``INPUT_SUBMITTED``: either the adapter says the text was verified in the
+    composer, or it reports an unconfirmed submit.  Anything else is ``FAILED``
+    with the status kept as the error, so the reason survives.
+    """
     if not isinstance(raw, dict):
         return make_readback(provider=provider, event_id=event_id, state="UNKNOWN", observed=False, error="adapter receipt is not an object")
     if raw.get("agent_accepted") is True:
         state, ack = "AGENT_ACK", True
     elif raw.get("task_delivered") is True:
         state, ack = "MESSAGE_VISIBLE", False
-    elif raw.get("status") in {"NO_RECEIPT", "ADAPTER_ERROR", "ADAPTER_MISSING", "PROFILE_DELIVERY_FAILED", "SEND_CONTROL_NOT_FOUND", "send-control-not-found", "input-not-confirmed"}:
-        state, ack = "FAILED", False
-    else:
+    elif raw.get("input_verified") is True or raw.get("composer_verified") is True \
+            or raw.get("status") == "submitted-unconfirmed":
         state, ack = "INPUT_SUBMITTED", False
+    else:
+        state, ack = "FAILED", False
     value = make_readback(provider=provider, event_id=event_id, state=state,
                           observed=bool(raw.get("task_delivered") or raw.get("agent_accepted")),
                           ack=ack, evidence=list(raw.get("evidence", [])) if isinstance(raw.get("evidence", []), list) else [],
-                          error=str(raw.get("error", "")))
+                          error=str(raw.get("error", "")) or (str(raw.get("status", "")) if state == "FAILED" else ""))
     value["raw"] = raw
     value["accepted"] = readback_accepted(value)
     return value
@@ -336,7 +348,7 @@ def _profiled_deliver(root: Path, agent: str, text: str, event_id: str, *,
             driver=ui_fallback.PowerShellUiaDriver(), allow_launch=allow_launch,
             urgent=urgent_interject,
         )
-        return {
+        receipt = {
             "status": result.get("state", "UNKNOWN"),
             "task_delivered": result.get("task_delivered") is True,
             "agent_accepted": result.get("agent_accepted") is True,
@@ -344,6 +356,13 @@ def _profiled_deliver(root: Path, agent: str, text: str, event_id: str, *,
             "evidence": str(receipt_path),
             "wait_for_ready": result.get("state") in {"AGENT_BUSY", "ACTIVITY_UNCONFIRMED"},
         }
+        # Carry the integrity verdict into the durable order history.  Without
+        # it the receipt says "no input" and leaves the reader to work out that
+        # the reason was UIPI rather than a client that would not focus.
+        for key in ("drivable", "blocked_by", "target_elevation", "executor_elevation", "reason"):
+            if result.get(key) not in (None, ""):
+                receipt[key] = result[key]
+        return receipt
     except Exception as exc:  # noqa: BLE001 - profile failures must never fall through to blind UI input
         return {"status": "PROFILE_DELIVERY_FAILED", "task_delivered": False,
                 "error": str(exc)[:800]}
@@ -544,6 +563,7 @@ def _preinput_retryable(order: dict) -> bool:
                     "AGENT_BUSY", "URGENT_INTERJECT_UNAVAILABLE", "ACTIVITY_UNCONFIRMED", "NO_WINDOW",
                     "LAUNCH_UNVERIFIED", "WINDOW_OR_INPUT_AMBIGUOUS",
                     "NO_SAFE_COMPOSER", "SESSION_NOT_VERIFIED", "MODEL_NOT_VERIFIED",
+                    "EXECUTOR_TOO_LOW",
                     }
                     or _receipt_proves_preinput(row.get("receipt", {}))
                     or (
@@ -714,9 +734,18 @@ def _dispatch(root: Path, *, order: dict) -> dict:
     # it may have reached the agent without a readable echo.
     if receipt.get("status") in ("AGENT_BUSY", "URGENT_INTERJECT_UNAVAILABLE", "ACTIVITY_UNCONFIRMED", "NO_WINDOW",
                                   "LAUNCH_UNVERIFIED", "WINDOW_OR_INPUT_AMBIGUOUS",
-                                  "NO_SAFE_COMPOSER", "SESSION_NOT_VERIFIED", "MODEL_NOT_VERIFIED"):
+                                  "NO_SAFE_COMPOSER", "SESSION_NOT_VERIFIED", "MODEL_NOT_VERIFIED",
+                                  "EXECUTOR_TOO_LOW"):
+        note = "PREINPUT_NOT_READY: observe again after the target becomes ready"
+        if receipt.get("status") == "EXECUTOR_TOO_LOW":
+            # UIPI is not a race and not a slow client: the receipt proves no
+            # input happened, so this is a deferral an operator can clear by
+            # elevating the executor -- not a CEASED order whose note says a
+            # send may have happened.
+            note = ("EXECUTOR_TOO_LOW: UIPI refuses input from a lower integrity level; "
+                    "nothing was typed -- start the executor elevated, then resume")
         return _record_attempt(root, order, state="DEFERRED", transport=transport, receipt=receipt,
-                               note="PREINPUT_NOT_READY: observe again after the target becomes ready")
+                               note=note)
     if receipt.get("status") in ("NO_RECEIPT", "ADAPTER_ERROR", "ADAPTER_MISSING", "PROFILE_DELIVERY_FAILED", "SEND_CONTROL_NOT_FOUND", "send-control-not-found", "input-not-confirmed") or receipt.get("returncode", 0) != 0:
         return _record_attempt(root, order, state="CEASED", transport=transport, receipt=receipt,
                                note="DELIVERY_UNPROVEN: adapter failed; manual diagnosis required")
