@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.6.4 — An elevated executor can now deliver, and its receipt survives the trip
+
+- `Write-Report` no longer hands the receipt to PowerShell's output stream, which
+  put the console encoder in the path; an elevated process can start with an OEM
+  code page that cannot represent Chinese. Measured on the same run: the
+  `-OutFile` capture was perfect UTF-8 (52,750 non-ASCII bytes, 7 `?`) while the
+  JSON receipt arrived with every Chinese character as `?`. The work had
+  succeeded and only the echo was destroyed. Bytes are now written directly to
+  standard output.
+- `coord-uia` goes through `uia_argv.run()`. Elevated Python reports
+  `locale.getpreferredencoding() == cp1252` while the adapter writes UTF-8, so
+  `subprocess.run(text=True)` killed its reader thread on the first Chinese
+  character and handed back `stdout=None` (`AttributeError: 'NoneType' object
+  has no attribute 'splitlines'`). `transcript_patrol`, `octo_transport` and
+  `wake_daemon` had the same pattern and got an explicit `encoding="utf-8"`.
+- The composer check polls instead of checking once, and retries with a paste
+  when it does not clear. Checking once right after the send action produced a
+  false negative -- the message had been delivered and the receipt said
+  `submitted-unconfirmed`, which invites a duplicate send. The retry is not a
+  timing patch: `ValuePattern.SetValue` updates the visual editor without firing
+  the web app's input event, so its send control stays disabled and Enter does
+  nothing. Receipts now carry `composer_clear_polls` and `send_retry`.
+- Measured end to end on elevated Qoder (pid 22796): `status: message-visible`,
+  `task_delivered: True`, `input_found: True`, `input_candidate_count: 2`,
+  `write_method: uia-valuepattern`, `send_retry: paste+enter`,
+  `composer_clear_polls: 36`, `drivable: True`, `path_verified: True`. The event
+  id then read back from the session with the agent's own reply outside our
+  message: `ACK AEP-UI-PROBE-20261031T203037`. That is `INPUT_SUBMITTED`,
+  `MESSAGE_VISIBLE` and `AGENT_ACK` on the evidence ladder.
+
 ## 0.6.3 — One command and the scheduler must read the same profile
 
 - `coord-uia` read `cli.UIA_CLIENTS`, a hardcoded table that still named Qoder

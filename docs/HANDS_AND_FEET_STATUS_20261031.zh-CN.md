@@ -1,6 +1,6 @@
 # 「手—脚—心脏」落地现状与阻断点（2026-10-31）
 
-更新：2026-10-31（第二次修订，纠正上一版的错误结论）
+更新：2026-10-31 晚（第三次修订，`INPUT_SUBMITTED` 起已实测达成）
 范围：`federation.commander_adapter`、`federation.assignment`、`federation.supervisor`、
 `federation.intake`、`coordination.uia_argv`、`wake_adapters/uia_session.ps1`、`windows_ocr_compat.ps1`
 
@@ -35,21 +35,25 @@ ready_hits: ["发送", "Send", "Submit"]      <- 中文 marker 第一次匹配�
 interject_hits: ["插话", "继续执行并发送"]  <- 插话提示也能识别了
 ```
 
-但 `INPUT_SUBMITTED` 仍**未达成**，原因换成了另一个、更明确的缺口：
+但 `INPUT_SUBMITTED` 仍未达成，原因换成了另一个、更明确的缺口：
 Qoder 以管理员运行，普通权限的执行器读不到它的令牌（`target_elevation: unknown`），
 UIPI 会拦下所有输入注入。详见「剩余阻断」。
+
+**第三次修订（当晚）**：把执行器提到管理员后，这个缺口补上了。同一条命令、同一个窗口、
+同一个 `AEP-UI-PROBE-20261031T203037`，一次跑通到 `AGENT_ACK`。详见
+「提权执行器实测：`INPUT_SUBMITTED` → `MESSAGE_VISIBLE` → `AGENT_ACK`」。
 
 ## 证据阶梯现状
 
 | 阶梯 | 状态 | 证据 |
 |---|---|---|
 | `CLIENT_BOUND` | 通过 | `visible_windows()` 枚举到 14 个窗口，含 Qoder 22796 |
-| `WINDOW_OR_TAB_LOCATED` | 通过 | `pid: 22796`、`title: Qoder`、`transcript_chars: 3046`、`transcript_source: ocr` |
+| `WINDOW_OR_TAB_LOCATED` | 通过 | `pid: 22796`、`title: Qoder`、`transcript_chars: 75210`、`transcript_source: uia` |
 | `ACTIVITY_STATE_READ` | 通过 | `state: ready`、`ready_hits: ["发送","Send","Submit"]` |
-| `INPUT_SUBMITTED` | **未达成** | `input_found: false`；`drivable: false`，阻断原因是执行器权限（见下） |
-| `MESSAGE_VISIBLE` | 未达成 | 依赖上一步 |
-| `AGENT_ACK` | 未达成 | 依赖上一步 |
-| `TASK_RESULT_READBACK` | 未达成 | 依赖上一步（但 `observe` 已能读回屏幕文本） |
+| `INPUT_SUBMITTED` | 通过（2026-10-31 晚） | `input_found: true`、`input_candidate_count: 2`、`write_method: uia-valuepattern`、`input_verified: true`、`composer_cleared: true` |
+| `MESSAGE_VISIBLE` | 通过（2026-10-31 晚） | `status: message-visible`、`task_delivered: true`、`send_method: enter`、`send_retry: paste+enter`、`composer_clear_polls: 36` |
+| `AGENT_ACK` | 通过（2026-10-31 晚） | 读回会话：`ACK AEP-UI-PROBE-20261031T203037`，出现在我们自己那句话之外（`lines_outside_our_message: 1`），时间戳 20:31 |
+| `TASK_RESULT_READBACK` | 部分 | `observe` 能读回屏幕文本（`transcript_chars: 75210`）；「按 ACK 里的任务号取回结果」还没有对应的读取器 |
 
 `WINDOW_OR_TAB_LOCATED` 通过的含义只是"窗口找到了、截图读到了字"，
 **不等于**"消息会发给正确的会话"。这一点沿用 `docs/DESKTOP_SEND_AND_URGENT_INTERJECT.zh-CN.md` 的判定。
@@ -151,6 +155,82 @@ drivable: false                  blocked_by: TARGET_NEEDS_ELEVATION
 所以现在 `INPUT_SUBMITTED` 只剩一个条件：**执行器以管理员启动**。
 `deliver` 第一次真跑仍然要有人在场——它会真的往会话里打字。
 
+## 提权执行器实测：`INPUT_SUBMITTED` → `MESSAGE_VISIBLE` → `AGENT_ACK`
+
+用 `Start-Process -Verb RunAs` 把执行器提到管理员，其余不变（同一个窗口、同一条命令、
+同一个事件号）。这一跑之前，先修掉三个各自独立、且互相掩盖的缺陷——它们让"已经送达"
+在回执上看起来像"没送到"。
+
+### 缺陷四：回执在出口处被控制台编码器毁掉
+
+`Write-Report` 把 JSON 交给 PowerShell 的输出流，于是控制台编码器进了链路。提权进程的
+OEM 代码页表示不了中文。实测对照：
+
+```
+-OutFile 落盘的采集文件：52,750 个非 ASCII 字节，仅 7 个 '?'   <- 完美 UTF-8
+同一份 JSON 回执走 stdout：中文全部变成 '?'                     <- 只有回显被毁
+```
+
+工作成功了，只有回执被毁——这种证据比没有证据更坏，因为它指向错误的方向。
+修法：`Write-Report` 直接向标准输出写字节，绕开编码器。
+
+```powershell
+$bytes = [System.Text.UTF8Encoding]::new($false).GetBytes($json + "`n")
+$stream = [Console]::OpenStandardOutput()
+$stream.Write($bytes, 0, $bytes.Length)
+$stream.Flush()
+```
+
+### 缺陷五：`coord-uia` 在提权下崩溃
+
+提权后 `locale.getpreferredencoding()` 变成 **cp1252**（非提权时是 UTF-8），
+而适配器写的是 UTF-8 中文。`subprocess.run(text=True)` 的读线程死在第一个中文字符上，
+`stdout` 变成 `None`：
+
+```
+AttributeError: 'NoneType' object has no attribute 'splitlines'
+```
+
+修法：改走 `uia_argv.run()`——和驱动器同一个执行器，理由也一样（非 ASCII 的 `-Text`
+过不了控制台代码页；回执固定 UTF-8，不管是谁起的进程）。另外三处
+（`transcript_patrol`、`octo_transport`、`wake_daemon`）是同一个模式的同一类缺陷，
+一并加了显式 `encoding="utf-8"`：缺陷在模式里，不在某一条命令上。
+
+### 缺陷六：发送只校验一次，而且校验得太早
+
+会话正文**本来就包含输入框**，所以读回循环可能第一次轮询就命中，而应用还没处理发送。
+此时 composer 检查只跑一次、看到事件号还在框里，就报 `submitted-unconfirmed`——
+消息其实已经送达。**这里的假阴性比假阳性更坏：它会诱发重复发送。**
+
+现在的顺序是：轮询到 composer 清空；若仍不清空，则通过获得焦点的控件**粘贴**再发一次。
+重试不是"等慢一点"的补丁——`ValuePattern.SetValue` 更新了视觉编辑框但**不触发** web 应用的
+input 事件，发送按钮因此保持禁用，Enter 也没有反应。回执新增 `composer_clear_polls`
+与 `send_retry`，把走过的路径写出来，而不是让人去猜。
+
+### 实测回执（`AEP-UI-PROBE-20261031T203037`，Qoder pid 22796）
+
+```
+status: message-visible          task_delivered: True
+input_found: True                input_candidate_count: 2
+write_method: uia-valuepattern   input_verified: True
+send_method: enter               send_retry: paste+enter
+composer_cleared: True           composer_clear_polls: 36
+drivable: True                   path_verified: True
+target_elevation: elevated       executor_elevation: elevated
+```
+
+随后从会话里读回，事件号出现在我们自己那句话之外：
+
+```
+transcript_chars: 75210    event_id_occurrences: 10
+lines_outside_our_message: ["ACK AEP-UI-PROBE-20261031T203037 | ACK AEP-UI-PROBE-20261031T203037"]
+```
+
+附带一个副产品：无障碍树这次真的通了。`input_candidate_count: 2`、
+`transcript_source: uia`（不再靠 OCR）、composer 是 `ControlType.Edit` / `loop-rich-editor`、
+发送按钮按颜色可定位。`SPI_SETSCREENREADER` 让 Chromium 建树之后，ChatGPT 侧
+元素从 3 个变成 400 个，Qoder 侧同理。
+
 ## 三块新机制（可用，有测试）
 
 ### 1. 信箱派工：`coord-assign`
@@ -187,7 +267,10 @@ step 2: review  -> done (beta)    _settled = True
 
 ## 未验证 / 未做
 
-- **端到端真发**：`INPUT_SUBMITTED` 及之后未达成，原因已确定为执行器权限（UIPI），不是 OCR、也不是 composer 通路。
+- **端到端真发**：`INPUT_SUBMITTED` / `MESSAGE_VISIBLE` / `AGENT_ACK` 已达成（提权执行器，
+  `AEP-UI-PROBE-20261031T203037`）。但**只跑通了这一条路径**：`--urgent-interject` 没有在
+  真实忙碌会话上验过，`codebuddy_cn` 没有实测，跨重启的时间线也没有。
+- **`TASK_RESULT_READBACK`**：能读回屏幕文本，但"按任务号取回结果并判定完成"还没有读取器。
 - **紧急插话**：`--urgent-interject` 有测试，且插话提示现在**能被 OCR 识别**（`interject_hits` 命中），
   但**没有在真实忙碌会话上跑过**。代码不会点停止按钮。
 - **跨重启 + 换策略的真实任务时间线**：仍未做。
