@@ -197,6 +197,13 @@ class WindowsJobTests(unittest.TestCase):
         self.assertIsNone(windows_job.Job.open(self.name))
 
     def test_contained_test_cannot_request_breakaway(self):
+        profile = windows_job.interpreter_profile(self.request["command"])
+        if not profile["breakaway_denied"]:
+            # Not a test defect: the guarantee is interpreter-dependent, and
+            # pretending otherwise is how this passed under one python.exe and
+            # failed under the bundled venv.  InterpreterProfileTests pins the
+            # detection; the skip keeps the reason on the record.
+            self.skipTest(profile["reason"])
         self._fixture(
             "        try:\n"
             "            child = subprocess.Popen([sys.executable, '-I', '-S', '-c', "
@@ -217,6 +224,65 @@ class WindowsJobTests(unittest.TestCase):
         completed = self._run()
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertFalse((self.workspace / "untrusted-bootstrap.txt").exists())
+
+
+class InterpreterProfileTests(unittest.TestCase):
+    """Whether containment also denies breakaway depends on the interpreter exe.
+
+    These are path questions, so they run on every platform; the Windows-only
+    class above then asserts the measured consequence.  The defect being
+    designed out: the suite used to be green under ``D:\\A\\python.exe`` and red
+    under the bundled venv, because the assertion silently relied on which exe
+    happened to launch the test.
+    """
+
+    def test_a_plain_interpreter_is_assumed_to_deny_breakaway(self):
+        with TemporaryDirectory() as folder:
+            exe = Path(folder) / "python.exe"
+            exe.write_text("", encoding="utf-8")
+            profile = windows_job.interpreter_profile([str(exe), "-m", "unittest"])
+        self.assertEqual(profile["kind"], "interpreter")
+        self.assertTrue(profile["breakaway_denied"])
+        self.assertEqual(profile["executable"], str(exe))
+
+    def test_a_venv_redirector_is_recognised_by_layout(self):
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "pyvenv.cfg").write_text("home = C:/Python313\n", encoding="utf-8")
+            (root / "Scripts").mkdir()
+            exe = root / "Scripts" / "python.exe"
+            exe.write_text("", encoding="utf-8")
+            profile = windows_job.interpreter_profile([str(exe)])
+        self.assertEqual(profile["kind"], "venv-redirector")
+        self.assertFalse(profile["breakaway_denied"])
+        # The reason has to name the mechanism, or the skip reads as noise.
+        self.assertIn("SILENT_BREAKAWAY_OK", profile["reason"])
+
+    def test_a_scripts_directory_without_pyvenv_is_not_a_venv(self):
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "Scripts").mkdir()
+            exe = root / "Scripts" / "python.exe"
+            exe.write_text("", encoding="utf-8")
+            self.assertTrue(windows_job.interpreter_profile([str(exe)])["breakaway_denied"])
+
+    def test_no_command_is_not_a_claim_about_anything(self):
+        profile = windows_job.interpreter_profile([])
+        self.assertEqual(profile["kind"], "interpreter")
+        self.assertEqual(profile["reason"], "no command to profile")
+
+    def test_the_bundled_runtimes_are_classified_as_measured(self):
+        root = Path(__file__).resolve().parents[1]
+        portable = root / ".tools" / "portable-python" / "python-3.13.12-win-amd64" / "python.exe"
+        runtime = root / ".tools" / "agent-runtime" / "Scripts" / "python.exe"
+        if not portable.exists() and not runtime.exists():
+            self.skipTest("no bundled runtime in this checkout")
+        if portable.exists():
+            # A real 105,816-byte interpreter: breakaway denial holds.
+            self.assertTrue(windows_job.interpreter_profile([str(portable)])["breakaway_denied"])
+        if runtime.exists():
+            # A 253,256-byte redirector: it does not.
+            self.assertFalse(windows_job.interpreter_profile([str(runtime)])["breakaway_denied"])
 
 
 if __name__ == "__main__":

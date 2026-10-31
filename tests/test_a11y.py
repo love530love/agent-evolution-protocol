@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import sys
 import unittest
+from unittest import mock
 
 from agent_evolution_protocol import cli
 from agent_evolution_protocol.coordination import a11y, ui_fallback
@@ -86,6 +87,68 @@ class AnnotationTests(unittest.TestCase):
         report = ui_fallback.annotate_elevation({"pid": os.getpid()})
         self.assertTrue(report["drivable"])
         self.assertNotIn("blocked_by", report)
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows accessibility APIs")
+    def test_both_sides_are_reported(self):
+        # A bare "drivable: false" invites the wrong fix; the caller needs to
+        # see which side is the high one.
+        report = ui_fallback.annotate_elevation({"pid": os.getpid()})
+        self.assertIn(report["target_elevation"], ("standard", "elevated"))
+        self.assertIn(report["executor_elevation"], ("standard", "elevated"))
+
+    def test_the_comparison_is_what_decides(self):
+        # No Windows needed: replace the two probes with a standard executor
+        # facing an elevated target and assert the report refuses.
+        with mock.patch.object(a11y, "available", return_value=True), \
+                mock.patch.object(a11y, "elevation", return_value="elevated"), \
+                mock.patch.object(a11y, "self_elevation", return_value="standard"):
+            report = ui_fallback.annotate_elevation({"pid": 4})
+        self.assertFalse(report["drivable"])
+        self.assertEqual(report["blocked_by"], "TARGET_NEEDS_ELEVATION")
+        self.assertIn("standard", report["hint"])
+
+    def test_a_standard_target_is_drivable_from_a_standard_executor(self):
+        with mock.patch.object(a11y, "available", return_value=True), \
+                mock.patch.object(a11y, "elevation", return_value="standard"), \
+                mock.patch.object(a11y, "self_elevation", return_value="standard"):
+            report = ui_fallback.annotate_elevation({"pid": 4})
+        self.assertTrue(report["drivable"])
+        self.assertNotIn("blocked_by", report)
+
+
+class DrivabilityTests(unittest.TestCase):
+    """UIPI is one-way, so the answer depends on both sides, not just the target.
+
+    The defect this pins: ``drivable`` used to be "the target's token could be
+    read".  That reads correctly only because Windows refuses the token of a
+    higher-integrity process -- i.e. the comparison was being performed by the
+    failure mode instead of by the code.  Any case where the token *is* readable
+    and the executor is still the lower side would have been reported as a
+    green light.
+    """
+
+    def test_equal_levels_are_drivable(self):
+        for level in ("standard", "elevated"):
+            self.assertEqual(a11y.drivability(level, level), (True, None))
+
+    def test_a_lower_target_is_drivable(self):
+        self.assertEqual(a11y.drivability("standard", "elevated"), (True, None))
+
+    def test_a_higher_target_is_not(self):
+        self.assertEqual(a11y.drivability("elevated", "standard"),
+                         (False, "TARGET_NEEDS_ELEVATION"))
+
+    def test_an_unreadable_target_needs_the_same_action_as_a_higher_one(self):
+        # Windows withholds the token only when the target outranks us, so the
+        # operator advice is identical and the code must match.
+        self.assertEqual(a11y.drivability("unknown", "standard"),
+                         (False, "TARGET_NEEDS_ELEVATION"))
+        self.assertEqual(a11y.drivability("unknown", "elevated"),
+                         (False, "TARGET_NEEDS_ELEVATION"))
+
+    def test_an_unreadable_executor_is_its_own_reason(self):
+        self.assertEqual(a11y.drivability("standard", "unknown"),
+                         (False, "EXECUTOR_INTEGRITY_UNKNOWN"))
 
 
 class CommandTests(unittest.TestCase):

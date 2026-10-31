@@ -44,6 +44,20 @@ coord-a11y status --pid 22796
 - 目标普通权限 → 执行方普通权限即可（ChatGPT 实测 `drivable: true`）；
 - 目标提权 → 执行方也必须提权，或者把目标改成普通权限启动。
 
+**判定必须是两边比较，不能只看目标读不读得到。** 早先的实现用「目标令牌能不能打开」当作
+「能不能驱动」，那是让 Windows 的失败模式替代码做判断：目标令牌打不开确实说明它更高，
+但反过来不成立——只要目标可读就一律给绿灯。现在 `a11y.drivability(target, executor)`
+显式比较两个级别，`coord-a11y` 同时报 `target_elevation` 与 `executor_elevation`：
+
+```
+# 普通权限终端里看提权的 Qoder
+-> target_elevation: unknown, executor_elevation: standard,
+   drivable: false, blocked_by: TARGET_NEEDS_ELEVATION
+
+# 同一终端里看普通权限的 ChatGPT
+-> target_elevation: standard, executor_elevation: standard, drivable: true
+```
+
 把这条写进 `coord-a11y` 的回执，比让三步之后的输入静默失败要好。
 
 ### 本机采用的操作规则
@@ -95,6 +109,33 @@ aep coord-a11y disable                 # 关闭
 | 感知变化 | 定时截屏 + OCR | `SetWinEventHook`（`EVENT_OBJECT_VALUECHANGE`、`EVENT_SYSTEM_FOREGROUND`） | 事件驱动，省 CPU，延迟从秒级降到毫秒级 |
 | 进程会话事实 | WMI（本机已不可用）/ toolhelp | `NtQueryInformationProcess` + Job Object + `WTSEnumerateSessions` | 已有部分实现，需统一到一处 |
 | 唤醒/保活 | 文件轮询 | 任务计划程序 / 命名管道 / 服务 | 真正无人值守，不依赖某个终端窗口活着 |
+
+## 系统能力自带前提：作业对象不等于「关住」
+
+验证子进程用 Job Object 关住，`KILL_ON_JOB_CLOSE` 保证句柄一关整棵树死。这条在本机成立，
+但「被关住的测试无法断连」这条**不成立**，而且取决于用哪个 `python.exe` 启动。
+
+实测（同一台机、同一个作业、`CREATE_BREAKAWAY_FROM_JOB`）：
+
+| 启动命令用的解释器 | 文件大小 | 子进程最内层作业 flags | 断连结果 |
+|---|---|---|---|
+| `D:\A\python.exe` | 104,264 | `0x2000` = KILL_ON_JOB_CLOSE | `DENIED 5` |
+| `.tools\agent-runtime\Scripts\python.exe` | 253,256 | `0x3000` = KILL_ON_JOB_CLOSE **+ 0x1000** | 放行 |
+
+多出来的 `0x1000` 是 `JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK`。原因是 venv 的
+`Scripts\python.exe` 不是解释器本体，而是个**重定向启动器**：它重新执行基解释器时套了一层
+允许断连的嵌套作业。本机三个 venv（`agent-runtime`、`desktop-sdk`、`mcp-client-venv`）
+的 `python.exe` 全是 253,256 字节；基解释器 104,264、便携运行时 105,816，都不是重定向器。
+
+两层后果要分开说：
+
+- **终止仍然有效**：嵌套作业随父作业一起死，实测两种情况下子进程都被杀干净。
+- **断连不再被拒**：跑掉的孙进程可以活过父进程，此时「不留孤儿」的承诺就破了。
+
+所以 `windows_job.interpreter_profile(command)` 按布局判定（`Scripts\python.exe` +
+上一级 `pyvenv.cfg` = 重定向器），把结论写进回执，测试按它决定断言还是跳过——
+**不要用一个会随解释器漂移的断言冒充安全属性**。这件事本身就是「机制外包给系统，
+证据留在自己手里」的反例：系统给的能力带着前提，前提得自己测。
 
 ## 边界：这些不要外包
 

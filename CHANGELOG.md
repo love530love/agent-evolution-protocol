@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.6.2 — Compare the two sides instead of trusting a failure mode
+
+- `a11y.drivability(target, executor)` replaces the old "can the target's token
+  be opened" test. That test read correctly only because Windows refuses the
+  token of a higher-integrity process -- the comparison was being performed by
+  the failure mode rather than by the code, so any readable target was reported
+  as drivable. Receipts now carry both `target_elevation` and
+  `executor_elevation`. Measured here: elevated Qoder is
+  `unknown`/`standard`/`false` from an ordinary terminal, while standard
+  ChatGPT is `standard`/`standard`/`true`.
+- Added `windows_job.interpreter_profile(command)`. A venv `Scripts\python.exe`
+  is a 253,256-byte redirector that re-executes the base interpreter inside a
+  nested job whose flags read `0x3000` instead of `0x2000`; the extra `0x1000`
+  is `JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK`, so `CREATE_BREAKAWAY_FROM_JOB`
+  succeeds there and is denied (`5`) under the base interpreter. Termination
+  still works in both cases -- nested jobs die with the parent -- but the
+  no-orphan promise does not. The containment test now asserts or skips on the
+  profile and prints the reason, and `InterpreterProfileTests` pins the
+  detection itself.
+- Fixed a first-byte race in the workspace lock: between `fstat` seeing size 0
+  and the write that creates that byte, another process can create it and lock
+  the region, so the write lands on a locked byte and Windows answers EACCES.
+  The pre-fill is redundant by then; it no longer becomes a lock failure.
+- The bundled venv (`.tools/agent-runtime`) gained `pytest` from the `test`
+  extra, so the project's own development environment can run the suite.
+
 ## 0.6.1 — Say why a window cannot be driven
 
 - The UI driver now annotates every receipt with `target_elevation`, `drivable`

@@ -104,8 +104,16 @@ class workspace_lock:
         # caller that cleans up its temporary root.
         handle = _open_lock_file(self.path, deadline)
         if os.name == "nt" and os.fstat(handle).st_size == 0:
-            os.write(handle, b"\0")
-            os.lseek(handle, 0, os.SEEK_SET)
+            try:
+                os.write(handle, b"\0")
+                os.lseek(handle, 0, os.SEEK_SET)
+            except PermissionError:
+                # Lost the race between fstat and write: another process
+                # created the first byte and already holds the region, so the
+                # write lands on a locked byte and Windows answers EACCES.
+                # The pre-fill is then redundant, not failed -- _try_lock
+                # below is what decides ownership.
+                pass
         while not _try_lock(handle):
             if time.monotonic() >= deadline:
                 os.close(handle)

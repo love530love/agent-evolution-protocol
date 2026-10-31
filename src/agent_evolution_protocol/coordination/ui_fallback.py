@@ -154,15 +154,19 @@ def annotate_elevation(report: dict) -> dict:
     pid = report.get("pid")
     if not pid:
         return report
-    level = a11y.elevation(int(pid))
-    report["target_elevation"] = level
-    if level == "unknown":
-        report["drivable"] = False
-        report["blocked_by"] = "TARGET_NEEDS_ELEVATION"
-        report["hint"] = ("the target runs at a higher integrity level; start the executor "
-                          "elevated, or the client unelevated")
-    else:
-        report["drivable"] = True
+    target = a11y.elevation(int(pid))
+    executor = a11y.self_elevation()
+    report["target_elevation"] = target
+    report["executor_elevation"] = executor
+    ok, reason = a11y.drivability(target, executor)
+    report["drivable"] = ok
+    if reason == "TARGET_NEEDS_ELEVATION":
+        report["blocked_by"] = reason
+        report["hint"] = (f"target runs {target}, executor runs {executor}; UIPI is one-way, "
+                          "so the executor must be elevated at least as high as the client")
+    elif reason:
+        report["blocked_by"] = reason
+        report["hint"] = "the executor's own integrity level could not be read"
     return report
 
 

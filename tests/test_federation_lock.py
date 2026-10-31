@@ -9,10 +9,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 import multiprocessing
+import os
 from pathlib import Path
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 from agent_evolution_protocol.federation import engine, locking, store
 from agent_evolution_protocol.federation.adapter import FakeAdapter
@@ -104,6 +106,28 @@ class ReentrancyTests(unittest.TestCase):
         self.assertEqual(locking._HELD, {})
         with locking.workspace_lock(self.lock_file, timeout=0.1):
             pass
+
+    @unittest.skipUnless(os.name == "nt", "the first-byte pre-fill is Windows-only")
+    def test_losing_the_first_byte_race_is_not_a_lock_failure(self):
+        # Observed under a loaded full-suite run: between fstat seeing size 0
+        # and the write that creates the first byte, another process can
+        # create it and lock the region, so the write lands on a locked byte
+        # and Windows answers EACCES.  The pre-fill is redundant by then, and
+        # turning that into a lock failure would be worse than having no lock.
+        real_write = os.write
+        attempts = []
+
+        def losing_the_race(handle, data):
+            if not attempts:
+                attempts.append(handle)
+                raise PermissionError(13, "Permission denied")
+            return real_write(handle, data)
+
+        with mock.patch.object(locking.os, "write", side_effect=losing_the_race):
+            with locking.workspace_lock(self.lock_file, timeout=1.0):
+                pass
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(locking._HELD, {})
 
 
 class EngineLockTests(unittest.TestCase):

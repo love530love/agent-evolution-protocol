@@ -10,6 +10,7 @@ import ctypes
 from ctypes import wintypes
 import hashlib
 import os
+from pathlib import Path
 import re
 
 
@@ -88,6 +89,50 @@ def _name(name):
     if not isinstance(name, str) or re.fullmatch(r"AEPValidation-[0-9a-f]{32}", name) is None:
         raise ValueError("invalid validation job name")
     return name
+
+
+def interpreter_profile(command):
+    """Say whether this job's containment also denies breakaway for a command.
+
+    A job created with ``KILL_ON_JOB_CLOSE`` alone makes
+    ``CreateProcess(CREATE_BREAKAWAY_FROM_JOB)`` fail with
+    ``ERROR_ACCESS_DENIED`` (5).  That is not universal, and the exception is
+    not exotic: every virtual environment on this host ships a 253,256-byte
+    redirector as ``Scripts/python.exe``, which re-executes the base
+    interpreter inside a *nested* job whose flags read ``0x3000`` instead of
+    ``0x2000``.  The extra ``0x1000`` is
+    ``JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK``, and with it the same call
+    succeeds.
+
+    Containment itself survives -- nested jobs die with the parent job, and a
+    killed tree stayed killed in both cases -- but a descendant that breaks
+    away and then outlives its parent is no longer reclaimable.  So the
+    guarantee has to be stated per interpreter instead of assumed, which is
+    what this reports.
+
+    Detection is by layout, not by the measured flags: a venv redirector lives
+    in ``Scripts`` (``bin`` on POSIX) with ``pyvenv.cfg`` one level up.  A real
+    interpreter, including the bundled portable runtime, has neither.
+    """
+    executable = str(command[0]) if command else ""
+    profile = {"executable": executable, "kind": "interpreter",
+               "breakaway_denied": True, "reason": ""}
+    if not executable:
+        profile["reason"] = "no command to profile"
+        return profile
+    path = Path(executable)
+    parent = path.parent
+    if parent.name.lower() not in ("scripts", "bin"):
+        return profile
+    if not (parent.parent / "pyvenv.cfg").is_file():
+        return profile
+    profile["kind"] = "venv-redirector"
+    profile["breakaway_denied"] = False
+    profile["reason"] = ("the interpreter is a virtual-environment redirector, which "
+                         "re-executes the base interpreter inside a nested job with "
+                         "JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK; containment still kills "
+                         "the tree, but breakaway denial cannot be asserted")
+    return profile
 
 
 def execution_context():

@@ -149,6 +149,34 @@ def elevation(pid: int) -> str:
         kernel32.CloseHandle(handle)
 
 
+_INTEGRITY = {"standard": 0, "elevated": 1}
+
+
+def drivability(target: str, executor: str) -> tuple[bool, str | None]:
+    """Can ``executor`` drive a window owned by ``target``?
+
+    UIPI is one-way: a process may manipulate a window at the same or a lower
+    integrity level, never a higher one.  Reading the *target's* token is
+    therefore not the test -- an elevated target is unreadable from a standard
+    process, but so is any target the caller is not allowed to touch, and a
+    readable target is still undrivable when the executor is the lower one.
+    The comparison is the test.
+
+    ``unknown`` for the target means Windows refused its token, which only
+    happens when it outranks the caller, so it lands on the same answer as an
+    explicit ``elevated`` target seen from a standard executor: elevate the
+    executor.  Both are reported as ``TARGET_NEEDS_ELEVATION`` because the
+    operator action is identical.
+    """
+    if target not in _INTEGRITY:
+        return False, "TARGET_NEEDS_ELEVATION"
+    if executor not in _INTEGRITY:
+        return False, "EXECUTOR_INTEGRITY_UNKNOWN"
+    if _INTEGRITY[target] > _INTEGRITY[executor]:
+        return False, "TARGET_NEEDS_ELEVATION"
+    return True, None
+
+
 def check(pid: int | None = None) -> dict:
     """Everything a caller needs before trying to drive a window."""
     report = {"available": available(), "screen_reader": None, "changed": False}
@@ -158,14 +186,19 @@ def check(pid: int | None = None) -> dict:
     report["screen_reader"] = status()
     if pid is not None:
         report["target_elevation"] = elevation(pid)
-        report["executor_elevation"] = _self_elevation()
-        # ``unknown`` means UIPI will refuse window control later; saying it
-        # here is cheaper than discovering it when nothing gets typed.
-        report["drivable"] = report["target_elevation"] != "unknown"
+        report["executor_elevation"] = self_elevation()
+        # Saying this here is cheaper than discovering it when nothing gets
+        # typed: UIPI refusals are silent, so a bare failure looks like a bug.
+        ok, reason = drivability(report["target_elevation"],
+                                 report["executor_elevation"])
+        report["drivable"] = ok
+        if reason:
+            report["blocked_by"] = reason
     return report
 
 
-def _self_elevation() -> str:
+def self_elevation() -> str:
+    """The executor's own level; the other half of the UIPI comparison."""
     if not available():
         return "unknown"
     kernel32, advapi32 = _api()
