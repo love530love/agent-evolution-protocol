@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-evolution-protocol"
-version = "0.4.2"
+version = "0.5.0"
 description = "Evidence-driven anti-collapse governance for multi-agent systems"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -29,6 +29,12 @@ browser = ["playwright>=1.45,<2"]
 windows = ["psutil>=5.9,<8; platform_system == 'Windows'", "pywinauto>=0.6.8,<1; platform_system == 'Windows'"]
 analytics = ["duckdb>=1.0,<2"]
 vectors = ["chromadb>=0.5,<2"]
+# Optional federation/execution adapters.  The core package stays dependency-light;
+# install only the transport/backend needed by the deployment.
+a2a = ["a2a-sdk>=0.3,<1"]
+model-routing = ["litellm>=1,<2"]
+durable = ["temporalio>=1,<2"]
+desktop-agent = ["pyautogui>=0.9,<1", "uiautomation>=2,<3; platform_system == 'Windows'"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

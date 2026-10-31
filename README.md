@@ -61,7 +61,7 @@ aep --coord-root .tools/acceptance coord-improvement self-test
 
 This preserves a machine-readable report and evidence under a unique run directory. It does not change production policy or certify real Agent delivery/ACK. CI covers Ubuntu/Windows and Python 3.10/3.12.
 
-[总体系与能力状态](docs/SYSTEM_OVERVIEW.zh-CN.md) · [协同推理工作流](docs/COLLABORATIVE_REASONING_FRAMEWORK.zh-CN.md) · [v0.4.2 发布说明](docs/releases/v0.4.2.md)
+[总体系与能力状态](docs/SYSTEM_OVERVIEW.zh-CN.md) · [协同推理工作流](docs/COLLABORATIVE_REASONING_FRAMEWORK.zh-CN.md) · [v0.5.0 发布说明](docs/releases/v0.5.0.md)
 
 An evidence-driven governance protocol for multi-agent systems that need diversity without coordination collapse.
 
@@ -130,6 +130,7 @@ multi-agent coordination:
 - [presence and return-to-team notices](docs/coordination/PRESENCE_AND_RETURN.md)
 - [any online agent can request a bounded handoff](docs/coordination/ANY_AGENT_CAN_DISPATCH.md)
 - [human-style desktop fallback](docs/coordination/HUMAN_UI_FALLBACK.md)
+- [Enter-first sending and non-interrupting urgent interjection](docs/DESKTOP_SEND_AND_URGENT_INTERJECT.zh-CN.md)
 - [Windows desktop MCP provider discovery and fallback planning](docs/coordination/DESKTOP_MCP_PROVIDERS.md)
 - [shared Windows command memory](docs/coordination/COMMAND_MEMORY.md)
 - [Windows build case index](docs/coordination/WINDOWS_BUILD_KNOWLEDGE.md)
@@ -138,7 +139,12 @@ multi-agent coordination:
 - [REA evidence capability for the agent team](docs/coordination/REA_CAPABILITY.md)
 - [Per-Agent MCP bundles and session-aware dispatch](docs/AGENT_MCP_BUNDLES.zh-CN.md)
 - [Third-party execution ecosystem and acceptance gates](docs/THIRD_PARTY_EXECUTION_ECOSYSTEM.zh-CN.md)
+- [Execution-plane upgrade plan and provider conformance gates](docs/EXECUTION_PLANE_UPGRADE_PLAN.zh-CN.md)
+- [Execution-plane handoff for new Agents](docs/EXECUTION_PLANE_HANDOFF_20261030.zh-CN.md)
+- [Execution-plane Agent join prompt](templates/EXECUTION_PLANE_AGENT_JOIN_PROMPT.zh-CN.md)
 - [Capability runtime installation](docs/CAPABILITY_RUNTIME_INSTALL.zh-CN.md)
+- [Cua Driver desktop MCP integration](docs/CUA_DRIVER_INTEGRATION.zh-CN.md)
+- [Cua Driver local acceptance record](docs/CUA_DRIVER_ACCEPTANCE_20261031.zh-CN.md)
 - [Project standards and release rules](docs/PROJECT_STANDARDS.zh-CN.md)
 - [Risk register and controls](docs/RISK_REGISTER.zh-CN.md)
 - [Contributors and provenance](CONTRIBUTORS.md)
@@ -165,7 +171,7 @@ pwsh.exe -File .\scripts\bootstrap.ps1 -CoordRoot coordination
 The `aep` command is an alias for `agent-evolution` and exposes both planes:
 
 - governance plane: `init`, `commit`, `reveal`, `challenge`, `threat`, `decide`, `audit`;
-- coordination plane: `doctor`, `workspace-init`, `inspect`, `route`, `join`, `coord-status`, `coord-digest`, `coord-send`, `coord-wake`, `coord-wake-status`, `coord-archive-stale`, `coord-session-set`, `coord-claim`, `coord-release`, `coord-task-state`, `coord-onboarding`, `coord-guided-retry`;
+- coordination plane: `doctor`, `workspace-init`, `inspect`, `route`, `join`, `coord-status`, `coord-digest`, `coord-send`, `coord-wake`, `coord-wake-status`, `coord-archive-stale`, `coord-session-set`, `coord-claim`, `coord-claim-renew`, `coord-release`, `coord-task-state`, `coord-onboarding`, `coord-guided-retry`;
 - recovery kernel: `kernel-status`, `kernel-lease-acquire`, `kernel-lease-release`, `kernel-op-reserve`, `kernel-op-transition`, `kernel-session-bind`, `kernel-continuation-plan`, `kernel-checkpoint`.
 
 Optional execution providers are cataloged read-only with `aep coord-provider-catalog`; cataloging never installs or trusts a provider. Promote a row only after probe, session binding and task acceptance.
@@ -175,7 +181,7 @@ to make onboarding deterministic: a new agent reads the current digest and
 sticky-session policy before doing work, and missing session IDs become a
 visible handoff problem instead of silently spawning new chats.
 
-See the Chinese [coordination CLI quick guide](docs/COORDINATION_CLI.zh-CN.md), [agent onboarding contract](docs/AGENT_ONBOARDING_CONTRACT.zh-CN.md), [guided retry policy](docs/GUIDED_RETRY_POLICY.zh-CN.md), [`aep inspect` runbook](docs/RUNBOOK_INSPECT.zh-CN.md), [joining any task](docs/JOINING_ANY_TASK.zh-CN.md), [natural-language join](docs/NATURAL_LANGUAGE_JOIN.zh-CN.md), and [`aep route` requirements and development plan](docs/ROUTE_DEVELOPMENT_PLAN.zh-CN.md).
+See the Chinese [coordination CLI quick guide](docs/COORDINATION_CLI.zh-CN.md), [agent onboarding contract](docs/AGENT_ONBOARDING_CONTRACT.zh-CN.md), [guided retry policy](docs/GUIDED_RETRY_POLICY.zh-CN.md), [`aep inspect` runbook](docs/RUNBOOK_INSPECT.zh-CN.md), [joining any task](docs/JOINING_ANY_TASK.zh-CN.md), [natural-language join](docs/NATURAL_LANGUAGE_JOIN.zh-CN.md), [hands-feet-heart architecture decision](docs/ARCHITECTURE_HANDS_FEET_HEART.zh-CN.md), and [`aep route` requirements and development plan](docs/ROUTE_DEVELOPMENT_PLAN.zh-CN.md).
 
 See [the beginner introduction](docs/INTRODUCTION.zh-CN.md), [the protocol](docs/PROTOCOL.md), [the evolution history](docs/EVOLUTION.md), and [the Chinese README](README.zh-CN.md).
 

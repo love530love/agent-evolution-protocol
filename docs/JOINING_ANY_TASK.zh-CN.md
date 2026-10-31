@@ -29,6 +29,10 @@ aep --coord-root coordination --kernel-root .aep-kernel join --agent hermes_desk
 
 ```powershell
 aep --coord-root coordination coord-claim --agent hermes_desktop --task T125
+# 若任务会写文件，声明范围并启用冲突闸门
+aep --coord-root coordination coord-claim --agent hermes_desktop --task T125-R1 --paths docs/notes.md --ttl-hours 48
+# 长任务续租（只有原 owner 可以执行）
+aep --coord-root coordination coord-claim-renew --agent hermes_desktop --task T125 --ttl-hours 24
 ```
 
 如果任务已被其他 agent claim，输出会显示 owner。新 agent 应该读取 owner 状态、digest 和 task-state，不要抢写。

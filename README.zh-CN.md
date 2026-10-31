@@ -31,11 +31,14 @@
 - [每 Agent MCP Bundle 与会话感知派工](docs/AGENT_MCP_BUNDLES.zh-CN.md)
 - [第三方执行生态与接入验收门](docs/THIRD_PARTY_EXECUTION_ECOSYSTEM.zh-CN.md)
 - [能力运行时安装与冒烟验收](docs/CAPABILITY_RUNTIME_INSTALL.zh-CN.md)
+- [Cua Driver 桌面 MCP 接入](docs/CUA_DRIVER_INTEGRATION.zh-CN.md)
+- [Cua Driver 本机验收记录](docs/CUA_DRIVER_ACCEPTANCE_20261031.zh-CN.md)
 - [项目体系、标准与发布规范](docs/PROJECT_STANDARDS.zh-CN.md)
 - [风险登记与控制基线](docs/RISK_REGISTER.zh-CN.md)
 - [贡献者与署名溯源](CONTRIBUTORS.md)
 - [桌面主控、无头增强的生产架构](docs/DESKTOP_PRIMARY_HEADLESS_AUGMENTATION.zh-CN.md)
 - [Qoder 派工失败复盘与联邦执行升级方案](docs/FAILURE_REVIEW_QODER_20261030.zh-CN.md)
+- [桌面回车发送与紧急非中断插话规范](docs/DESKTOP_SEND_AND_URGENT_INTERJECT.zh-CN.md)
 - [派工标准 v1](docs/DISPATCH_STANDARD.zh-CN.md)
 - [Agent 执行与协作契约模板](templates/AGENT_OPERATOR_CONTRACT.zh-CN.md)
 - [桌面主控、无头增强验收清单](docs/acceptance/DESKTOP_PRIMARY_HEADLESS_ACCEPTANCE_20261029.md)
@@ -54,14 +57,14 @@ pwsh.exe -File .\scripts\bootstrap.ps1 -CoordRoot coordination
 安装后可以使用 `aep`（等价于 `agent-evolution`）：
 
 - 治理平面：`init`、`commit`、`reveal`、`challenge`、`threat`、`decide`、`audit`
-- 协作平面：`doctor`、`workspace-init`、`inspect`、`route`、`join`、`coord-status`、`coord-digest`、`coord-send`、`coord-wake`、`coord-wake-status`、`coord-archive-stale`、`coord-session-set`、`coord-claim`、`coord-release`、`coord-task-state`、`coord-onboarding`、`coord-guided-retry`
+- 协作平面：`doctor`、`workspace-init`、`inspect`、`route`、`join`、`coord-status`、`coord-digest`、`coord-send`、`coord-wake`、`coord-wake-status`、`coord-archive-stale`、`coord-session-set`、`coord-claim`、`coord-claim-renew`、`coord-release`、`coord-task-state`、`coord-onboarding`、`coord-guided-retry`
 - 恢复内核：`kernel-status`、`kernel-lease-acquire`、`kernel-lease-release`、`kernel-op-reserve`、`kernel-op-transition`、`kernel-session-bind`、`kernel-continuation-plan`、`kernel-checkpoint`
 
 可选执行 Provider 可用 `aep coord-provider-catalog` 只读查看；登记不会安装、启动或自动信任。必须经过探测、会话绑定和真实任务验收后才能晋级。
 
 协作 CLI 只读写本地文件，不调用模型。它的目标是让新加入的 agent 先读 digest、状态板和 sticky session 策略，再决定是否行动；如果缺少长期会话 ID，就暴露为 handoff 问题，而不是默默新建无意义会话。
 
-更多命令示例见 [多 Agent 协作 CLI 快速指南](docs/COORDINATION_CLI.zh-CN.md)、[新 Agent 接入契约](docs/AGENT_ONBOARDING_CONTRACT.zh-CN.md)、[Guided Retry 策略](docs/GUIDED_RETRY_POLICY.zh-CN.md)、[`aep inspect` 作战简报](docs/RUNBOOK_INSPECT.zh-CN.md)、[新 Agent 如何接入任意任务](docs/JOINING_ANY_TASK.zh-CN.md)、[自然语言接入](docs/NATURAL_LANGUAGE_JOIN.zh-CN.md) 和 [`aep route` 需求调研与开发计划](docs/ROUTE_DEVELOPMENT_PLAN.zh-CN.md)。
+更多命令示例见 [多 Agent 协作 CLI 快速指南](docs/COORDINATION_CLI.zh-CN.md)、[新 Agent 接入契约](docs/AGENT_ONBOARDING_CONTRACT.zh-CN.md)、[Guided Retry 策略](docs/GUIDED_RETRY_POLICY.zh-CN.md)、[`aep inspect` 作战简报](docs/RUNBOOK_INSPECT.zh-CN.md)、[新 Agent 如何接入任意任务](docs/JOINING_ANY_TASK.zh-CN.md)、[自然语言接入](docs/NATURAL_LANGUAGE_JOIN.zh-CN.md)、[手—脚—心脏架构决策](docs/ARCHITECTURE_HANDS_FEET_HEART.zh-CN.md) 和 [`aep route` 需求调研与开发计划](docs/ROUTE_DEVELOPMENT_PLAN.zh-CN.md)。
 
 ## 一句话让新 Agent 接入
 

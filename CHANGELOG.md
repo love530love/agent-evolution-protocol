@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.5.0 — Persistent Federation Workspace
+
+- Added the `federation` package: hash-chained event ledger, three-zone snapshot,
+  handoff packets, a 13-signal diagnosis table and a strategy library whose
+  promotion is a pure function of evidence.
+- Added a workspace-level exclusive lock (cross-process, in-process re-entrant);
+  the control experiment lost 400 of 800 increments without it and none with it.
+- Added a real cross-process A2A adapter and a demo that runs four child
+  processes, two of which crash or exhaust context mid-task and are replaced.
+- Added `coord-assign`: one call writes the DAG node, the write lease and an
+  assignment the receiver can execute line by line. A refused scope is reported
+  as `claim: scope_conflict` instead of being smoothed over.
+- Added `federate intake|step|serve`: one request, one DAG, first wave started,
+  then a heartbeat that settles, schedules, leases and dispatches in that order.
+  Settlement reads only what the assignee wrote; silence is never success.
+- Added `engine.fail_task` so a supervisor that can see a delivery die replaces
+  the owner immediately; it shares one decision table with `tick`.
+- Fixed Chinese UI parameters being reduced to `?` by the child console code
+  page (ibm437): non-ASCII values now travel in a UTF-8 `-ParamFile`.
+- Fixed the OCR engine silently using en-US on a Chinese window; the language is
+  now requestable and recorded as `ocr_language` in the receipt.
+- Split `requirement` (prose) from `capability` (owner matching) so a real
+  sentence no longer reports "no capable agent".
+- Added lease TTL to claims, owner-only renewal, and `self_overlaps` so one
+  agent holding two labels over one path is not reported as a conflict.
+- Desktop `INPUT_SUBMITTED` and beyond remain unproven: this machine has no
+  Chinese OCR recognizer installed. See `docs/HANDS_AND_FEET_STATUS_20261031.zh-CN.md`.
+
 ## Unreleased
 
 - 预备 0.4.2：加入贡献者署名、风险控制基线和 Provider 分发溯源硬门。

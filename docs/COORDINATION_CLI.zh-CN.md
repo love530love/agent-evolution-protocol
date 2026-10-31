@@ -23,7 +23,8 @@ aep --coord-root coordination coord-session-set --agent workbuddy --thread-id "<
 aep --coord-root coordination coord-send --from codex --to qoder --topic T125 --kind update --text "read latest digest first"
 aep --coord-root coordination coord-wake --from codex --to qoder --task T125 --reason "bounded one-shot check" --budget bounded
 aep --coord-root coordination coord-wake-status
-aep --coord-root coordination coord-claim --agent codex --task T125 --paths src/operator.py
+aep --coord-root coordination coord-claim --agent codex --task T125 --paths src/operator.py --ttl-hours 48
+aep --coord-root coordination coord-claim-renew --agent codex --task T125 --ttl-hours 24
 aep --coord-root coordination coord-task-state --agent codex --task T125 --phase working --goal "run cheapest falsification" --next-action "publish result digest"
 aep --coord-root coordination coord-release --agent codex --task T125
 aep --coord-root coordination coord-archive-stale --older-than-hours 24 --archive-name archived-stale
@@ -62,6 +63,9 @@ aep --kernel-root .aep-kernel kernel-continuation-plan --agent workbuddy --works
 - wake 请求必须有任务、理由、预算和停止边界。
 - 归档旧 wake 只表示“停止按旧请求执行”，不表示任务完成。
 - 写动作前先 `coord-claim`；长任务要用 `coord-task-state` 留下 phase、goal、evidence、next-action。
+- 带 `--paths` 的 `coord-claim` 会先执行冲突闸门，再原子创建带 `expires_at` 的租约；冲突时不会留下空 claim 目录。
+- 长任务在租约到期前由原 owner 执行 `coord-claim-renew`；续租只允许 owner，过期 claim 会停止阻塞但保留在报告的 `expired_claims` / `ignored_expired` 中。
+- 不带 `--paths` 的旧任务级 claim 仍兼容，但也会写入默认 48 小时租约，并标记 `gate.status=TASK_ONLY`；它不声明文件范围。
 - 失败后先用 `coord-guided-retry` 分类；高风险或结果未知的写动作不得盲目重放。
 
 ## 和治理协议的关系
