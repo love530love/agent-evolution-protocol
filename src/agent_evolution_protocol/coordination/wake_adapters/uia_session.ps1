@@ -970,6 +970,7 @@ if ($Mode -eq 'compose') {
     if ($activity.state -ne 'busy' -or -not $activity.interject_evidence.ready) {
       Write-Report @{ status = 'urgent-interject-unavailable'; pid = $window.Pid; title = $window.Title;
         interruption = $false; interject_action = ''; interject_evidence = $activity.interject_evidence;
+        input_found = [bool]$selection; input_candidate_count = $(if ($selection) { $selection.CandidateCount } else { 0 })
         task_delivered = $false; method = 'uia-compose' }
       return
     }
@@ -977,6 +978,7 @@ if ($Mode -eq 'compose') {
     if (-not $interjectAction) {
       Write-Report @{ status = 'urgent-interject-unavailable'; pid = $window.Pid; title = $window.Title;
         interruption = $false; interject_action = ''; interject_evidence = $activity.interject_evidence;
+        input_found = [bool]$selection; input_candidate_count = $(if ($selection) { $selection.CandidateCount } else { 0 })
         task_delivered = $false; method = 'uia-compose' }
       return
     }
@@ -1216,6 +1218,7 @@ if ($UrgentInterject) {
   if ($activity.state -ne 'busy' -or -not $activity.interject_evidence.ready) {
     Write-Report @{ status = 'urgent-interject-unavailable'; pid = $window.Pid; title = $window.Title;
       interruption = $false; interject_action = ''; interject_evidence = $activity.interject_evidence;
+      input_found = [bool]$selection; input_candidate_count = $(if ($selection) { $selection.CandidateCount } else { 0 })
       task_delivered = $false; method = 'uia-deliver' }
     return
   }
@@ -1223,6 +1226,7 @@ if ($UrgentInterject) {
   if (-not $interjectAction) {
     Write-Report @{ status = 'urgent-interject-unavailable'; pid = $window.Pid; title = $window.Title;
       interruption = $false; interject_action = ''; interject_evidence = $activity.interject_evidence;
+      input_found = [bool]$selection; input_candidate_count = $(if ($selection) { $selection.CandidateCount } else { 0 })
       task_delivered = $false; method = 'uia-deliver' }
     return
   }
@@ -1271,6 +1275,8 @@ if ($selection -and -not $inputVerified) {
     status           = 'input-not-confirmed'
     pid              = $window.Pid
     title            = $window.Title
+    input_found      = [bool]$selection
+    input_candidate_count = $(if ($selection) { $selection.CandidateCount } else { 0 })
     write_method     = $writeMethod
     input_focused    = $focused
     typed_preview    = $(if ($typedValue.Length -gt 200) { $typedValue.Substring(0, 200) } else { $typedValue })
@@ -1299,6 +1305,7 @@ if (-not $sendMethod) {
 if (-not $sendMethod) {
   Write-Report @{
     status = 'send-control-not-found'; pid = $window.Pid; title = $window.Title
+    input_found = [bool]$selection; input_candidate_count = $(if ($selection) { $selection.CandidateCount } else { 0 })
     write_method = $writeMethod; input_focused = $focused; input_verified = $inputVerified
     send_method = ''; activation = $ActivationEvidence; task_delivered = $false
     method = 'uia-deliver'

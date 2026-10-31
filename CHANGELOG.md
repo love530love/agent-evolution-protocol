@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.6.3 — One command and the scheduler must read the same profile
+
+- `coord-uia` read `cli.UIA_CLIENTS`, a hardcoded table that still named Qoder
+  `0.4.11` while `0.5.1` was running, and passed no `-AllowUnknownPath`. The
+  operator's own command failed with `LAUNCH_FORBIDDEN: no window for this
+  agent` while the scheduler found the same window from
+  `coordination/ui_profiles/qoder.json`. The profile file now wins and the
+  built-in table is only a fallback; the profile-to-flags mapping moved into
+  `ui_fallback.profile_args()` so both paths share one copy.
+- `-AllowClipboardPaste` was never passed from Python, so the adapter's
+  `NO_INPUT_CONTROL` guard had no way out for a client it could not read. It is
+  now opt-in per profile and off by default: the paste lands wherever
+  activation put focus.
+- The adapter compares `-ExpectedPath` with `Process.MainModule`, which throws
+  for an elevated process and was caught and skipped -- so the check was
+  skipped for exactly the clients this project runs elevated on purpose. Added
+  `coordination/process_info.py` using `QueryFullProcessImageNameW`, which needs
+  only `PROCESS_QUERY_LIMITED_INFORMATION`. `coord-uia` now reports
+  `profile_path_check`, where `match: null` means "not checked" and `reason`
+  says why.
+- The three deliver early returns now report `input_found` too; a failing
+  branch has to answer the same question as the succeeding one.
+- Corrected `HANDS_AND_FEET_STATUS_20261031`: `deliver` does reach the OCR
+  composer path (`transport: ocr` routes to `-Mode compose`), so the geometry
+  fallback was never the blocker. The remaining condition for
+  `INPUT_SUBMITTED` is an elevated executor.
+
 ## 0.6.2 — Compare the two sides instead of trusting a failure mode
 
 - `a11y.drivability(target, executor)` replaces the old "can the target's token

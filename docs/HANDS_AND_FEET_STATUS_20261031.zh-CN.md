@@ -36,9 +36,8 @@ interject_hits: ["插话", "继续执行并发送"]  <- 插话提示也能识别
 ```
 
 但 `INPUT_SUBMITTED` 仍**未达成**，原因换成了另一个、更明确的缺口：
-Qoder 是 Electron 且未开无障碍，UIA 里没有可编辑控件（`input_found: false`），
-而 `deliver` 模式**没有几何兜底**——`-AllowComposerGeometryFallback` 只接在 `compose` 模式上。
-详见「剩余阻断」。
+Qoder 以管理员运行，普通权限的执行器读不到它的令牌（`target_elevation: unknown`），
+UIPI 会拦下所有输入注入。详见「剩余阻断」。
 
 ## 证据阶梯现状
 
@@ -47,7 +46,7 @@ Qoder 是 Electron 且未开无障碍，UIA 里没有可编辑控件（`input_fo
 | `CLIENT_BOUND` | 通过 | `visible_windows()` 枚举到 14 个窗口，含 Qoder 22796 |
 | `WINDOW_OR_TAB_LOCATED` | 通过 | `pid: 22796`、`title: Qoder`、`transcript_chars: 3046`、`transcript_source: ocr` |
 | `ACTIVITY_STATE_READ` | 通过 | `state: ready`、`ready_hits: ["发送","Send","Submit"]` |
-| `INPUT_SUBMITTED` | **未达成** | `input_found: false`；`deliver` 无几何兜底，见下 |
+| `INPUT_SUBMITTED` | **未达成** | `input_found: false`；`drivable: false`，阻断原因是执行器权限（见下） |
 | `MESSAGE_VISIBLE` | 未达成 | 依赖上一步 |
 | `AGENT_ACK` | 未达成 | 依赖上一步 |
 | `TASK_RESULT_READBACK` | 未达成 | 依赖上一步（但 `observe` 已能读回屏幕文本） |
@@ -114,19 +113,43 @@ $cjk = '[\u3400-\u4DBF\u4E00-\u9FFF\u3000-\u303F\uFF00-\uFFEF]'
 Electron 客户端不暴露 Document/Edit，所以 `transcript_chars` 恒为 0 —— 这会被误读成"窗口里没字"，
 实际是"我看不见"。现在当 UIA 文本为空且请求了 OCR 时回退到 OCR，并用 `transcript_source` 标明来源。
 
-## 剩余阻断：`deliver` 没有几何兜底
+## 剩余阻断：是权限，不是通路（第二次更正）
 
-事实：
+上一版这里写「`deliver` 没有几何兜底、`-AllowComposerGeometryFallback` 只接在 `compose` 上」。
+**这条也要更正**：Qoder 的 `transport` 是 `ocr`，`deliver` 本来就会切到 `compose` 模式
+（`"-Mode", "compose" if profile["transport"] == "ocr" else "deliver"`），
+`-AllowComposerGeometryFallback`、`-ComposerXRatio/YRatio` 也一直在传。兜底通路是通的。
 
-- `-AllowComposerGeometryFallback` 只出现在 `compose` 模式（第 1013、1052 行）；
-- `deliver` 的守卫是 `if (-not $selection -and -not $AllowClipboardPaste) { throw 'NO_INPUT_CONTROL' }`；
-- `-AllowClipboardPaste` **从未从 Python 侧传过**（`ui_fallback` / `commander` 里都没有）；
-- Qoder 的 profile 里 `allow_composer_geometry_fallback: true`、`composer_x_ratio: 0.37`、
-  `composer_y_ratio: 0.92` 都配好了，但 `deliver` 不读它们。
+真正缺的是两处，本轮已修：
 
-也就是说：**配置齐了，通路没接**。要跑通 `INPUT_SUBMITTED`，需要让 `deliver` 在
-`$selection` 为空时按 profile 的比例算一个点击点，走「点击 → 剪贴板粘贴 → Enter → OCR 读回 EventId」。
-这条路径会真的往会话里打字，必须在有人在场时第一次跑。
+1. **`-AllowClipboardPaste` 从未从 Python 侧传过。** 脚本的守卫是
+   `if (-not $selection -and -not $AllowClipboardPaste) { throw 'NO_INPUT_CONTROL' }`，
+   也就是「读不到可编辑控件时，没有出路」。现在按 profile 的
+   `allow_clipboard_paste` 显式开启，默认关闭——粘贴落在激活时获得焦点的位置，
+   脚本自己的报错写着 "only with human supervision"。
+2. **`coord-uia` 读的是 `cli.py` 里硬编码的 `UIA_CLIENTS`，不是 `ui_profiles/*.json`。**
+   那份表里 Qoder 还停在 `0.4.11`（运行中是 `0.5.1`），也不带 `-AllowUnknownPath`，
+   于是操作者的命令直接 `LAUNCH_FORBIDDEN: no window for this agent`，
+   而调度器用同一份 profile 却能找到窗口。现在改为 profile 文件优先、内置表只作兜底，
+   参数映射收成 `ui_fallback.profile_args()` 一份，两条路共用。
+
+修完实测（普通权限终端，提权 Qoder）：
+
+```
+status: transcript-captured      pid: 22796      transcript_chars: 2100   # OCR 读回
+profile_path_check: {"expected": "...\\0.5.1\\Qoder.exe",
+                     "actual":   "...\\0.5.1\\Qoder.exe", "match": true}
+target_elevation: unknown        executor_elevation: standard
+drivable: false                  blocked_by: TARGET_NEEDS_ELEVATION
+```
+
+`profile_path_check` 是新加的：适配器自己的路径校验用 `Process.MainModule`，
+对提权进程直接抛异常并被吞掉，等于**恰好在最需要它的地方静默跳过**。
+`coordination/process_info.py` 改用 `QueryFullProcessImageNameW`
+（只需 `PROCESS_QUERY_LIMITED_INFORMATION`），提权目标也能读到真实镜像路径。
+
+所以现在 `INPUT_SUBMITTED` 只剩一个条件：**执行器以管理员启动**。
+`deliver` 第一次真跑仍然要有人在场——它会真的往会话里打字。
 
 ## 三块新机制（可用，有测试）
 
@@ -164,12 +187,13 @@ step 2: review  -> done (beta)    _settled = True
 
 ## 未验证 / 未做
 
-- **端到端真发**：`INPUT_SUBMITTED` 及之后未达成，原因是 `deliver` 缺几何兜底，不是 OCR。
+- **端到端真发**：`INPUT_SUBMITTED` 及之后未达成，原因已确定为执行器权限（UIPI），不是 OCR、也不是 composer 通路。
 - **紧急插话**：`--urgent-interject` 有测试，且插话提示现在**能被 OCR 识别**（`interject_hits` 命中），
   但**没有在真实忙碌会话上跑过**。代码不会点停止按钮。
 - **跨重启 + 换策略的真实任务时间线**：仍未做。
 - **MCP 适配器、跨机联邦**：未做。`locking.py` 只是本机文件锁。
-- **Qoder 之外的客户端**：`codebuddy_cn` / `chatgpt` 只配了 `ocr_language`，未实测。
+- **Qoder 之外的客户端**：`chatgpt` 已实测（`input_found: true`、3 个输入候选、60978 字符），
+  `codebuddy_cn` 只配了参数、未实测。
 
 ## 验收命令
 

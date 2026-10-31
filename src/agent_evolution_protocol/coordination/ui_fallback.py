@@ -170,6 +170,55 @@ def annotate_elevation(report: dict) -> dict:
     return report
 
 
+def profile_args(profile: dict) -> list[str]:
+    """Adapter flags implied by a UI profile.
+
+    One copy, two callers.  ``PowerShellUiaDriver`` builds them for the
+    scheduled path and ``coord-uia`` builds them for the operator's command;
+    when the two had their own lists, the command kept naming a Qoder version
+    that had been replaced and passed no ``-AllowUnknownPath``, so it could not
+    find a window the scheduler could.
+    """
+    args: list[str] = []
+    hints = [str(hint) for hint in profile.get("interject_hints", []) if str(hint).strip()]
+    if hints:
+        args += ["-InterjectHints", ",".join(hints)]
+    # Without this the recognizer silently falls back to the user profile
+    # (en-US here), which turns a Chinese UI into Latin look-alikes.
+    if profile.get("ocr_language"):
+        args += ["-OcrLanguage", str(profile["ocr_language"])]
+    if profile.get("allow_unknown_path"):
+        args.append("-AllowUnknownPath")
+    strict_ocr = profile.get("transport") == "ocr" and profile.get("strict_composer_hint", False)
+    if profile.get("composer_hint") and not strict_ocr:
+        args += ["-ComposerHint", str(profile["composer_hint"])]
+    # PowerShell binds a string[] parameter from one comma-separated argument.
+    # Repeating the parameter name causes a terminating
+    # ParameterBindingException before the UI script can focus the composer,
+    # which is a provably pre-input failure.
+    composer_hints = [str(hint) for hint in profile.get("composer_hints", []) if str(hint).strip()]
+    if composer_hints and not strict_ocr:
+        args += ["-ComposerHints", ",".join(composer_hints)]
+    if strict_ocr:
+        args += ["-RequireComposerHint", "-ComposerHint", str(profile["composer_hint"])]
+        if profile.get("allow_composer_geometry_fallback"):
+            args.append("-AllowComposerGeometryFallback")
+    if profile.get("send_button_x_ratio") and profile.get("send_button_y_ratio"):
+        args += ["-SendButtonXRatio", str(profile["send_button_x_ratio"]),
+                 "-SendButtonYRatio", str(profile["send_button_y_ratio"])]
+    if profile.get("composer_x_ratio") and profile.get("composer_y_ratio"):
+        args += ["-ComposerXRatio", str(profile["composer_x_ratio"]),
+                 "-ComposerYRatio", str(profile["composer_y_ratio"])]
+    # The adapter refuses to paste into a client it could not read unless this
+    # is passed, and Python never passed it -- so an opaque client reached
+    # NO_INPUT_CONTROL with no way out.  Kept per-profile and opt-in because
+    # the paste lands wherever activation put focus, which is why the
+    # adapter's own message says "only with human supervision".
+    if profile.get("allow_clipboard_paste"):
+        args.append("-AllowClipboardPaste")
+    return args
+
+
 class PowerShellUiaDriver:
     """Native UIA first; exact OCR composer hint only for opaque clients."""
 
@@ -220,18 +269,9 @@ class PowerShellUiaDriver:
 
     @staticmethod
     def _target(profile: dict) -> list[str]:
-        args = ["-Agent", profile["agent"], "-ProcessName", profile["process"],
-                "-ExpectedTitle", profile["title"], "-ExpectedPath", profile["exe"]]
-        hints = [str(hint) for hint in profile.get("interject_hints", []) if str(hint).strip()]
-        if hints:
-            args += ["-InterjectHints", ",".join(hints)]
-        # Without this the recognizer silently falls back to the user profile
-        # (en-US here), which turns a Chinese UI into Latin look-alikes.
-        if profile.get("ocr_language"):
-            args += ["-OcrLanguage", str(profile["ocr_language"])]
-        if profile.get("allow_unknown_path"):
-            args.append("-AllowUnknownPath")
-        return args
+        return ["-Agent", profile["agent"], "-ProcessName", profile["process"],
+                "-ExpectedTitle", profile["title"], "-ExpectedPath", profile["exe"],
+                *profile_args(profile)]
 
     def observe(self, profile: dict) -> dict:
         try:
@@ -275,31 +315,12 @@ class PowerShellUiaDriver:
         subprocess.Popen([str(executable)], cwd=str(executable.parent), close_fds=True)
 
     def deliver(self, profile: dict, message: str, event_id: str, *, urgent: bool = False) -> dict:
-        args = self._target(profile) + ["-Mode", "compose" if profile["transport"] == "ocr" else "deliver",
-                "-Text", message, "-EventId", event_id, "-ReadBackTimeoutSeconds", "5",
-                "-SendMode", profile.get("send_mode", "enter")]
+        args = self._target(profile) + [
+            "-Mode", "compose" if profile["transport"] == "ocr" else "deliver",
+            "-Text", message, "-EventId", event_id, "-ReadBackTimeoutSeconds", "5",
+            "-SendMode", profile.get("send_mode", "enter")]
         if urgent:
             args.append("-UrgentInterject")
-        strict_ocr = profile["transport"] == "ocr" and profile.get("strict_composer_hint", False)
-        if profile.get("composer_hint") and not strict_ocr:
-            args += ["-ComposerHint", str(profile["composer_hint"])]
-        # PowerShell binds a string[] parameter from one comma-separated
-        # argument.  Repeating the parameter name causes a terminating
-        # ParameterBindingException before the UI script can even focus the
-        # composer, which is a provably pre-input failure.
-        hints = [str(hint) for hint in profile.get("composer_hints", []) if str(hint).strip()]
-        if hints and not strict_ocr:
-            args += ["-ComposerHints", ",".join(hints)]
-        if strict_ocr:
-            args += ["-RequireComposerHint", "-ComposerHint", profile["composer_hint"]]
-            if profile.get("allow_composer_geometry_fallback"):
-                args.append("-AllowComposerGeometryFallback")
-        if profile.get("send_button_x_ratio") and profile.get("send_button_y_ratio"):
-            args += ["-SendButtonXRatio", str(profile["send_button_x_ratio"]),
-                     "-SendButtonYRatio", str(profile["send_button_y_ratio"])]
-        if profile.get("composer_x_ratio") and profile.get("composer_y_ratio"):
-            args += ["-ComposerXRatio", str(profile["composer_x_ratio"]),
-                     "-ComposerYRatio", str(profile["composer_y_ratio"])]
         return annotate_elevation(self._run(UIA, args, timeout=75, env=self._ui_env(profile)))
 
 

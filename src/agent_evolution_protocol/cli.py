@@ -25,6 +25,7 @@ from agent_evolution_protocol.coordination.joint_attack import open_case as open
 from agent_evolution_protocol.coordination.capability_roster import declare as declare_capabilities, match as match_capabilities
 from agent_evolution_protocol.coordination.mechanism_audit import audit as audit_mechanism
 from agent_evolution_protocol.coordination import a11y
+from agent_evolution_protocol.coordination import process_info
 from agent_evolution_protocol.coordination import ui_fallback
 from agent_evolution_protocol.coordination import evolution_gate
 from agent_evolution_protocol.coordination.volley_plan import plan as plan_volley
@@ -2348,11 +2349,30 @@ def _pwsh() -> str:
     return shutil.which("pwsh.exe") or shutil.which("powershell.exe") or "powershell.exe"
 
 
+def _uia_profile(root: Path, who: str) -> dict:
+    """The operator's profile file first; the built-in table is only a fallback.
+
+    Two copies of the same fact is how the built-in table came to name Qoder
+    0.4.11 while the running client was 0.5.1, and how this command ended up
+    passing no ``-AllowUnknownPath`` and failing to find a window that the
+    scheduler could find.
+    """
+    path = Path(root) / "ui_profiles" / f"{who}.json"
+    if path.is_file():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            data = None
+        if isinstance(data, dict):
+            return data
+    return UIA_CLIENTS.get(who, {})
+
+
 def coord_uia(args: argparse.Namespace) -> None:
     """Desktop transport probe: observe, capture or deliver to an original window."""
     root = coord_root(args)
     who = valid_agent(args.agent)
-    profile = UIA_CLIENTS.get(who, {})
+    profile = _uia_profile(root, who)
     process_name = args.process or profile.get("process") or who
     exe = args.exe or profile.get("exe", "")
     title = args.title or profile.get("title", "")
@@ -2377,6 +2397,10 @@ def coord_uia(args: argparse.Namespace) -> None:
         command += ["-ExpectedPath", exe]
     if title:
         command += ["-ExpectedTitle", title]
+    # Everything else the profile implies (OCR language, composer hints, send
+    # button geometry, clipboard opt-in) comes from the same one copy the
+    # scheduled path uses.
+    command += ui_fallback.profile_args(profile)
     if args.event_id:
         command += ["-EventId", args.event_id]
     if text:
@@ -2389,7 +2413,9 @@ def coord_uia(args: argparse.Namespace) -> None:
         command += ["-OcrVerify"]
     command += ["-ReadBackTimeoutSeconds", str(max(1, min(args.timeout, 300)))]
     try:
-        completed = subprocess.run(command, text=True, capture_output=True, timeout=max(args.timeout + 60, 120), check=False)
+        completed = subprocess.run(command, text=True, capture_output=True,
+                                   env=ui_fallback.PowerShellUiaDriver._ui_env(profile),
+                                   timeout=max(args.timeout + 60, 120), check=False)
     except Exception as exc:  # noqa: BLE001
         raise ProtocolError(f"uia adapter failed: {exc}") from exc
     report = None
@@ -2409,6 +2435,11 @@ def coord_uia(args: argparse.Namespace) -> None:
                "report": ui_fallback.annotate_elevation(report) if report else report,
                "stderr": completed.stderr[-2000:],
                "note": "task_delivered=true only means the event id was read back from the same session; it is never an ACK."}
+    # The adapter's own path check needs Process.MainModule, which is denied for
+    # an elevated client, so it is skipped exactly where it matters.  Compare
+    # here instead, with an API that works at any integrity level.
+    payload["profile_path_check"] = process_info.path_check(
+        exe, (report or {}).get("pid"))
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
 

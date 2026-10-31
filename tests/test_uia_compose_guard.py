@@ -71,3 +71,54 @@ def test_qoder_profile_uses_sticky_composer_and_activity_gate():
     assert profile["require_activity_ready"] is True
     assert profile["activity_ocr"] is True
     assert profile["send_button_color"] == "green"
+
+
+def _capture_deliver_args(profile, monkeypatch):
+    """Run deliver() without PowerShell and return the argv it would pass."""
+    driver = PowerShellUiaDriver.__new__(PowerShellUiaDriver)
+    driver.pwsh = "pwsh"
+    seen = {}
+
+    def fake_run(script, args, timeout=45, env=None):
+        seen["args"] = list(args)
+        return {}
+
+    monkeypatch.setattr(driver, "_run", fake_run)
+    driver.deliver(profile, "ping AEP-TEST-1", "AEP-TEST-1")
+    return seen["args"]
+
+
+BASE_PROFILE = {"agent": "probe", "process": "probe", "title": "probe",
+                "exe": "probe.exe", "transport": "uia"}
+
+
+def test_clipboard_paste_is_opt_in_and_reaches_the_adapter(monkeypatch):
+    # The adapter refuses to paste into a client it cannot read unless this is
+    # passed, and Python never passed it: an opaque client reached
+    # NO_INPUT_CONTROL and had no way out.  It stays opt-in because the paste
+    # lands wherever activation put focus.
+    assert "-AllowClipboardPaste" not in _capture_deliver_args(dict(BASE_PROFILE), monkeypatch)
+    allowed = _capture_deliver_args({**BASE_PROFILE, "allow_clipboard_paste": True}, monkeypatch)
+    assert "-AllowClipboardPaste" in allowed
+
+
+def test_the_adapter_still_refuses_blind_paste_by_default():
+    source = (ROOT / "src" / "agent_evolution_protocol" / "coordination"
+              / "wake_adapters" / "uia_session.ps1").read_text(encoding="utf-8")
+    assert "if (-not $selection -and -not $AllowClipboardPaste) {" in source
+    assert "NO_INPUT_CONTROL: no enabled editable control found" in source
+
+
+def test_every_deliver_early_return_says_whether_an_input_was_found():
+    # The evidence ladder is only machine-checkable if the failing branches
+    # answer the same question as the succeeding one.  These three used to
+    # report a status and nothing about input_found.  Scoped to the deliver
+    # section: the compose path has its own receipts with their own rules.
+    source = (ROOT / "src" / "agent_evolution_protocol" / "coordination"
+              / "wake_adapters" / "uia_session.ps1").read_text(encoding="utf-8")
+    deliver_start = source.index("if (-not $selection -and -not $AllowClipboardPaste) {")
+    deliver = source[deliver_start:]
+    for status in ("urgent-interject-unavailable", "input-not-confirmed",
+                   "send-control-not-found"):
+        start = deliver.index(f"'{status}'")
+        assert "input_found" in deliver[start:start + 700], f"{status} does not report input_found"
