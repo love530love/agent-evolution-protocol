@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.6.11 — The previous release stated something it did not know
+
+- Corrected a false claim shipped in 0.6.10. `ack_protocol.sent()` returned
+  false for every `CEASED` order, so `state` read `not_sent`. But `commander`
+  ends an order in `CEASED` for two opposite reasons and only the note separates
+  them: `DELIVERY_UNPROVEN` (the adapter failed before anything was typed) and
+  `SUBMISSION_UNCONFIRMED` (**a send may have happened**; do not retry
+  automatically). "Possibly sent" and "not sent" were sharing one word.
+- Found on real data, not by review. Order `2026-10-30T0422243473450000-04d70400`
+  (`qoder`, `AEP-CI-FAIL-20261030`) has six trailing attempts noted
+  `SUBMISSION_UNCONFIRMED: possible send; do not retry automatically`, and
+  `aep coord-ack` reported `state: "not_sent"` for it. It now reports
+  `state: "submitted_unconfirmed"`, `delivery: "unconfirmed"`.
+- New `ack_protocol.delivery()` returns `proven` / `unconfirmed` / `none`;
+  `state` gains a fourth value, `submitted_unconfirmed`. `sent()` stays true only
+  for `proven`, deliberately: an order whose send is merely possible must not pin
+  a task waiting for a reply that may never have been asked for, and must not be
+  described as undelivered either. Both statements are now true separately, so
+  the supervisor's hold semantics are unchanged.
+- The note prefixes are matched as prefixes, so a note can gain explanation
+  without losing its meaning here, and `NotePrefixesAreStillWhatCommanderWritesTests`
+  reads `commander.py` and asserts both are still written -- a rename there would
+  silently return the judgement to `not_sent`, which is the defect just fixed.
+- The same read-only run gave the four guards their first real-data evidence:
+  order `2026-10-30T0345442451860000-7cf3d44f` (`qoder_cn`) is `acked` with two
+  candidates, one rejected `not_assistant` -- a real transcript line carrying the
+  token with `role`/`direction` both `unknown`, i.e. our own request. Until now
+  that guard had only fixture evidence.
+- Not done: unchanged from 0.6.10 -- session content is not in the fingerprint,
+  `hold_unacked` has no ceiling, `ack_tracker.py` is still unmerged, and
+  `TASK_RESULT_READBACK` is still unimplemented. This release corrects one wrong
+  judgement and widens nothing.
+
 ## 0.6.10 — Do not advance without an ACK, and do not send into a different session
 
 - New `coordination/ack_protocol.py`. The token we ask the peer to echo is a

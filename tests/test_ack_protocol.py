@@ -139,5 +139,75 @@ class AckVerdictTests(unittest.TestCase):
                                                   "accepted": True}))
 
 
+class CeasedIsNotOneFactTests(unittest.TestCase):
+    """``CEASED`` covers two opposite situations and only the note tells them apart.
+
+    Found on a real order (``2026-10-30T0422243473450000-04d70400``) whose last
+    attempt read ``CEASED / SUBMISSION_UNCONFIRMED: possible send; do not retry
+    automatically`` while the verdict said ``not_sent``.  One of those two
+    statements had to be false.
+    """
+
+    def _ceased(self, note, **extra):
+        return _order(state="CEASED", attempts=[{"state": "CEASED", "note": note}], **extra)
+
+    def test_a_possible_send_is_neither_sent_nor_not_sent(self):
+        order = self._ceased("SUBMISSION_UNCONFIRMED: possible send; do not retry automatically")
+        self.assertEqual(ack_protocol.delivery(order), "unconfirmed")
+        value = ack_protocol.verdict(order, events=[], now=NOW)
+        self.assertEqual(value["state"], "submitted_unconfirmed")
+        self.assertEqual(value["delivery"], "unconfirmed")
+        # Not proven, so the supervisor must not wait for a reply to a message
+        # that may never have been asked for.
+        self.assertFalse(value["sent"])
+        self.assertFalse(value["accepted"])
+
+    def test_an_adapter_that_failed_before_typing_is_still_not_sent(self):
+        order = self._ceased("DELIVERY_UNPROVEN: adapter failed; manual diagnosis required")
+        self.assertEqual(ack_protocol.delivery(order), "none")
+        self.assertEqual(ack_protocol.verdict(order, events=[], now=NOW)["state"], "not_sent")
+
+    def test_proof_beats_a_later_unconfirmed_note(self):
+        # An earlier attempt that reached the conversation settles the question:
+        # the later failure does not un-send it.
+        order = _order(state="CEASED", attempts=[
+            {"state": "INPUT_SUBMITTED"},
+            {"state": "CEASED", "note": "SUBMISSION_UNCONFIRMED: possible send"},
+        ])
+        self.assertEqual(ack_protocol.delivery(order), "proven")
+        self.assertEqual(ack_protocol.verdict(order, events=[], now=NOW)["state"], "sent_unacked")
+
+    def test_the_note_is_matched_as_a_prefix_so_it_can_gain_explanation(self):
+        order = self._ceased("SUBMISSION_UNCONFIRMED: possible send, and the composer still "
+                             "held text -- a human should look before anything is retried")
+        self.assertEqual(ack_protocol.delivery(order), "unconfirmed")
+
+    def test_an_unrelated_ceased_note_does_not_claim_a_send(self):
+        order = self._ceased("")
+        self.assertEqual(ack_protocol.delivery(order), "none")
+
+    def test_delivery_rejects_a_non_object(self):
+        with self.assertRaises(ValueError):
+            ack_protocol.delivery(["not", "an", "order"])
+
+
+class NotePrefixesAreStillWhatCommanderWritesTests(unittest.TestCase):
+    """The two ``CEASED`` notes are the only thing separating "may have sent"
+    from "nothing was typed".  If ``commander`` renames one, this module keeps
+    returning ``unconfirmed`` for a string nobody writes -- i.e. it silently
+    starts saying ``not_sent`` again, which is the defect this fixed.  So the
+    coupling is asserted instead of assumed.
+    """
+
+    def test_the_prefixes_appear_in_commander(self):
+        from pathlib import Path
+
+        source = (Path(__file__).resolve().parents[1] / "src" / "agent_evolution_protocol"
+                  / "coordination" / "commander.py").read_text(encoding="utf-8")
+        for prefix in (ack_protocol.UNCONFIRMED_NOTE, ack_protocol.UNPROVEN_NOTE):
+            self.assertIn(f'"{prefix}:', source,
+                          f"commander no longer writes a note starting with {prefix}")
+
+
 if __name__ == "__main__":
     unittest.main()

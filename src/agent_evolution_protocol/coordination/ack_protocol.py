@@ -18,6 +18,15 @@ A *late* reply is accepted.  The distinction that matters is "arrived after we
 sent", not "arrived inside some window": a timeout is a statement about our
 patience, not about the agent, and treating it as refusal is what produces
 duplicate sends.  ``state`` therefore has no ``timeout`` value at all.
+
+``CEASED`` is not one fact.  ``commander`` ends an order there for two different
+reasons, and only the note tells them apart: ``DELIVERY_UNPROVEN`` means the
+adapter failed before anything was typed, while ``SUBMISSION_UNCONFIRMED`` means
+a send *may* have happened and must not be retried automatically.  Collapsing
+both into ``not_sent`` states something we do not know -- measured on a real
+order here (``2026-10-30T0422243473450000-04d70400``), the verdict read
+``not_sent`` for an order whose own last attempt said ``possible send``.  Hence
+``delivery()`` has three answers and ``state`` has four.
 """
 from __future__ import annotations
 
@@ -29,6 +38,14 @@ SCHEMA = "aep-ack-verdict-v1"
 ACK_TOKEN = "AEP-ACK"
 #: Order states that prove characters reached the conversation.
 SENT_STATES = frozenset({"INPUT_SUBMITTED", "MESSAGE_VISIBLE", "AGENT_ACK"})
+#: Prefix ``commander`` writes on a ``CEASED`` attempt whose send may have
+#: happened.  Matched as a prefix rather than a whole sentence so the note can
+#: gain explanation without silently losing its meaning here.
+UNCONFIRMED_NOTE = "SUBMISSION_UNCONFIRMED"
+#: ``CEASED`` prefixes that say nothing was typed.  Recorded so the two kinds of
+#: ``CEASED`` are both named in one place instead of one being implied.
+UNPROVEN_NOTE = "DELIVERY_UNPROVEN"
+
 #: Why a token-bearing event was not accepted.  Each one is a real failure mode,
 #: and keeping them apart is the difference between "no answer yet" and "the
 #: wrong conversation answered".
@@ -57,14 +74,36 @@ def _moment(value: Any) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
-def sent(order: dict[str, Any]) -> bool:
-    """Whether anything was actually typed into this order's conversation."""
+def delivery(order: dict[str, Any]) -> str:
+    """``proven`` / ``unconfirmed`` / ``none`` -- what the ladder actually shows.
+
+    ``proven`` means an attempt recorded a state that cannot exist without the
+    characters having reached the conversation.  ``unconfirmed`` means an attempt
+    ended in ``CEASED`` with a note saying a send may have happened; that is not
+    evidence of delivery, but it is also not evidence of the opposite, and the
+    two must not share a word.
+    """
     if not isinstance(order, dict):
         raise ValueError("order must be an object")
+    attempts = [attempt for attempt in order.get("attempts") or [] if isinstance(attempt, dict)]
     if str(order.get("state", "")) in SENT_STATES:
-        return True
-    return any(str(attempt.get("state", "")) in SENT_STATES
-               for attempt in order.get("attempts") or [])
+        return "proven"
+    if any(str(attempt.get("state", "")) in SENT_STATES for attempt in attempts):
+        return "proven"
+    if any(str(attempt.get("note", "")).startswith(UNCONFIRMED_NOTE) for attempt in attempts):
+        return "unconfirmed"
+    return "none"
+
+
+def sent(order: dict[str, Any]) -> bool:
+    """Whether anything was *proven* to reach this order's conversation.
+
+    Deliberately narrow: the supervisor's hold uses this, and an order whose send
+    is merely possible must not pin a task waiting for a reply that may have
+    never been asked for.
+    """
+    return delivery(order) == "proven"
+
 
 
 def classify(event: dict[str, Any], *, token: str, session_id: str,
@@ -128,10 +167,15 @@ def verdict(order: dict[str, Any], *, events: list[dict[str, Any]],
         candidates.append(classify(event, token=token, session_id=session_id,
                                    created_at=created_at))
     accepted = [row for row in candidates if row["accepted"]]
+    reached = delivery(order)
     if accepted:
         state = "acked"
-    elif sent(order):
+    elif reached == "proven":
         state = "sent_unacked"
+    elif reached == "unconfirmed":
+        # Not "waiting" and not "never sent": a fourth answer, because the two
+        # existing ones would both be false claims about what happened.
+        state = "submitted_unconfirmed"
     else:
         state = "not_sent"
 
@@ -145,7 +189,8 @@ def verdict(order: dict[str, Any], *, events: list[dict[str, Any]],
         "token": token,
         "state": state,
         "accepted": bool(accepted),
-        "sent": sent(order),
+        "sent": reached == "proven",
+        "delivery": reached,
         "evidence": accepted[0] if accepted else None,
         "candidates": len(candidates),
         "rejected": rejected,

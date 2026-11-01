@@ -432,6 +432,13 @@ python -m pytest tests/test_ocr_wiring.py tests/test_uia_argv.py `
   而它在 POSIX 上是恒等函数、也不认 `\`，于是同一路径在两个宿主算出两个指纹
   （`test_path_case_and_separators_do_not_change_the_identity` 在 Linux 失败）。
   已改为自己实现规范化，不再让宿主决定路径含义。修完 Windows 与 WSL 各 9 passed。
+- **v0.6.10 说了一句假话，v0.6.11 纠正**：`CEASED` 一律被判成 `not_sent`，
+  但 `commander` 在 `CEASED` 里写两种相反的 note——`DELIVERY_UNPROVEN`（什么都没打进去）
+  和 `SUBMISSION_UNCONFIRMED`（**可能已经发出去了**）。真实订单
+  `2026-10-30T0422243473450000-04d70400` 当场抓到：最后 6 次尝试的 note 都是后者，
+  判定却报 `not_sent`。现在多一个状态 `submitted_unconfirmed` 与字段
+  `delivery: proven|unconfirmed|none`。**教训：一个新判定的第一批真实数据必须马上跑，
+  而不是等它进了发布说明。**
 
 验收命令（新增）：
 

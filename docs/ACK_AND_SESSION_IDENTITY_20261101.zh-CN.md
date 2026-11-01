@@ -39,11 +39,35 @@
 
 ### 没有 timeout 这个状态
 
-`state` 只有三个值：`not_sent` / `sent_unacked` / `acked`。
+`state` 有四个值：`not_sent` / `submitted_unconfirmed` / `sent_unacked` / `acked`。
 
 迟到的回复**必须被接受**。超时是关于我们耐心的陈述，不是关于对方的；
 把它当成拒绝，正是重复发送的来源——这一条在 2026-10-31 的实测里已经踩过一次
 （应答比 60 秒窗口晚到约一分钟，而消息其实早已送达）。
+
+**第四个值是 v0.6.11 补的，原因是 v0.6.10 说了一句假话。** 当时只有三个值，
+而 `CEASED` 被当成「没发出去」。可是 `commander` 在 `CEASED` 里写两种完全相反的 note：
+
+| note 前缀 | 事实 | 原来的判定 | 现在的判定 |
+|---|---|---|---|
+| `DELIVERY_UNPROVEN:` | 适配器失败，**什么都没打进去** | `not_sent` | `not_sent`（不变） |
+| `SUBMISSION_UNCONFIRMED:` | **可能已经发出去了**，不要自动重试 | `not_sent` ← **假话** | `submitted_unconfirmed` |
+
+真实订单抓到的：`2026-10-30T0422243473450000-04d70400`（`qoder` / `AEP-CI-FAIL-20261030`）
+最后 6 次尝试的 note 都是 `SUBMISSION_UNCONFIRMED: possible send; do not retry automatically`，
+而 v0.6.10 的 `coord-ack` 输出 `state: "not_sent"`。**「可能发过」和「没发」被同一个词说了**，
+这在一个以「状态必须为真」为纪律的仓库里是硬伤。
+
+现在多一个字段 `delivery`，三值：`proven` / `unconfirmed` / `none`。
+`sent` 仍然只在 `proven` 时为真——**「可能发过」不能把任务钉在等一个也许从没被问过的回复上**，
+但也不能被说成「没发」。修后同一张单输出：
+
+```json
+"state": "submitted_unconfirmed", "sent": false, "delivery": "unconfirmed"
+```
+
+两个 note 前缀与 `commander` 的耦合由 `NotePrefixesAreStillWhatCommanderWritesTests` 守着：
+`commander` 改了 note 措辞而这里没跟上，会让判定静默退回「没发」，正是刚修掉的那个缺陷。
 
 ### 离线看判定
 
@@ -51,8 +75,18 @@
 aep --coord-root coordination coord-ack --order-id <id>
 ```
 
-输出里除了 `state` / `accepted`，还有 `rejected` 列表——每一个被排除的候选
+输出里除了 `state` / `accepted` / `delivery`，还有 `rejected` 列表——每一个被排除的候选
 都带自己的原因，而不是只给一个「未确认」。未接受时 exit 2。
+
+真实数据（2026-11-01 只读跑，`coordination/` 里 8 张历史单）：
+
+| 订单 | 结果 |
+|---|---|
+| `2026-10-30T0345442451860000-7cf3d44f`（qoder_cn，`AGENT_ACK`） | `acked`，2 个候选、1 个被拒 `not_assistant`，exit 0 |
+| `2026-10-30T0422243473450000-04d70400`（qoder，`CEASED`） | `submitted_unconfirmed`，exit 2 |
+
+第一张单的 `rejected` 是关键：真实会话里确实有一条带 token 但 `role/direction` 都是 `unknown`
+的行（我们自己那句请求），四道守卫在**真实数据**上把它挡下来了，不是只在夹具里成立。
 
 ## 2. 没有 ACK 不得推进
 
