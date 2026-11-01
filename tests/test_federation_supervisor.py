@@ -149,7 +149,15 @@ class SupervisorTests(unittest.TestCase):
 
 
 class AckGateTests(unittest.TestCase):
-    """No ACK, no downstream progress -- for orders that were actually sent."""
+    """No ACK, no downstream progress -- for orders that were actually sent.
+
+    Every step here passes ``ack_policy="enforce"`` explicitly.  The default
+    became ``"record"`` in v0.6.15, so a bare ``step()`` no longer holds -- and
+    leaving these calls bare would have made them pass for the wrong reason
+    once the default flipped, or fail while the property they test still held.
+    Naming the policy is what keeps each assertion about the gate rather than
+    about the default.
+    """
 
     def setUp(self):
         self._temp = TemporaryDirectory()
@@ -170,7 +178,7 @@ class AckGateTests(unittest.TestCase):
         _set_order(self.coord, order["id"], "MESSAGE_VISIBLE")
         _report(self.coord, "execute", "alpha")
         result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
-                                 dispatch=False)
+                                 dispatch=False, ack_policy="enforce")
         self.assertEqual(result["closed"], [])
         self.assertEqual([row["action"] for row in result["held"]], ["hold_unacked"])
         self.assertEqual(result["held"][0]["state"], "sent_unacked")
@@ -185,14 +193,14 @@ class AckGateTests(unittest.TestCase):
         _set_order(self.coord, order["id"], "MESSAGE_VISIBLE", session_id="4242")
         _report(self.coord, "execute", "alpha")
         held = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
-                               dispatch=False)
+                               dispatch=False, ack_policy="enforce")
         self.assertEqual(held["closed"], [])
         transcript_bus.publish(self.coord, agent="alpha",
                                text="AEP-ACK:" + order["event_id"],
                                session_id="4242",
                                role="assistant", direction="incoming")
         result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
-                                 dispatch=False)
+                                 dispatch=False, ack_policy="enforce")
         # The receipt gained a `result` field: what the readback could prove
         # about the agent's output, which is None here because this fixture
         # names no artifact.  Matching on the subset keeps the assertion about
@@ -209,7 +217,7 @@ class AckGateTests(unittest.TestCase):
         receipt, adapters = self._intake()
         _report(self.coord, "execute", "alpha")
         result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
-                                 dispatch=False)
+                                 dispatch=False, ack_policy="enforce")
         self.assertEqual(result["held"], [])
         self.assertEqual(result["tasks"]["execute"]["state"], "done")
 
@@ -219,13 +227,13 @@ class AckGateTests(unittest.TestCase):
         _set_order(self.coord, order["id"], "MESSAGE_VISIBLE", session_id="4242")
         _report(self.coord, "execute", "alpha")
         first = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
-                                dispatch=False)
+                                dispatch=False, ack_policy="enforce")
         self.assertEqual([row["action"] for row in first["held"]], ["hold_unacked"])
 
         commander.abandon(self.coord, order["id"], actor="love",
                           reason="the client is wedged; re-planning tomorrow")
         result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
-                                 dispatch=False)
+                                 dispatch=False, ack_policy="enforce")
         self.assertEqual([row["action"] for row in result["closed"]], ["abandoned"])
         self.assertEqual(result["held"], [])
         # Blocked, never done: abandoning a delivery is not evidence of the work.
@@ -246,7 +254,7 @@ class AckGateTests(unittest.TestCase):
         # hold_limit_seconds=None is the pre-v0.6.14 behaviour and must still be
         # available: a deployment may prefer to watch `held` itself.
         result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
-                                 dispatch=False, hold_limit_seconds=None)
+                                 dispatch=False, ack_policy="enforce", hold_limit_seconds=None)
         row = result["held"][0]
         self.assertEqual(row["verdict"], "hold")
         self.assertGreaterEqual(row["unacked_for_seconds"], 3600)
@@ -263,7 +271,7 @@ class AckGateTests(unittest.TestCase):
         _age_order(self.coord, order["id"], 3600)
         _report(self.coord, "execute", "alpha")
         result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
-                                 dispatch=False, hold_limit_seconds=60)
+                                 dispatch=False, ack_policy="enforce", hold_limit_seconds=60)
         row = result["held"][0]
         self.assertTrue(row["over_limit"])
         self.assertEqual(row["limit_seconds"], 60)
@@ -280,7 +288,7 @@ class AckGateTests(unittest.TestCase):
         _age_order(self.coord, order["id"], 3600)
         _report(self.coord, "execute", "alpha")
         result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
-                                 dispatch=False, hold_limit_seconds=60)
+                                 dispatch=False, ack_policy="enforce", hold_limit_seconds=60)
         self.assertEqual(result["alerts"]["count"], 1)
         alert = result["alerts"]["alerts"][0]
         self.assertEqual(alert["task"], "execute")
@@ -309,7 +317,7 @@ class AckGateTests(unittest.TestCase):
         _age_order(self.coord, order["id"], 3600)
         _report(self.coord, "execute", "alpha")
         result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
-                                 dispatch=False, hold_limit_seconds=60)
+                                 dispatch=False, ack_policy="enforce", hold_limit_seconds=60)
         messages = list((Path(self.coord) / "messages").rglob("*.json"))
         self.assertEqual(len(messages), 1)
         again = hold_alerts.emit(self.coord, result["held"])
@@ -323,10 +331,177 @@ class AckGateTests(unittest.TestCase):
         _set_order(self.coord, order["id"], "MESSAGE_VISIBLE", session_id="4242")
         _report(self.coord, "execute", "alpha")
         result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
-                                 dispatch=False, hold_limit_seconds=60)
+                                 dispatch=False, ack_policy="enforce", hold_limit_seconds=60)
         self.assertEqual(result["alerts"]["count"], 0)
         self.assertEqual([row["task"] for row in result["alerts"]["waiting"]], ["execute"])
         self.assertEqual(list((Path(self.coord) / "messages").rglob("*.json")), [])
+
+
+class RecordPolicyTests(unittest.TestCase):
+    """An unacknowledged order no longer stops the DAG -- but it is still recorded.
+
+    v0.6.15 flipped the default from ``enforce`` to ``record``.  The gate had no
+    exception, so an adapter that cannot report an ACK, a session a person had
+    closed, and a client that never renders the reply all produced the same
+    outcome: the task pinned in ``running`` with the work possibly finished.  What
+    the flip must *not* do is delete the fact, so almost every test here is about
+    the receipt rather than about the advance.  ``ack.verdict == "hold"`` on a
+    completed task is the whole design: it advanced, and it says so.
+    """
+
+    def setUp(self):
+        self._temp = TemporaryDirectory()
+        self.root = Path(self._temp.name) / "state"
+        self.coord = str(Path(self._temp.name) / "coordination")
+        self.addCleanup(self._temp.cleanup)
+
+    def _intake(self):
+        receipt = intake.intake(self.root, self.coord, text="跑通 README",
+                                agents=["alpha", "beta"], shape="reviewed", sender="kernel")
+        adapters = supervisor.build_adapters(coord_root=self.coord, agents=["alpha", "beta"],
+                                             workspace_id=receipt["workspace"])
+        return receipt, adapters
+
+    def _sent_unacked(self):
+        """A sent order, an agent that reported done, and no acknowledgement."""
+        receipt, adapters = self._intake()
+        order = commander._orders(self.coord)[0]
+        _set_order(self.coord, order["id"], "MESSAGE_VISIBLE", session_id="4242")
+        _report(self.coord, "execute", "alpha")
+        return receipt, adapters, order
+
+    def _done(self, result):
+        done = [row for row in result["closed"] if row["action"] == "complete"]
+        self.assertEqual(len(done), 1, f"expected exactly one completion, got {result['closed']}")
+        return done[0]
+
+    def test_the_default_lets_an_unacknowledged_task_finish(self):
+        receipt, adapters, _ = self._sent_unacked()
+        result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
+                                 dispatch=False)
+        self.assertEqual(result["ack_policy"], "record")
+        self.assertEqual(result["held"], [])
+        self.assertEqual(result["tasks"]["execute"]["state"], "done")
+        # The dependent node starts, which is the thing the old gate forbade.
+        self.assertNotEqual(result["tasks"]["review"]["state"], "pending")
+
+    def test_the_completion_carries_the_fact_that_nothing_acknowledged_it(self):
+        receipt, adapters, _ = self._sent_unacked()
+        result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
+                                 dispatch=False)
+        ack = self._done(result)["ack"]
+        self.assertEqual(ack["verdict"], "hold")
+        self.assertEqual(ack["reason"], "no_ack")
+        self.assertEqual(ack["state"], "sent_unacked")
+        # How long it waited is evidence; a bare "hold" is not.
+        self.assertIsNotNone(ack["unacked_for_seconds"])
+        self.assertTrue(ack["sent_at"])
+
+    def test_the_released_bucket_names_the_task_that_advanced_unacked(self):
+        # `closed` alone cannot express this: a released completion and a clean
+        # one look identical there apart from the verdict.  The separate bucket
+        # is what lets a watcher see them without parsing every receipt.
+        receipt, adapters, _ = self._sent_unacked()
+        result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
+                                 dispatch=False)
+        self.assertEqual([row["task"] for row in result["released"]], ["execute"])
+        self.assertEqual(result["released"][0]["action"], "released_unacked")
+        self.assertEqual(result["released"][0]["verdict"], "hold")
+
+    def test_no_alert_is_raised_because_nothing_is_stuck(self):
+        # The documented cost of the relaxation: `hold_alerts` fires on a hold,
+        # and under `record` there is no hold left.  Asserting the silence keeps
+        # the loss visible instead of letting it be discovered later.
+        receipt, adapters, order = self._sent_unacked()
+        _age_order(self.coord, order["id"], 7200)
+        result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
+                                 dispatch=False, hold_limit_seconds=60)
+        self.assertEqual(result["alerts"]["count"], 0)
+        self.assertEqual(result["released"][0]["over_limit"], True)
+
+    def test_a_human_abandonment_still_blocks_under_the_record_policy(self):
+        # `ack_policy` governs a missing acknowledgement.  An abandonment is a
+        # signature, which is the opposite kind of evidence, so relaxing one must
+        # never relax the other -- otherwise "we gave up" would become "it's done".
+        receipt, adapters, order = self._sent_unacked()
+        commander.abandon(self.coord, order["id"], actor="love",
+                          reason="the client is wedged; re-planning tomorrow")
+        result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
+                                 dispatch=False)
+        self.assertEqual([row["action"] for row in result["closed"]], ["abandoned"])
+        self.assertEqual(result["tasks"]["execute"]["state"], "blocked")
+        self.assertEqual(result["released"], [])
+
+    def test_a_proven_contradiction_still_blocks_under_the_record_policy(self):
+        # Same distinction one level down: a missing ACK is absence of evidence
+        # about delivery, a contradicted artifact is evidence against the work.
+        from agent_evolution_protocol.coordination import transcript_bus
+        receipt, adapters = self._intake()
+        order = commander._orders(self.coord)[0]
+        _set_order(self.coord, order["id"], "MESSAGE_VISIBLE", session_id="4242")
+        transcript_bus.publish(self.coord, agent="alpha",
+                               text="AEP-ACK:" + order["event_id"] + "\nwrote docs/other.md",
+                               session_id="4242", role="assistant", direction="incoming")
+        _report(self.coord, "execute", "alpha", evidence=["docs/claimed.md"])
+        result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
+                                 dispatch=False)
+        self.assertEqual([row["action"] for row in result["held"]], ["hold_result_mismatch"])
+        self.assertEqual(result["tasks"]["execute"]["state"], "running")
+
+    def test_the_receipt_tells_acked_from_never_sent(self):
+        # Before v0.6.15 `_ack_blocks` returned None for both, so a receipt could
+        # not distinguish "the agent replied" from "nobody could have replied".
+        receipt, adapters = self._intake()
+        _report(self.coord, "execute", "alpha")
+        result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
+                                 dispatch=False)
+        self.assertEqual(self._done(result)["ack"]["reason"], "not_sent")
+
+    def test_an_acknowledged_order_says_acked_not_merely_clear(self):
+        from agent_evolution_protocol.coordination import transcript_bus
+        receipt, adapters = self._intake()
+        order = commander._orders(self.coord)[0]
+        _set_order(self.coord, order["id"], "MESSAGE_VISIBLE", session_id="4242")
+        transcript_bus.publish(self.coord, agent="alpha",
+                               text="AEP-ACK:" + order["event_id"],
+                               session_id="4242", role="assistant", direction="incoming")
+        _report(self.coord, "execute", "alpha")
+        result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
+                                 dispatch=False)
+        self.assertEqual(self._done(result)["ack"]["reason"], "acked")
+        self.assertEqual(result["released"], [])
+
+    def test_a_released_row_is_never_written_for_a_task_that_did_not_advance(self):
+        # Both conditions at once: no acknowledgement *and* a contradicted
+        # artifact.  The contradiction wins, so the task stays running -- and
+        # `released` must not carry a row claiming it advanced.  This was a real
+        # defect: the released row used to be appended before the contradiction
+        # gate, so the receipt said "advanced" about a task that did not move.
+        from agent_evolution_protocol.coordination import transcript_bus
+        receipt, adapters = self._intake()
+        order = commander._orders(self.coord)[0]
+        _set_order(self.coord, order["id"], "MESSAGE_VISIBLE", session_id="4242")
+        # No AEP-ACK token, so the verdict is `hold`; the transcript still names
+        # a different artifact than the one the agent claims.
+        transcript_bus.publish(self.coord, agent="alpha", text="wrote docs/other.md",
+                               session_id="4242", role="assistant", direction="incoming")
+        _report(self.coord, "execute", "alpha", evidence=["docs/claimed.md"])
+        result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
+                                 dispatch=False)
+        self.assertEqual([row["action"] for row in result["held"]], ["hold_result_mismatch"])
+        self.assertEqual(result["released"], [])
+        self.assertEqual(result["tasks"]["execute"]["state"], "running")
+
+    def test_an_unknown_policy_is_refused_rather_than_guessed(self):
+        # A typo must not silently mean "enforce" or silently mean "record".
+        receipt, adapters = self._intake()
+        with self.assertRaises(ValueError):
+            supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
+                            dispatch=False, ack_policy="maybe")
+        with self.assertRaises(ValueError):
+            supervisor.serve(self.root, self.coord, receipt["workspace"], adapters,
+                             interval=1.0, max_ticks=1, dispatch=False,
+                             ack_policy="maybe")
 
 
 class ResultReadbackTests(unittest.TestCase):
@@ -380,6 +555,68 @@ class ResultReadbackTests(unittest.TestCase):
         self.assertEqual(len(done), 1)
         self.assertIsNone(done[0]["result"]["match"])
         self.assertTrue(done[0]["result"]["reason"])
+
+    def test_the_completion_says_the_comparison_was_anchored_to_the_conversation(self):
+        # v0.6.14 shipped this guard unwired and said so only in a docstring.  If
+        # the receipt does not carry it, "wired" and "forgotten" look identical
+        # from outside -- which is how the first version survived review.
+        result, _ = self._acked(claimed="docs/claimed.md", said="wrote docs/claimed.md")
+        done = [row for row in result["closed"] if row["action"] == "complete"][0]
+        self.assertTrue(done["result"]["session_checked"])
+        self.assertFalse(done["result"]["session_unknown"])
+
+    def test_a_path_from_another_conversation_no_longer_counts_as_this_result(self):
+        # The point of wiring the guard: same agent, same path, different window.
+        # Before v0.6.15 this compared against every line the agent ever wrote and
+        # called it a match; now the anchor rejects the foreign line and the
+        # verdict is "nothing comparable", not "verified".
+        from agent_evolution_protocol.coordination import transcript_bus
+        receipt = intake.intake(self.root, self.coord, text="跑通 README",
+                                agents=["alpha", "beta"], shape="reviewed", sender="kernel")
+        adapters = supervisor.build_adapters(coord_root=self.coord, agents=["alpha", "beta"],
+                                             workspace_id=receipt["workspace"])
+        order = commander._orders(self.coord)[0]
+        _set_order(self.coord, order["id"], "MESSAGE_VISIBLE", session_id="4242")
+        transcript_bus.publish(self.coord, agent="alpha",
+                               text="AEP-ACK:" + order["event_id"],
+                               session_id="4242", role="assistant", direction="incoming")
+        # The claimed artifact is only ever named in a *different* conversation.
+        transcript_bus.publish(self.coord, agent="alpha", text="wrote docs/claimed.md",
+                               session_id="9999", role="assistant", direction="incoming")
+        _report(self.coord, "execute", "alpha", evidence=["docs/claimed.md"])
+        result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
+                                 dispatch=False)
+        done = [row for row in result["closed"] if row["action"] == "complete"][0]
+        self.assertTrue(done["result"]["session_checked"])
+        self.assertIsNone(done["result"]["match"])
+        self.assertEqual(done["result"]["reason"], "foreign_session")
+
+    def test_an_order_with_no_session_cannot_be_anchored_and_says_so(self):
+        # The honest failure: no anchor means the whole transcript was compared,
+        # and the receipt must not let that pass for an anchored verification.
+        #
+        # ``match`` stays True here on purpose.  It answers "does what the agent
+        # said agree with what the transcript shows", and it does.  Whether the
+        # comparison was anchored to the dispatched conversation is a *different*
+        # question, answered by ``session_checked``.  Collapsing the two would
+        # either throw away real agreement (6 of the 24 orders on disk carry no
+        # ``session_id``) or overstate it; two fields keep both readings honest.
+        from agent_evolution_protocol.coordination import transcript_bus
+        receipt = intake.intake(self.root, self.coord, text="跑通 README",
+                                agents=["alpha", "beta"], shape="reviewed", sender="kernel")
+        adapters = supervisor.build_adapters(coord_root=self.coord, agents=["alpha", "beta"],
+                                             workspace_id=receipt["workspace"])
+        order = commander._orders(self.coord)[0]
+        _set_order(self.coord, order["id"], "MESSAGE_VISIBLE")   # no session_id
+        transcript_bus.publish(self.coord, agent="alpha",
+                               text="AEP-ACK:" + order["event_id"] + "\nwrote docs/claimed.md",
+                               session_id="4242", role="assistant", direction="incoming")
+        _report(self.coord, "execute", "alpha", evidence=["docs/claimed.md"])
+        result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
+                                 dispatch=False)
+        done = [row for row in result["closed"] if row["action"] == "complete"][0]
+        self.assertFalse(done["result"]["session_checked"])
+        self.assertTrue(done["result"]["match"])
 
 
 if __name__ == "__main__":

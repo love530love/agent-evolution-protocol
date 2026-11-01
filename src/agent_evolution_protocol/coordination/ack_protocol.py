@@ -36,7 +36,10 @@ would pin a task forever, but a *timeout* that advances the DAG would delete the
 whole guarantee this module provides -- so ending the wait requires a named human
 and a written reason, and its consequence is ``blocked``, not ``done``.  A late
 reply is still accepted after an abandonment: the agent did answer, we simply
-stopped asking, and the record keeps both facts.
+stopped asking, and the record keeps both facts.  Keeping both means the verdict
+reports the reply *and* the sign-off while the order's own ``state`` stays
+``ABANDONED`` -- a sign-off is not a cache entry that a later event invalidates,
+and treating it as one let a late ACK complete a task a human had closed.
 """
 from __future__ import annotations
 
@@ -254,6 +257,13 @@ def verdict(order: dict[str, Any], *, events: list[dict[str, Any]],
         "delivery": reached,
         "sent_at": str(created_at),
         "abandoned": signoff,
+        # Two facts, neither hidden: a reply exists *and* a person ended the
+        # wait.  ``late_ack`` names the combination so no reader has to derive
+        # it from two fields and get it wrong; ``late_acks`` is what
+        # ``commander`` recorded durably when it declined to move the order.
+        "late_ack": bool(accepted) and signoff is not None,
+        "late_acks": [dict(row) for row in order.get("late_acks") or []
+                      if isinstance(row, dict)],
         "evidence": accepted[0] if accepted else None,
         "candidates": len(candidates),
         "rejected": rejected,
@@ -263,5 +273,16 @@ def verdict(order: dict[str, Any], *, events: list[dict[str, Any]],
 
 
 def may_advance(value: dict[str, Any]) -> bool:
-    """The rule the supervisor uses: no accepted ACK, no downstream progress."""
-    return isinstance(value, dict) and value.get("schema") == SCHEMA and value.get("accepted") is True
+    """The rule the supervisor uses: no accepted ACK, no downstream progress.
+
+    A sign-off outranks an ACK here even though both are on record.  The
+    supervisor checks ``abandoned`` before this function, so in practice the
+    guard is belt-and-braces; it is still written down because ``may_advance``
+    is the documented answer to "may the DAG move", and "a machine event may
+    revoke a human decision" is the one answer that must never come out of it.
+    """
+    if not isinstance(value, dict) or value.get("schema") != SCHEMA:
+        return False
+    if value.get("abandoned") is not None:
+        return False
+    return value.get("accepted") is True

@@ -1,5 +1,75 @@
 # Changelog
 
+## 0.6.15 — The missing ACK stopped blocking; it did not stop being recorded
+
+- "No ACK, no progress" was a gate with no exception, and the exceptions are
+  ordinary: an adapter that cannot report an ACK at all, a session a person
+  closed, a client that never renders the reply.  None of those mean the work is
+  missing, and all of them pinned the task in `running` forever.  `step(...,
+  ack_policy=)` now has two values.  `"record"` is the default: advance, and write
+  the unacknowledged verdict into the completion receipt.  `"enforce"` is the
+  0.6.14 behaviour and is kept so the relaxation itself can be measured.
+- There is deliberately no third value expressed as a number of minutes.  A hold
+  that turns into progress on a timer is not a judgement, which is why 0.6.13
+  refused it; relaxing a rule has to mean changing the criterion, not adding an
+  alarm clock to the old one.
+- `_ack_blocks` used to return `None` for "may advance", collapsing three
+  different facts -- the order was acknowledged, it was never sent, the adapter
+  cannot report an ACK -- into one indistinguishable value.  Under `enforce` that
+  cost nothing, because all three advance anyway.  Under `record` they all advance
+  and the receipt is the only place the difference can live, so it now returns
+  `{verdict, reason}` always and every completion carries `ack`.
+- `ack.verdict == "hold"` on a `closed` row is the whole design: it advanced, and
+  it says so.  A separate `released` bucket names the same tasks, because in
+  `closed` a released completion and a clean one differ by one field.
+- What was **not** relaxed: an `abandon` verdict still blocks (a signature is the
+  opposite kind of evidence to a missing acknowledgement), and `match is False`
+  still blocks (a contradicted artifact is evidence against the work, where a
+  missing ACK is only absence of evidence about delivery).
+- Cost, stated rather than discovered: under `record` there is no hold left, so
+  `hold_alerts` emits nothing.  Visibility was traded for liveness.  Verified at
+  the filesystem level, not just from `alerts.count`: the `record` workspace has
+  no `coordination/messages/` directory at all, the `enforce` workspace has
+  `messages/kernel/<id>.json`.
+- The readback session guard is wired.  `_result_blocks` anchors on the order's
+  `session_id` instead of comparing every line the agent ever wrote.  `observe`
+  now reports `session_checked` / `session_unknown` / `session_reason`, and the
+  completion receipt carries the first two, because otherwise "we wired it" and
+  "we forgot" look identical from outside -- which is how 0.6.14 shipped the guard
+  disconnected.
+- Reversed: a path found only in another conversation is `None`/`foreign_session`,
+  not `False`.  `False` means we have positive evidence the claim is wrong; a
+  product in another window shows the product exists and what we lack is
+  attribution.  Blocking on that stalls a task whose work may be done.  Same for a
+  line carrying no `session_id`: it cannot verify anything, so it yields `None`
+  rather than being compared and called agreement.
+- Fixed while wiring it: when the anchored conversation contained an attributable
+  line with no artifact (an ACK) and the artifact appeared only elsewhere, the
+  verdict fell through to `no_result_in_transcript` and dropped the fact that the
+  output *was* found, in another conversation.  Both are `None`; only one tells
+  you to go read the other window.
+- `engine.revive(root, state, task_id=, reason=, actor=)` reopens a task blocked by
+  an abandonment, and `_reopen_dependents` reopens downstream tasks whose
+  dependencies are all alive again -- otherwise reviving the upstream leaves a
+  dependent `blocked` with a note saying "blocked by ['execute']" while `execute`
+  is running, which is a record stating something untrue.  Only tasks carrying
+  `blocked_by_deps` are reopened, so scope conflicts and refusals are untouched.
+  Idempotent, and the abandonment record is kept alongside the revival rather than
+  replaced by it.
+- Fixed, and this one was worse than documented: a late ACK on an abandoned order
+  used to overwrite `state` to `AGENT_ACK`, which made `ack_protocol.abandoned()`
+  return `None` (it reads the state), which skipped the abandon branch and let
+  `may_advance()` return `True` -- so **a human sign-off was silently revoked by a
+  machine event, and the task then completed as `done`**.  Not "two records
+  disagree"; the opposite of what `abandon` promises.  The reply is now kept in
+  `late_acks` (idempotent by event id) while `state` stays `ABANDONED`, and
+  `may_advance()` refuses to advance past a sign-off even when `accepted` is True.
+- Regression: Windows 1058 passed, 3 skipped, 113 subtests; WSL 1011 passed, 50
+  skipped.  Both collect 1061, and the +34 over 0.6.14's 1027 reconciles file by
+  file.  Two tests were removed, both named in the release note as the ones whose
+  semantics this version deliberately reversed; every other test file has zero
+  deletions.
+
 ## 0.6.14 — After the receipt, look at the result
 
 - The three previous versions closed "correct dispatch -> correct conversation ->

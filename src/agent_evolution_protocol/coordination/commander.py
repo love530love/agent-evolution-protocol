@@ -821,6 +821,36 @@ def _dispatch(root: Path, *, order: dict) -> dict:
                            note="SUBMISSION_UNCONFIRMED: possible send; do not retry automatically")
 
 
+def _record_late_ack(root: Path, order: dict, result: dict) -> dict | None:
+    """Keep "a reply arrived after the sign-off" without moving the order.
+
+    The reply is a real event and deleting it would be the same class of lie as
+    the state overwrite, so it is stored -- in ``late_acks``, which nothing
+    schedules from -- while ``state`` stays ``ABANDONED``.  Measured before this
+    existed: a sign-off followed by a properly attributed reply left the order
+    at ``AGENT_ACK``, ``ack_protocol.abandoned()`` returned ``None`` because it
+    reads the state, and the next supervisor step completed the task as
+    ``done``.  One machine event had quietly revoked a human decision and
+    turned the guarantee into its opposite.
+
+    Idempotent by event id, because ``check_acks`` runs every tick and an
+    append-only list of the same reply would otherwise grow without bound.
+    """
+    evidence = result.get("evidence") or {}
+    entry = {"at": now(), "event": str(evidence.get("event", "")),
+             "recorded_at": str(evidence.get("recorded_at", "")),
+             "session_id": str(evidence.get("session_id", "")),
+             "token": str(result.get("token", ""))}
+    rows = order.setdefault("late_acks", [])
+    if any(str(row.get("event", "")) == entry["event"] for row in rows if isinstance(row, dict)):
+        return None
+    rows.append(entry)
+    order["updated_at"] = now()
+    _atomic(_state_path(root, order["id"]), order)
+    _atomic(_root(root) / "inbox" / f"{order['id']}.json", order)
+    return entry
+
+
 def check_acks(root: Path) -> dict:
     """Accept only a role-attributed reply event, never a raw screen snapshot.
 
@@ -830,6 +860,7 @@ def check_acks(root: Path) -> dict:
     and the receipt.
     """
     acked = []
+    late = []
     orders = _orders(root)
     for order in orders:
         # CEASED means the delivery attempt stopped without an ACK; it does
@@ -845,6 +876,16 @@ def check_acks(root: Path) -> dict:
             order, events=bus.read_events(root, agent=order["target"], limit=500))
         if not result["accepted"]:
             continue
+        if ack_protocol.abandoned(order) is not None:
+            # A person ended this wait.  Their decision is not a cache entry a
+            # later event may invalidate: the reply is recorded beside the
+            # sign-off instead of on top of it.  See _record_late_ack for what
+            # happened when the order was upgraded here.
+            entry = _record_late_ack(root, order, result)
+            if entry is not None:
+                late.append({"order": order["id"], "target": order["target"],
+                             "token": result["token"], "event": entry["event"]})
+            continue
         _record_attempt(root, order, state="AGENT_ACK",
                         receipt={"evidence": result["token"],
                                  "event_id": result["evidence"]["event"],
@@ -852,7 +893,7 @@ def check_acks(root: Path) -> dict:
                         note="role-attributed agent reply in the anchored session")
         acked.append({"order": order["id"], "target": order["target"],
                       "token": result["token"]})
-    return {"at": now(), "acked": acked, "checked": len(orders)}
+    return {"at": now(), "acked": acked, "late": late, "checked": len(orders)}
 
 
 def ack_state(root: Path, order_id: str) -> dict:

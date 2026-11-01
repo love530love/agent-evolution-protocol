@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from agent_evolution_protocol.coordination import commander
+from agent_evolution_protocol.coordination import ack_protocol, commander, transcript_bus
 
 
 def _sent(coord, *, state="MESSAGE_VISIBLE"):
@@ -162,6 +162,100 @@ class AbandonedOrdersAreLeftAloneTests(unittest.TestCase):
         path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         commander.tick(Path(self.coord), perceive_first=False)
         self.assertEqual(len(commander._orders(Path(self.coord))), 1)
+
+
+class LateAckDoesNotRevokeTheSignOffTests(unittest.TestCase):
+    """A reply that arrives after a sign-off is a fact, not a revocation.
+
+    Found by running the loop by hand after v0.6.14 shipped: abandon an order,
+    let a properly attributed reply appear, then tick.  ``check_acks`` skipped
+    ``AGENT_ACK``/``FAILED``/``RETIRED`` but not ``ABANDONED``, so it rewrote the
+    order to ``AGENT_ACK`` -- and because ``ack_protocol.abandoned()`` reads the
+    state, the sign-off then read as absent, ``may_advance`` said yes, and the
+    next supervisor step completed the task as ``done``.  One machine event had
+    silently reversed a human decision and produced exactly the outcome the
+    protocol exists to prevent.
+    """
+
+    def setUp(self):
+        self._temp = TemporaryDirectory()
+        self.coord = str(Path(self._temp.name) / "coordination")
+        self.addCleanup(self._temp.cleanup)
+
+    def _abandoned(self):
+        order = _sent(self.coord)
+        commander.abandon(self.coord, order["id"], actor="love",
+                          reason="the client is wedged")
+        return order
+
+    def _reply(self, order):
+        return transcript_bus.publish(
+            self.coord, agent="qoder", text=f"on it\nAEP-ACK:{order['event_id']}",
+            source="uia", session_id="4242", role="assistant", direction="incoming")
+
+    def _stored(self, order_id):
+        return next(row for row in commander._orders(Path(self.coord))
+                    if row["id"] == order_id)
+
+    def test_the_order_stays_abandoned_and_the_reply_is_kept(self):
+        order = self._abandoned()
+        self._reply(order)
+        report = commander.check_acks(self.coord)
+        self.assertEqual(report["acked"], [])
+        self.assertEqual(len(report["late"]), 1)
+        stored = self._stored(order["id"])
+        self.assertEqual(stored["state"], "ABANDONED")
+        self.assertEqual(stored["abandoned_by"], "love")
+        # The reply is not deleted: it is recorded beside the decision.
+        self.assertEqual(len(stored["late_acks"]), 1)
+        self.assertTrue(stored["late_acks"][0]["recorded_at"])
+        value = ack_protocol.verdict(
+            stored, events=transcript_bus.read_events(self.coord, agent="qoder", limit=500))
+        self.assertTrue(value["accepted"])
+        self.assertTrue(value["late_ack"])
+        self.assertEqual(value["abandoned"]["by"], "love")
+        self.assertEqual(len(value["late_acks"]), 1)
+        # And the DAG may not move on it.
+        self.assertFalse(ack_protocol.may_advance(value))
+
+    def test_the_same_reply_is_recorded_once(self):
+        order = self._abandoned()
+        self._reply(order)
+        self.assertEqual(len(commander.check_acks(self.coord)["late"]), 1)
+        again = commander.check_acks(self.coord)
+        self.assertEqual(again["late"], [])
+        self.assertEqual(len(self._stored(order["id"])["late_acks"]), 1)
+
+    def test_a_late_reply_cannot_complete_the_task(self):
+        from agent_evolution_protocol.federation import engine, intake, supervisor
+
+        root = Path(self._temp.name) / "state"
+        receipt = intake.intake(root, self.coord, text="run the README",
+                                agents=["alpha", "beta"], shape="reviewed",
+                                sender="kernel")
+        adapters = supervisor.build_adapters(coord_root=self.coord,
+                                            agents=["alpha", "beta"],
+                                            workspace_id=receipt["workspace"])
+        order = commander._orders(Path(self.coord))[0]
+        path = Path(self.coord) / "commander" / "inbox" / f"{order['id']}.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["state"] = "MESSAGE_VISIBLE"
+        payload["session_id"] = "4242"
+        path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        report = Path(self.coord) / "task_states" / "execute.json"
+        report.parent.mkdir(parents=True, exist_ok=True)
+        report.write_text(json.dumps({"task": "execute", "owner": "alpha",
+                                      "phase": "done", "evidence": []}),
+                          encoding="utf-8")
+        commander.abandon(self.coord, order["id"], actor="love",
+                          reason="the client is wedged")
+        self._reply(order)
+        result = supervisor.step(root, self.coord, receipt["workspace"], adapters,
+                                 dispatch=False)
+        self.assertEqual([row["action"] for row in result["closed"]], ["abandoned"])
+        self.assertEqual(result["tasks"]["execute"]["state"], "blocked")
+        self.assertNotEqual(engine.load(root, receipt["workspace"])
+                            ["tasks"]["execute"]["state"], "done")
 
 
 if __name__ == "__main__":

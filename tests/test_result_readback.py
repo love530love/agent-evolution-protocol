@@ -126,22 +126,146 @@ class DisagreementTests(unittest.TestCase):
         self.assertIs(value["match"], False)
         self.assertEqual(value["reason"], "different_artifact")
 
-    def test_a_reply_from_another_conversation_is_not_this_tasks_result(self):
-        # Another session of the same agent answering the same question is not
-        # this task's answer -- the same guard the ACK detector needs.
+
+class SessionGuardTests(unittest.TestCase):
+    """Which conversation a line came from decides whether it may be compared.
+
+    The transcript is read per agent, so it carries every window that agent ever
+    spoke in: an earlier task, another window, another task's leftovers.  Before
+    the guard was wired the whole transcript was compared, and a line from
+    somewhere else could confirm -- or contradict -- a claim it never made.
+    """
+
+    def test_only_the_anchored_conversation_is_compared(self):
+        # The claim's path is in this conversation, a different path is in
+        # another window of the same agent.  The other window must not turn
+        # into "different_artifact": it was working on something else.
+        observed = result_readback.observe(
+            [_event(f"wrote {REPORT}", event_id="evt-1"),
+             _event("wrote K:/proj/out/notes.txt", session_id="9999", event_id="evt-2")],
+            session_id=SESSION)
+        self.assertTrue(observed["session_checked"])
+        self.assertFalse(observed["session_unknown"])
+        self.assertEqual(observed["session_reason"], "applied")
+        self.assertEqual(observed["artifacts"], [REPORT])
+        value = result_readback.judge(result_readback.claim(_state()), observed)
+        self.assertIs(value["match"], True)
+        self.assertEqual(value["evidence"]["rejected"][0]["reason"], "foreign_session")
+
+    def test_a_path_from_another_conversation_is_not_comparable(self):
+        """A path from another conversation is missing attribution, not a refutation.
+
+        This used to be ``False``/``foreign_session``: the only result-bearing
+        line came from elsewhere, so the claim was called a contradiction.  That
+        reads the fact backwards -- the product exists, what we lack is proof
+        that *this* task's conversation produced it -- and blocking on it stalls
+        a task whose work may be done.
+        """
         value = _judge(_state(), [_event(f"wrote {REPORT}", session_id="9999")])
-        self.assertIs(value["match"], False)
+        self.assertIsNone(value["match"])
         self.assertEqual(value["reason"], "foreign_session")
         self.assertFalse(result_readback.may_complete(value))
+        self.assertTrue(value["evidence"]["session_checked"])
+        self.assertEqual(value["evidence"]["rejected"][0]["reason"], "foreign_session")
 
-    def test_an_event_without_a_session_is_checked_and_says_so(self):
-        # A capture gap is not evidence of a foreign conversation, so the guard
-        # does not fire -- but the verdict records that it did not.
+    def test_the_two_ways_of_having_nothing_are_named_differently(self):
+        # Same verdict, different gap, and the caller must not have to read
+        # ``rejected`` to tell them apart: an empty capture has nothing to
+        # re-read, a foreign line points at a conversation that does.
+        silent = _judge(_state(), [])
+        elsewhere = _judge(_state(), [_event(f"wrote {REPORT}", session_id="9999")])
+        self.assertIsNone(silent["match"])
+        self.assertIsNone(elsewhere["match"])
+        self.assertEqual(silent["reason"], "no_result_in_transcript")
+        self.assertEqual(elsewhere["reason"], "foreign_session")
+        self.assertNotEqual(silent["reason"], elsewhere["reason"])
+
+    def test_a_line_without_a_conversation_cannot_verify_anything(self):
+        """A line with no session id proves nothing about this conversation.
+
+        The first version of this module compared it anyway, on the grounds that
+        a capture gap is not evidence of a foreign conversation.  True -- but it
+        is not evidence of this one either, so the path being exactly the claimed
+        one changes nothing.  Treating "we do not know whose line this is" as
+        "it is ours" is how a readback becomes a decoration.
+        """
         observed = result_readback.observe([_event(f"wrote {REPORT}", session_id="")],
                                            session_id=SESSION)
         self.assertFalse(observed["session_checked"])
+        self.assertTrue(observed["session_unknown"])
+        self.assertEqual(observed["session_reason"], "session_unknown")
+        self.assertEqual(observed["artifacts"], [])
+        value = result_readback.judge(result_readback.claim(_state()), observed)
+        self.assertIsNone(value["match"])
+        self.assertEqual(value["reason"], "session_unknown")
+        self.assertTrue(value["evidence"]["session_unknown"])
+        self.assertFalse(result_readback.may_complete(value))
+
+    def test_a_line_missing_the_key_entirely_is_unknown_too(self):
+        # The same fact in the other shape a capture can produce: the key is
+        # absent rather than empty.  Both mean "we cannot attribute this".
+        event = _event(f"wrote {REPORT}")
+        event.pop("session_id")
+        observed = result_readback.observe([event], session_id=SESSION)
+        self.assertTrue(observed["session_unknown"])
+        self.assertIsNone(result_readback.judge(result_readback.claim(_state()),
+                                               observed)["match"])
+
+    def test_a_partly_guarded_transcript_still_verifies_and_says_it_is_partial(self):
+        # One anchored line names the artifact, one line cannot be attributed.
+        # The match rests on the anchored line, so it stands, and the receipt
+        # records that the guard was only partial -- and that the unattributable
+        # line's path was not used to disagree.
+        observed = result_readback.observe(
+            [_event(f"wrote {REPORT}", event_id="evt-1"),
+             _event("wrote K:/proj/out/notes.txt", session_id="", event_id="evt-2")],
+            session_id=SESSION)
+        self.assertTrue(observed["session_checked"])
+        self.assertTrue(observed["session_unknown"])
+        self.assertEqual(observed["session_reason"], "partial")
         value = result_readback.judge(result_readback.claim(_state()), observed)
         self.assertIs(value["match"], True)
+
+    def test_no_line_reaching_the_guard_is_not_reported_as_applied(self):
+        # The only line is our own outgoing order, so the conversation guard
+        # never saw anything.  ``session_checked`` already says False; the
+        # reason says it too, so a receipt cannot be read as "guard applied".
+        observed = result_readback.observe(
+            [_event(f"please write {REPORT}", direction="outgoing")], session_id=SESSION)
+        self.assertFalse(observed["session_checked"])
+        self.assertFalse(observed["session_unknown"])
+        self.assertEqual(observed["session_reason"], "not_compared")
+
+    def test_without_a_session_id_the_whole_transcript_is_compared_and_says_so(self):
+        # What this module did before the guard existed.  Kept because a caller
+        # holding no conversation id should still get a readback -- but the
+        # observation must not look guarded, so ``session_checked`` is False and
+        # the reason says the guard was never asked for.
+        observed = result_readback.observe([_event(f"wrote {REPORT}")])
+        self.assertFalse(observed["session_checked"])
+        self.assertFalse(observed["session_unknown"])
+        self.assertEqual(observed["session_reason"], "not_requested")
+        value = result_readback.judge(result_readback.claim(_state()), observed)
+        self.assertIs(value["match"], True)
+        self.assertEqual(value["evidence"]["session_reason"], "not_requested")
+
+    def test_a_refused_line_still_names_the_reason_when_nothing_else_matched(self):
+        # Found by wiring the guard into the supervisor, not by this module's own
+        # tests: an ACK line in the anchored conversation makes the transcript
+        # "attributable", so the earlier guard does not fire -- but it carries no
+        # artifact, so the verdict fell through to "no_result_in_transcript" and
+        # dropped the fact that the output *was* found, in another conversation.
+        # Both are None, and they are not the same news: one says go read the
+        # other window, the other says there is nothing to read.
+        observed = result_readback.observe(
+            [_event("AEP-ACK:evt-1", event_id="evt-1"),
+             _event(f"wrote {REPORT}", session_id="9999", event_id="evt-2")],
+            session_id=SESSION)
+        self.assertTrue(observed["session_checked"])
+        self.assertEqual(observed["artifacts"], [])
+        value = result_readback.judge(result_readback.claim(_state()), observed)
+        self.assertIsNone(value["match"])
+        self.assertEqual(value["reason"], "foreign_session")
 
 
 class DiskTests(unittest.TestCase):

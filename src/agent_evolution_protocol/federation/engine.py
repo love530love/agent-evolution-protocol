@@ -369,6 +369,11 @@ def _tick(root, state, adapters, *, now=None, heartbeat_timeout=900, moment=None
         failed = _blocked_by_failed(state, task_id)
         if failed:
             task["state"] = "blocked"
+            # Recorded as a field, not only inside the note: :func:`revive` has
+            # to reopen exactly the tasks that are waiting on the task it
+            # revives, and parsing "blocked by ['x']" back out of prose is how
+            # a message becomes an interface.
+            task["blocked_by_deps"] = list(failed)
             task["note"] = f"blocked by {failed}"
             EventLog(root, state["workspace_id"]).append(
                 "task_blocked", actor="kernel",
@@ -503,6 +508,12 @@ def abandon(root, state, *, task_id, reason, actor, moment=None):
         task["state"] = "blocked"
         task["note"] = f"abandoned by {who}: {said}"[:200]
         task["remedy"] = "human"
+        # Kept as an append-only list rather than a single ``abandoned_by``
+        # triple: a task can be abandoned, revived and abandoned again, and a
+        # second sign-off must not overwrite the first one.  ``revive`` marks
+        # the newest entry instead of deleting it -- the signature is the fact.
+        task.setdefault("abandonments", []).append(
+            {"by": who, "at": stamp(moment), "reason": said})
         EventLog(root, fresh["workspace_id"]).append(
             "task_abandoned", actor=who,
             payload={"task": task_id, "reason": said}, moment=moment)
@@ -511,6 +522,137 @@ def abandon(root, state, *, task_id, reason, actor, moment=None):
             state.clear()
             state.update(fresh)
         return task
+
+
+def _reopen_dependents(root, state, task_id, *, who, said, moment):
+    """Queue again every task whose blocked dependencies are all alive.
+
+    ``_tick`` blocks a pending task when a dependency is failed or blocked, and
+    a blocked task is never re-examined.  Without this, reviving a dependency
+    would leave its dependents blocked forever with a note that says "blocked by
+    ['execute']" while ``execute`` is running again -- a record stating
+    something untrue, which is the failure this module exists to avoid.
+
+    Repeated to a fixed point because a block propagates down the chain: the
+    grandchild was blocked by its parent, not by the revived task, and it
+    becomes reopenable only once the parent has moved.  Every pass only turns
+    ``blocked`` into ``pending``, so this terminates; the DAG is acyclic because
+    ``add_task`` refuses a dependency that does not exist yet.
+    """
+    reopened = []
+    changed = True
+    while changed:
+        changed = False
+        for other_id in sorted(state["tasks"]):
+            other = state["tasks"][other_id]
+            if other["state"] != "blocked":
+                continue
+            waiting_on = list(other.get("blocked_by_deps") or [])
+            if not waiting_on:
+                continue
+            if any(state["tasks"].get(dep, {}).get("state") in ("failed", "blocked")
+                   for dep in waiting_on):
+                # Another dependency is still dead; reopening would start work
+                # that cannot finish.
+                continue
+            other["state"] = "pending"
+            other.pop("blocked_by_deps", None)
+            other["note"] = f"reopened: {task_id} was revived by {who}"[:200]
+            EventLog(root, state["workspace_id"]).append(
+                "task_reopened", actor=who,
+                payload={"task": other_id, "revived": task_id, "reason": said}, moment=moment)
+            reopened.append(other_id)
+            changed = True
+    return reopened
+
+
+def revive(root, state, *, task_id, reason, actor, moment=None):
+    """Undo an abandonment, on a second signature.
+
+    ``abandon`` is a human decision, and a decision nobody can take back is a
+    trap: an operator who gave up one minute too early had no way back except
+    editing ``state.json`` by hand, which in an unattended workspace means one
+    mistaken sign-off kills the task permanently.  This is the way back, and it
+    costs the same as the way out -- a name and a written reason -- because
+    "we resumed" with no "who decided, and why" is not a record either.
+
+    Only ``blocked`` is *changed*.  A ``running`` task was never abandoned, and
+    reviving a ``done``/``failed`` task would be a rewrite of history rather than
+    the reversal of one decision.
+
+    Only a task blocked *by an abandonment* is accepted.  ``blocked`` is also
+    where a claim conflict, a refusal and "no capable agent" land, and reviving
+    one of those would silently discard the reason it was blocked -- the machine
+    equivalent of the false statements ``abandon`` was written to stop.
+
+    The abandonment itself is never removed: it stays in ``abandonments`` with
+    ``revived_by``/``revived_at``/``revive_reason`` added, so the record reads
+    "abandoned at T by X because R, resumed at T2 by Y because R2".  Repeating
+    the call is idempotent and keeps the *first* revival, for the same reason
+    ``abandon`` keeps the first signature: the first one is the decision.
+    """
+    if not isinstance(task_id, str) or not task_id.strip():
+        raise ValueError("task_id is required")
+    said = str(reason or "").strip()
+    if not said:
+        raise ValueError("a reason is required")
+    who = str(actor or "").strip()
+    if not who:
+        raise ValueError("an actor is required")
+    with workspace_lock(lock_path(root, state["workspace_id"])):
+        fresh = load(root, state["workspace_id"])
+        task = fresh["tasks"].get(task_id)
+        if task is None:
+            raise ValueError("unknown task")
+        signoffs = [row for row in task.get("abandonments") or [] if isinstance(row, dict)]
+        latest = signoffs[-1] if signoffs else None
+        if task["state"] != "blocked":
+            if latest is not None and latest.get("revived_at"):
+                # Idempotent retry: the first revival is the decision and it is
+                # still in force, so a second call has nothing to do.  The copy
+                # is deliberate -- the caller's extra field must not be written
+                # into the record by the next ``save``.
+                result = dict(task)
+                result["already_revived"] = True
+                result["reopened"] = []
+                return result
+            raise ValueError(
+                f"only a blocked task can be revived; this one is {task['state']}")
+        if latest is None:
+            raise ValueError(
+                "this task is blocked for another reason (not an abandonment); "
+                "clear that reason instead of reviving it")
+        if latest.get("revived_at"):
+            # Blocked again after an earlier revival, so the current block is a
+            # different fact; answering "already revived" would hide it.
+            raise ValueError(
+                "this task was revived before and is blocked again for another "
+                "reason; that block is not an abandonment")
+        latest["revived_by"] = who
+        latest["revived_at"] = stamp(moment)
+        latest["revive_reason"] = said
+        # ``running`` is what ``abandon`` overwrote, so it is what this undoes.
+        # An ownerless task is offered again instead: ``_tick`` skips a running
+        # task with no owner forever, and returning it to a state nothing
+        # advances would be a second dead end dressed up as a recovery.
+        restore_to = "running" if task.get("owner") else "pending"
+        task["state"] = restore_to
+        task["note"] = f"revived by {who}: {said}"[:200]
+        EventLog(root, fresh["workspace_id"]).append(
+            "task_revived", actor=who,
+            payload={"task": task_id, "reason": said, "restored_to": restore_to,
+                     "after_abandon_at": str(latest.get("at", "")),
+                     "after_abandon_by": str(latest.get("by", ""))}, moment=moment)
+        reopened = _reopen_dependents(root, fresh, task_id, who=who, said=said,
+                                      moment=moment)
+        save(root, fresh)
+        if fresh != state:
+            state.clear()
+            state.update(fresh)
+        result = dict(task)
+        result["already_revived"] = False
+        result["reopened"] = reopened
+        return result
 
 
 def fail_task(root, state, adapters, *, task_id, signal, moment=None, actions=None):

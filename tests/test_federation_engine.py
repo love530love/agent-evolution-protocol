@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -235,6 +236,187 @@ class SchemaConformanceTests(EngineTestCase):
         event = store.EventLog(self.root, self.ws).append("checkpoint", actor="kernel")
         self.assertEqual(event["schema"], "aep-event-envelope-v1")
         self.assertGreaterEqual(len(event["event_id"]), 8)
+
+
+class ReviveTests(EngineTestCase):
+    """A sign-off is a decision, and a decision that cannot be undone is a trap.
+
+    ``abandon`` turns a running task into ``blocked``, which is terminal for the
+    DAG, and v0.6.14 shipped with no way back: an operator who gave up one
+    minute too early had to edit ``state.json`` by hand.  ``revive`` is the way
+    back, and it has to be as strict about *what* it undoes as ``abandon`` is
+    about what it stops.
+    """
+
+    def _running(self, *, task_id="t1", deps=()):
+        engine.add_task(self.root, self.state, task_id=task_id, requirement="code",
+                        deps=deps)
+        adapters = [FakeAdapter("alpha", {"code"}, heartbeat_at=NOW.isoformat())]
+        engine.tick(self.root, self.state, adapters, now=NOW)
+        return adapters
+
+    def test_reviving_restores_the_task_and_keeps_the_sign_off(self):
+        self._running()
+        engine.abandon(self.root, self.state, task_id="t1", reason="client wedged",
+                       actor="love", moment=NOW)
+        task = engine.revive(self.root, self.state, task_id="t1",
+                             reason="the client recovered", actor="love", moment=NOW)
+        self.assertEqual(task["state"], "running")
+        self.assertFalse(task["already_revived"])
+        self.assertEqual(task["owner"], "alpha")
+        # The abandonment is not deleted; it is marked as undone.  A record that
+        # reads "abandoned at T by X" is still true after T2.
+        kept = engine.load(self.root, self.ws)["tasks"]["t1"]["abandonments"]
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(kept[0]["by"], "love")
+        self.assertIn("wedged", kept[0]["reason"])
+        self.assertEqual(kept[0]["revived_by"], "love")
+        self.assertIn("recovered", kept[0]["revive_reason"])
+        self.assertTrue(kept[0]["revived_at"])
+
+    def test_the_revival_is_in_the_event_log(self):
+        self._running()
+        engine.abandon(self.root, self.state, task_id="t1", reason="client wedged",
+                       actor="love", moment=NOW)
+        engine.revive(self.root, self.state, task_id="t1", reason="client recovered",
+                      actor="love", moment=NOW)
+        events = [row["kind"] for row in store.EventLog(self.root, self.ws).events()]
+        self.assertIn("task_abandoned", events)
+        self.assertIn("task_revived", events)
+
+    def test_a_reason_and_an_actor_are_required(self):
+        self._running()
+        engine.abandon(self.root, self.state, task_id="t1", reason="wedged",
+                       actor="love", moment=NOW)
+        with self.assertRaises(ValueError):
+            engine.revive(self.root, self.state, task_id="t1", reason="   ",
+                          actor="love", moment=NOW)
+        with self.assertRaises(ValueError):
+            engine.revive(self.root, self.state, task_id="t1", reason="recovered",
+                          actor="", moment=NOW)
+
+    def test_only_a_blocked_task_can_be_revived(self):
+        # A running task was never abandoned; reviving it would be a rewrite of
+        # history rather than the reversal of one decision.
+        self._running()
+        with self.assertRaises(ValueError) as caught:
+            engine.revive(self.root, self.state, task_id="t1", reason="why not",
+                          actor="love", moment=NOW)
+        self.assertIn("running", str(caught.exception))
+
+    def test_a_task_blocked_for_another_reason_is_not_revived(self):
+        # ``blocked`` is also where "no capable agent" lands.  Reviving it would
+        # discard the reason it was blocked and hand it to nobody again.
+        engine.add_task(self.root, self.state, task_id="t1", requirement="quantum")
+        adapters = [FakeAdapter("alpha", {"code"}, heartbeat_at=NOW.isoformat())]
+        engine.tick(self.root, self.state, adapters, now=NOW)
+        self.assertEqual(self.state["tasks"]["t1"]["state"], "blocked")
+        with self.assertRaises(ValueError) as caught:
+            engine.revive(self.root, self.state, task_id="t1", reason="try again",
+                          actor="love", moment=NOW)
+        self.assertIn("not an abandonment", str(caught.exception))
+        self.assertEqual(engine.load(self.root, self.ws)["tasks"]["t1"]["state"], "blocked")
+
+    def test_reviving_twice_keeps_the_first_signature(self):
+        self._running()
+        engine.abandon(self.root, self.state, task_id="t1", reason="wedged",
+                       actor="love", moment=NOW)
+        engine.revive(self.root, self.state, task_id="t1", reason="first decision",
+                      actor="love", moment=NOW)
+        again = engine.revive(self.root, self.state, task_id="t1",
+                              reason="a different story", actor="someone-else", moment=NOW)
+        self.assertTrue(again["already_revived"])
+        kept = engine.load(self.root, self.ws)["tasks"]["t1"]["abandonments"][-1]
+        self.assertEqual(kept["revive_reason"], "first decision")
+        self.assertEqual(kept["revived_by"], "love")
+
+    def test_a_second_abandonment_does_not_erase_the_first(self):
+        self._running()
+        engine.abandon(self.root, self.state, task_id="t1", reason="first",
+                       actor="love", moment=NOW)
+        engine.revive(self.root, self.state, task_id="t1", reason="resumed",
+                      actor="love", moment=NOW)
+        engine.abandon(self.root, self.state, task_id="t1", reason="second",
+                       actor="love", moment=NOW)
+        kept = engine.load(self.root, self.ws)["tasks"]["t1"]["abandonments"]
+        self.assertEqual([row["reason"] for row in kept], ["first", "second"])
+        self.assertNotIn("revived_at", kept[-1])
+
+    def test_a_dependent_blocked_by_the_abandonment_is_queued_again(self):
+        # Without this, reviving a dependency leaves its dependent blocked
+        # forever with a note that says "blocked by ['t1']" while t1 is running
+        # again -- a record stating something untrue.
+        self._running()
+        engine.add_task(self.root, self.state, task_id="t2", requirement="code", deps=["t1"])
+        engine.abandon(self.root, self.state, task_id="t1", reason="wedged",
+                       actor="love", moment=NOW)
+        adapters = [FakeAdapter("alpha", {"code"}, heartbeat_at=NOW.isoformat())]
+        engine.tick(self.root, self.state, adapters, now=NOW)
+        self.assertEqual(self.state["tasks"]["t2"]["state"], "blocked")
+        task = engine.revive(self.root, self.state, task_id="t1", reason="recovered",
+                             actor="love", moment=NOW)
+        self.assertEqual(task["reopened"], ["t2"])
+        reloaded = engine.load(self.root, self.ws)["tasks"]
+        self.assertEqual(reloaded["t2"]["state"], "pending")
+        self.assertNotIn("blocked_by_deps", reloaded["t2"])
+
+    def test_a_chain_behind_the_revived_task_is_queued_but_not_started(self):
+        self._running()
+        engine.add_task(self.root, self.state, task_id="t2", requirement="code", deps=["t1"])
+        engine.add_task(self.root, self.state, task_id="t3", requirement="code", deps=["t2"])
+        engine.abandon(self.root, self.state, task_id="t1", reason="wedged",
+                       actor="love", moment=NOW)
+        adapters = [FakeAdapter("alpha", {"code"}, heartbeat_at=NOW.isoformat())]
+        engine.tick(self.root, self.state, adapters, now=NOW)
+        self.assertEqual([self.state["tasks"][key]["state"] for key in ("t2", "t3")],
+                         ["blocked", "blocked"])
+        engine.revive(self.root, self.state, task_id="t1", reason="recovered",
+                      actor="love", moment=NOW)
+        reloaded = engine.load(self.root, self.ws)
+        self.assertEqual([reloaded["tasks"][key]["state"] for key in ("t2", "t3")],
+                         ["pending", "pending"])
+        # Queued is not started: only t1 has no unfinished dependency.
+        self.assertEqual(engine.ready_tasks(reloaded), [])
+
+
+class ReviveCliTests(EngineTestCase):
+    """``federate revive`` is the only way back that does not edit json by hand."""
+
+    def _blocked(self):
+        engine.add_task(self.root, self.state, task_id="t1", requirement="code")
+        adapters = [FakeAdapter("alpha", {"code"}, heartbeat_at=NOW.isoformat())]
+        engine.tick(self.root, self.state, adapters, now=NOW)
+        engine.abandon(self.root, self.state, task_id="t1", reason="client wedged",
+                       actor="love", moment=NOW)
+
+    def _run(self, *extra):
+        """Drive the real parser, so the flag names are part of what is tested."""
+        from agent_evolution_protocol import cli
+
+        argv = ["--coord-root", str(self.root / "coordination"), "federate", "revive",
+                "--federation-root", str(self.root), "--workspace", self.ws,
+                "--task", "t1", "--by", "love", "--reason", "the client recovered", *extra]
+        args = cli.build_parser().parse_args(argv)
+        args.func(args)
+
+    def test_the_command_reports_the_task_it_resumed(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+
+        self._blocked()
+        with redirect_stdout(StringIO()) as output:
+            self._run()
+        value = json.loads(output.getvalue())
+        self.assertEqual(value["schema"], "aep-federate-revive-v1")
+        self.assertEqual(value["task"]["state"], "running")
+        self.assertFalse(value["task"]["already_revived"])
+
+    def test_an_unsigned_revival_is_refused_with_a_message(self):
+        from agent_evolution_protocol import cli
+
+        self._blocked()
+        with self.assertRaises(cli.ProtocolError):
+            self._run("--reason", "")
 
 
 if __name__ == "__main__":

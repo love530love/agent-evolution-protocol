@@ -2987,11 +2987,21 @@ def coord_assign(args: argparse.Namespace) -> None:
 
 
 def federate(args: argparse.Namespace) -> None:
-    """Heartbeat, intake and status for the persistent federation workspace."""
+    """Heartbeat, intake, status and revival for the persistent federation workspace.
+
+    ``revive`` is the counterpart of a sign-off: ``blocked`` because a person
+    gave up is not a death sentence, and the only other way out was editing
+    ``state.json`` by hand.  It takes ``--by`` and ``--reason`` for the same
+    reason the sign-off does.
+    """
     from agent_evolution_protocol.federation import engine, intake as intake_mod, supervisor
 
     root = Path(args.federation_root)
     coord = coord_root(args)
+    # 0 means "do not alert at all", which is the pre-v0.6.14 behaviour and is
+    # spelled ``None`` in the supervisor.  Converting here keeps the CLI honest
+    # about a value it would otherwise pass as a limit that fires immediately.
+    hold_limit = args.hold_limit_seconds if args.hold_limit_seconds else None
     if args.action == "intake":
         result = intake_mod.intake(
             root, coord, text=_federate_text(args, inline="text", file_field="text_file"),
@@ -3003,6 +3013,23 @@ def federate(args: argparse.Namespace) -> None:
         return
     if not args.workspace:
         raise ProtocolError("--workspace is required for this action")
+    if args.action == "revive":
+        # Handled before the adapters are built: reviving a task needs a
+        # signature and the durable state, not a reachable client.  Requiring
+        # the whole swarm to be discoverable would make the way back out of a
+        # bad sign-off depend on the very machinery that was broken.
+        if not args.task:
+            raise ProtocolError("revive needs --task")
+        try:
+            task = engine.revive(root, engine.load(root, args.workspace),
+                                 task_id=args.task, reason=args.reason or "",
+                                 actor=args.by or "")
+        except ValueError as exc:
+            raise ProtocolError(str(exc)) from exc
+        print(json.dumps({"schema": "aep-federate-revive-v1",
+                          "workspace": args.workspace, "task": task},
+                         ensure_ascii=False, indent=2))
+        return
     adapters = supervisor.build_adapters(
         coord_root=str(coord), agents=_federate_agents(args),
         capabilities=_federate_capabilities(args), sender=valid_agent(args.sender),
@@ -3011,14 +3038,18 @@ def federate(args: argparse.Namespace) -> None:
     if args.action == "step":
         result = supervisor.step(root, str(coord), args.workspace, adapters,
                                  heartbeat_timeout=args.heartbeat_timeout,
-                                 dispatch=not args.no_dispatch)
+                                 dispatch=not args.no_dispatch,
+                                 ack_policy=args.ack_policy,
+                                 hold_limit_seconds=hold_limit)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return
     if args.action == "serve":
         ticks = supervisor.serve(root, str(coord), args.workspace, adapters,
                                  interval=args.interval, max_ticks=args.max_ticks,
                                  heartbeat_timeout=args.heartbeat_timeout,
-                                 dispatch=not args.no_dispatch, stream=sys.stdout)
+                                 dispatch=not args.no_dispatch, stream=sys.stdout,
+                                 ack_policy=args.ack_policy,
+                                 hold_limit_seconds=hold_limit)
         print(json.dumps({"schema": "aep-federate-serve-v1", "workspace": args.workspace,
                           "ticks": ticks}, ensure_ascii=False, indent=2))
         return
@@ -3273,14 +3304,24 @@ def build_parser() -> argparse.ArgumentParser:
     assign.set_defaults(func=coord_assign)
 
     fed = commands.add_parser("federate", help="one input -> the whole swarm finishes unattended")
-    fed.add_argument("action", choices=("intake", "step", "serve", "status"))
+    fed.add_argument("action", choices=("intake", "step", "serve", "status", "revive"))
     fed.add_argument("--workspace"); fed.add_argument("--goal"); fed.add_argument("--text"); fed.add_argument("--text-file", type=Path)
+    fed.add_argument("--task", help="task to revive; required with action=revive")
+    fed.add_argument("--by", help="who is resuming it; required with action=revive")
+    fed.add_argument("--reason", help="why the abandonment is being undone; required with action=revive")
     fed.add_argument("--agents", nargs="*", default=[]); fed.add_argument("--capability", nargs="*", default=[])
     fed.add_argument("--shape", choices=("single", "reviewed"), default="single")
     fed.add_argument("--sender", default="kernel"); fed.add_argument("--priority", choices=("urgent", "normal", "low"), default="normal")
     fed.add_argument("--interval", type=float, default=30.0); fed.add_argument("--max-ticks", type=int, default=0)
     fed.add_argument("--heartbeat-timeout", type=float, default=900.0); fed.add_argument("--no-dispatch", action="store_true")
     fed.add_argument("--allow-launch", action="store_true"); fed.add_argument("--urgent-interject", action="store_true")
+    # An unacknowledged order no longer stops the DAG by default; --ack-policy
+    # enforce restores the strict reading for a deployment that wants it.
+    fed.add_argument("--ack-policy", choices=("record", "enforce"), default="record",
+                     help="what a sent-but-unacknowledged order does: record advances and "
+                          "writes the verdict into the receipt, enforce holds the task")
+    fed.add_argument("--hold-limit-seconds", type=float, default=3600.0,
+                     help="how long a hold may wait before a person is alerted (0 disables)")
     fed.add_argument("--federation-root", type=Path, default=Path(".agent-evolution"))
     fed.set_defaults(func=federate)
     return parser

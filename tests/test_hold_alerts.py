@@ -191,7 +191,7 @@ class HoldAlertFromTheSupervisorTests(unittest.TestCase):
             {"task": "execute", "owner": "alpha", "phase": "done", "evidence": []}),
             encoding="utf-8")
         result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
-                                 dispatch=False, hold_limit_seconds=limit)
+                                 dispatch=False, ack_policy="enforce", hold_limit_seconds=limit)
         return result
 
     def test_the_row_the_supervisor_reports_is_the_row_that_gets_delivered(self):

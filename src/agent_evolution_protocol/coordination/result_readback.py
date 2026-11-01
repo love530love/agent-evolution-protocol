@@ -23,7 +23,10 @@ carry the whole thing:
 * **The transcript has to be attributable.**  A path in our own outgoing
   assignment is not the agent naming its output, and a path in another
   conversation is not this task's result.  Same guards as the ACK detector,
-  for the same reason.
+  for the same reason.  A line that carries no conversation at all is neither
+  of those: it is refused as unattributable and the observation says so, because
+  "we cannot tell whose line this is" supports no verdict -- the same reason an
+  empty capture is not agreement.
 
 Why there is no new schema here.  ``aep-readback-v1`` is a *receipt* about a
 transport ladder: a closed set of five states, two booleans, and a list of
@@ -55,14 +58,17 @@ DONE_PHASES = frozenset({"done", "completed", "complete"})
 
 #: Why a verdict is what it is.  Every one of these is a different situation and
 #: a supervisor acts differently on each, so they are never collapsed into a
-#: bare boolean.
+#: bare boolean.  ``foreign_session`` and ``session_unknown`` both end in ``None``
+#: -- the claim's own conversation showed nothing -- and they are kept apart
+#: because the remedy differs: one conversation can be re-read, the other cannot.
 REASONS = {
     "claim_not_done": "the agent did not write a done phase; there is nothing to verify yet",
     "claim_without_artifact": "the agent claimed completion but named no path anyone could check",
     "artifact_missing_on_disk": "a claimed artifact does not exist under the given root",
-    "foreign_session": "the only result-bearing lines came from a different conversation",
+    "foreign_session": "the result-bearing lines came from a different conversation, so this task's own output was never shown",
     "different_artifact": "the transcript names an artifact that is not the one claimed",
     "no_result_in_transcript": "the transcript carries nothing comparable to the claim",
+    "session_unknown": "a conversation was named but the comparable lines carry none, so nothing can be attributed to it",
 }
 
 #: A path-shaped token inside a conversation line.  Requires at least one
@@ -174,14 +180,33 @@ def observe(events: list[dict[str, Any]], *, session_id: str = "") -> dict[str, 
     """What the transcript shows the agent said, line group by line group.
 
     ``role == "assistant"`` is required, ``direction == "outgoing"`` is refused,
-    and a session that disagrees with the claim's is refused.  An event that
-    carries *no* session id is not refused: a capture gap is not evidence of a
-    foreign conversation, and ``session_checked`` records whether any event was
-    actually compared, so a reader can see that the guard did not fire rather
-    than assume it passed.
+    and the conversation guard is three-valued because its inputs are.  Three
+    separate facts are returned so a caller can tell them apart:
+
+    * ``session_checked`` -- a ``session_id`` was given *and* at least one line
+      was actually compared against it.  ``False`` means the guard never ran;
+      it never means the guard passed.
+    * ``session_unknown`` -- a ``session_id`` was given but some comparable line
+      carried none.  That line is refused as unattributable: a capture gap is
+      not evidence of a foreign conversation, but it is not evidence about this
+      one either, so it is not compared.  Reading it as agreement is the same
+      mistake as reading an empty capture as agreement.
+    * ``session_reason`` -- which of those situations this is, spelled out
+      (``not_requested`` / ``not_compared`` / ``applied`` / ``partial`` /
+      ``session_unknown``), because a supervisor reading a receipt should not
+      have to infer the guard state from two booleans.  ``not_compared`` is the
+      case where a conversation was named but no line ever reached the guard --
+      an empty capture, or only lines refused for their role or direction -- and
+      it is spelled out so it cannot be read as ``applied``.
+
+    Without a ``session_id`` the whole transcript is compared, which is what
+    this module did before the guard existed; the ``not_requested`` note keeps
+    that from being mistaken for a guarded pass.
     """
     rows: list[dict[str, Any]] = []
     artifacts: list[str] = []
+    guarded = 0
+    unattributed = 0
     for event in events or []:
         if not isinstance(event, dict):
             continue
@@ -202,10 +227,18 @@ def observe(events: list[dict[str, Any]], *, session_id: str = "") -> dict[str, 
             row["reason"] = "not_assistant"
         elif row["direction"] == "outgoing":
             row["reason"] = "not_incoming"
-        elif session_id and row["session_id"] and row["session_id"] != session_id:
+        elif not session_id:
+            row["attributable"] = True
+        elif not row["session_id"]:
+            row["reason"] = "session_unknown"
+            unattributed += 1
+        elif row["session_id"] != session_id:
             row["reason"] = "foreign_session"
+            guarded += 1
         else:
             row["attributable"] = True
+            guarded += 1
+        if row["attributable"]:
             found_here: list[str] = []
             for line in lines:
                 for found in _ARTIFACT.findall(str(line)):
@@ -217,13 +250,23 @@ def observe(events: list[dict[str, Any]], *, session_id: str = "") -> dict[str, 
                 if candidate not in artifacts:
                     artifacts.append(candidate)
         rows.append(row)
+    if not session_id:
+        session_reason = "not_requested"
+    elif not unattributed:
+        session_reason = "applied" if guarded else "not_compared"
+    elif guarded:
+        session_reason = "partial"
+    else:
+        session_reason = "session_unknown"
     return {
         "events": rows,
         "attributable": [row["event"] for row in rows if row["attributable"]],
         "rejected": [{"event": row["event"], "reason": row["reason"]}
                      for row in rows if not row["attributable"]],
         "artifacts": artifacts,
-        "session_checked": bool(session_id) and any(row["session_id"] for row in rows),
+        "session_checked": bool(session_id) and guarded > 0,
+        "session_unknown": bool(session_id) and unattributed > 0,
+        "session_reason": session_reason,
     }
 
 
@@ -235,6 +278,16 @@ def judge(claim_value: dict[str, Any], observed: dict[str, Any], *,
     the agent named a path that is not there, the claim is false whatever the
     transcript says, because a missing file is a fact and a missing mention is
     an interpretation.  Without a root the module does not guess.
+
+    The conversation guard travels with the verdict instead of being applied
+    here: ``observe`` already refused the lines it could not attribute, so this
+    function only has to record whether that guard ran (``session_checked``),
+    whether some lines were refused for naming no conversation
+    (``session_unknown``), and why (``session_reason``).  A refused line proves
+    nothing in either direction, so ``foreign_session`` and ``session_unknown``
+    both yield ``None``.  A product that exists in another conversation is a
+    missing attribution, not evidence against the claim: calling it ``False``
+    would block a task whose work may well be done.
     """
     if not isinstance(claim_value, dict) or not isinstance(observed, dict):
         raise ValueError("claim and observation must be objects")
@@ -261,6 +314,8 @@ def judge(claim_value: dict[str, Any], observed: dict[str, Any], *,
                 "rejected": list(observed.get("rejected") or []),
                 "unchecked": list(claim_value.get("unchecked") or []),
                 "session_checked": bool(observed.get("session_checked")),
+                "session_unknown": bool(observed.get("session_unknown")),
+                "session_reason": str(observed.get("session_reason") or ""),
                 "root": str(root or ""),
             },
             "at": (at or datetime.now(timezone.utc)).isoformat(),
@@ -287,10 +342,33 @@ def judge(claim_value: dict[str, Any], observed: dict[str, Any], *,
     if not rows:
         return verdict(None, "no_result_in_transcript")
     if not observed.get("attributable"):
+        # Every line was refused, so this claim has nothing to be compared
+        # against and the verdict is ``None`` in both shapes.  The two reasons
+        # stay separate because they are not the same gap: ``foreign_session``
+        # says the output exists and names the conversation to go and read,
+        # ``session_unknown`` says we cannot tell whose line it is and there is
+        # nothing to read.  A caller that has to dig through ``rejected`` to
+        # learn which one it is will eventually not bother.
         if any(row.get("reason") == "foreign_session" for row in rows):
-            return verdict(False, "foreign_session")
+            return verdict(None, "foreign_session")
+        if observed.get("session_unknown"):
+            return verdict(None, "session_unknown")
         return verdict(None, "no_result_in_transcript")
     if not observed_artifacts:
+        # Nothing comparable survived the guard.  Before saying "the transcript
+        # had no result", check whether the result was found and *refused*:
+        # "the output is in another conversation" and "the output is nowhere"
+        # have different remedies, and only one of them means going to read a
+        # different window.  This branch is reached when the conversation
+        # produced lines that carry no artifact (an ACK, say), so ``rows`` is
+        # non-empty and the earlier guard did not fire -- but the informative
+        # reason is still sitting in ``rejected``, and dropping it here would
+        # turn a locatable output into an unlocatable one.
+        refused = observed.get("rejected") or []
+        if any(row.get("reason") == "foreign_session" for row in refused):
+            return verdict(None, "foreign_session")
+        if observed.get("session_unknown"):
+            return verdict(None, "session_unknown")
         return verdict(None, "no_result_in_transcript")
 
     seen = [item for item in claimed
