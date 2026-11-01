@@ -26,7 +26,15 @@ a send *may* have happened and must not be retried automatically.  Collapsing
 both into ``not_sent`` states something we do not know -- measured on a real
 order here (``2026-10-30T0422243473450000-04d70400``), the verdict read
 ``not_sent`` for an order whose own last attempt said ``possible send``.  Hence
-``delivery()`` has three answers and ``state`` has four.
+``delivery()`` has three answers.
+
+The fifth state is ``abandoned``, and it exists so that "we stopped waiting" can
+never be confused with "it worked" or "it timed out".  A hold with no ceiling
+would pin a task forever, but a *timeout* that advances the DAG would delete the
+whole guarantee this module provides -- so ending the wait requires a named human
+and a written reason, and its consequence is ``blocked``, not ``done``.  A late
+reply is still accepted after an abandonment: the agent did answer, we simply
+stopped asking, and the record keeps both facts.
 """
 from __future__ import annotations
 
@@ -45,6 +53,10 @@ UNCONFIRMED_NOTE = "SUBMISSION_UNCONFIRMED"
 #: ``CEASED`` prefixes that say nothing was typed.  Recorded so the two kinds of
 #: ``CEASED`` are both named in one place instead of one being implied.
 UNPROVEN_NOTE = "DELIVERY_UNPROVEN"
+#: The order state a human sets when they stop waiting.  Deliberately *not* a
+#: timeout: a timeout is our patience expiring, this is someone signing off, and
+#: the two must not share a word or the guarantee becomes a schedule.
+ABANDONED_STATE = "ABANDONED"
 
 #: Why a token-bearing event was not accepted.  Each one is a real failure mode,
 #: and keeping them apart is the difference between "no answer yet" and "the
@@ -82,12 +94,20 @@ def delivery(order: dict[str, Any]) -> str:
     ended in ``CEASED`` with a note saying a send may have happened; that is not
     evidence of delivery, but it is also not evidence of the opposite, and the
     two must not share a word.
+
+    ``state_before_abandon`` is read as well, because abandoning an order
+    overwrites ``state`` with ``ABANDONED`` and would otherwise delete the only
+    place the delivery was recorded -- an action that erases a fact is worse than
+    no action.  Measured on a hand-built order that reached ``MESSAGE_VISIBLE``
+    without an attempt row: after the sign-off the verdict read ``delivery:
+    none``, ``sent: false``, i.e. the abandonment had un-sent the message.
     """
     if not isinstance(order, dict):
         raise ValueError("order must be an object")
     attempts = [attempt for attempt in order.get("attempts") or [] if isinstance(attempt, dict)]
-    if str(order.get("state", "")) in SENT_STATES:
-        return "proven"
+    for candidate in (order.get("state", ""), order.get("state_before_abandon", "")):
+        if str(candidate) in SENT_STATES:
+            return "proven"
     if any(str(attempt.get("state", "")) in SENT_STATES for attempt in attempts):
         return "proven"
     if any(str(attempt.get("note", "")).startswith(UNCONFIRMED_NOTE) for attempt in attempts):
@@ -103,6 +123,26 @@ def sent(order: dict[str, Any]) -> bool:
     never been asked for.
     """
     return delivery(order) == "proven"
+
+
+def abandoned(order: dict[str, Any]) -> dict[str, Any] | None:
+    """The human sign-off that ended the wait, or ``None``.
+
+    Returns the recorded facts rather than a boolean, for the same reason the
+    verdict returns ``rejected`` instead of a bare ``False``: "abandoned" with no
+    "by whom, when, why" is not something an operator can act on, and it is also
+    not something an audit can rely on.
+    """
+    if not isinstance(order, dict):
+        raise ValueError("order must be an object")
+    if str(order.get("state", "")) != ABANDONED_STATE:
+        return None
+    return {
+        "by": str(order.get("abandoned_by", "")),
+        "at": str(order.get("abandoned_at", "")),
+        "reason": str(order.get("abandon_reason", "")),
+    }
+
 
 
 
@@ -168,8 +208,15 @@ def verdict(order: dict[str, Any], *, events: list[dict[str, Any]],
                                    created_at=created_at))
     accepted = [row for row in candidates if row["accepted"]]
     reached = delivery(order)
+    signoff = abandoned(order)
     if accepted:
         state = "acked"
+    elif signoff is not None:
+        # Still not an ACK, but no longer "waiting".  Reporting sent_unacked here
+        # would leave a supervisor waiting for an answer to a question nobody is
+        # asking any more -- and "abandoned" is the only state that lets the
+        # consequence be "blocked for a human" instead of "done".
+        state = "abandoned"
     elif reached == "proven":
         state = "sent_unacked"
     elif reached == "unconfirmed":
@@ -191,6 +238,8 @@ def verdict(order: dict[str, Any], *, events: list[dict[str, Any]],
         "accepted": bool(accepted),
         "sent": reached == "proven",
         "delivery": reached,
+        "sent_at": str(created_at),
+        "abandoned": signoff,
         "evidence": accepted[0] if accepted else None,
         "candidates": len(candidates),
         "rejected": rejected,

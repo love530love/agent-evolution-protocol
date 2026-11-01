@@ -471,6 +471,48 @@ def complete(root, state, *, task_id, artifact_path=None, moment=None):
     return task
 
 
+def abandon(root, state, *, task_id, reason, actor, moment=None):
+    """Stop waiting for a delivery and block the task, on a human decision.
+
+    Not a failure: ``fail_task`` asks the decision table who should take over
+    next, and that is the wrong question here.  Nobody concluded the agent
+    failed; someone concluded the wait should end.  Handing the work to a
+    successor would re-send it, which is the one action an abandonment exists to
+    rule out.
+
+    Not a completion either.  ``blocked`` is terminal for the DAG -- downstream
+    nodes do not start -- and that is the point: a task marked ``done`` because
+    an operator got tired of waiting is the failure mode this whole protocol is
+    built to prevent.
+    """
+    if not isinstance(task_id, str) or not task_id.strip():
+        raise ValueError("task_id is required")
+    said = str(reason or "").strip()
+    if not said:
+        raise ValueError("a reason is required")
+    who = str(actor or "").strip()
+    if not who:
+        raise ValueError("an actor is required")
+    with workspace_lock(lock_path(root, state["workspace_id"])):
+        fresh = load(root, state["workspace_id"])
+        task = fresh["tasks"].get(task_id)
+        if task is None:
+            raise ValueError("unknown task")
+        if task["state"] != "running":
+            raise ValueError("only a running task can be abandoned")
+        task["state"] = "blocked"
+        task["note"] = f"abandoned by {who}: {said}"[:200]
+        task["remedy"] = "human"
+        EventLog(root, fresh["workspace_id"]).append(
+            "task_abandoned", actor=who,
+            payload={"task": task_id, "reason": said}, moment=moment)
+        save(root, fresh)
+        if fresh != state:
+            state.clear()
+            state.update(fresh)
+        return task
+
+
 def fail_task(root, state, adapters, *, task_id, signal, moment=None, actions=None):
     """Replace a running task's owner now, without waiting for a timeout.
 

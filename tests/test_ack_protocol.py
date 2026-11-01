@@ -209,5 +209,64 @@ class NotePrefixesAreStillWhatCommanderWritesTests(unittest.TestCase):
                           f"commander no longer writes a note starting with {prefix}")
 
 
+class AbandonedIsNotACeilingTests(unittest.TestCase):
+    """Ending the wait is a signature, not a clock.
+
+    A hold with no ceiling pins a task forever, but a timeout that advanced the
+    DAG would delete the guarantee.  The way out is a named person, and its
+    consequence is ``blocked`` -- so ``state`` needs a fifth value that says
+    "someone stopped asking", not "it timed out".
+    """
+
+    def _abandoned(self, **extra):
+        return _order(state="ABANDONED", attempts=[{"state": "INPUT_SUBMITTED"}],
+                      abandoned_by="love", abandoned_at=NOW.isoformat(),
+                      abandon_reason="the client is wedged; re-planning tomorrow", **extra)
+
+    def test_an_abandoned_order_is_not_reported_as_still_waiting(self):
+        value = ack_protocol.verdict(self._abandoned(), events=[], now=NOW)
+        self.assertEqual(value["state"], "abandoned")
+        self.assertFalse(value["accepted"])
+        # It was sent; abandoning does not un-send it.
+        self.assertTrue(value["sent"])
+        self.assertEqual(value["abandoned"]["by"], "love")
+        self.assertIn("wedged", value["abandoned"]["reason"])
+
+    def test_an_abandoned_order_never_reads_as_acked(self):
+        self.assertFalse(ack_protocol.may_advance(
+            ack_protocol.verdict(self._abandoned(), events=[], now=NOW)))
+
+    def test_a_late_reply_still_counts_after_an_abandonment(self):
+        # The agent did answer; we simply stopped asking.  Both facts are kept:
+        # the verdict upgrades, and the sign-off stays on the order.
+        value = ack_protocol.verdict(self._abandoned(), events=[_event(TOKEN)], now=NOW)
+        self.assertEqual(value["state"], "acked")
+        self.assertTrue(value["accepted"])
+        self.assertEqual(value["abandoned"]["by"], "love")
+
+    def test_abandoned_is_none_for_an_order_nobody_abandoned(self):
+        self.assertIsNone(ack_protocol.abandoned(_order()))
+        self.assertIsNone(ack_protocol.abandoned(_order(state="CEASED")))
+
+    def test_the_verdict_carries_when_it_was_sent(self):
+        # The supervisor computes "held for how long" from this, and reading it
+        # back off the order separately would let the two disagree.
+        value = ack_protocol.verdict(_order(), events=[], now=NOW)
+        self.assertEqual(value["sent_at"], SENT_AT)
+
+    def test_abandoned_rejects_a_non_object(self):
+        with self.assertRaises(ValueError):
+            ack_protocol.abandoned("ABANDONED")
+
+    def test_the_state_before_the_sign_off_still_proves_the_send(self):
+        # Abandoning overwrites state; the preserved copy is what keeps
+        # "it was sent" from turning into "it was never sent".
+        order = _order(state="ABANDONED", state_before_abandon="MESSAGE_VISIBLE",
+                       abandoned_by="love", abandoned_at=NOW.isoformat(),
+                       abandon_reason="wedged")
+        self.assertEqual(ack_protocol.delivery(order), "proven")
+        self.assertEqual(ack_protocol.verdict(order, events=[], now=NOW)["state"], "abandoned")
+
+
 if __name__ == "__main__":
     unittest.main()

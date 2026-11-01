@@ -6,6 +6,7 @@ that work finished, died, or cannot safely start.
 """
 import json
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -29,6 +30,15 @@ def _set_order(coord, order_id, state, note="", session_id=""):
         payload["note"] = note
     if session_id:
         payload["session_id"] = session_id
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+
+def _age_order(coord, order_id, seconds):
+    """Backdate the send so a hold's age can be asserted without waiting."""
+    path = Path(coord) / "commander" / "inbox" / f"{order_id}.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    created = datetime.fromisoformat(str(payload["created_at"]).replace("Z", "+00:00"))
+    payload["created_at"] = (created - timedelta(seconds=seconds)).isoformat()
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
 
@@ -190,6 +200,61 @@ class AckGateTests(unittest.TestCase):
                                  dispatch=False)
         self.assertEqual(result["held"], [])
         self.assertEqual(result["tasks"]["execute"]["state"], "done")
+
+    def test_an_abandoned_order_blocks_the_task_and_downstream_stays_pending(self):
+        receipt, adapters = self._intake()
+        order = commander._orders(self.coord)[0]
+        _set_order(self.coord, order["id"], "MESSAGE_VISIBLE", session_id="4242")
+        _report(self.coord, "execute", "alpha")
+        first = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
+                                dispatch=False)
+        self.assertEqual([row["action"] for row in first["held"]], ["hold_unacked"])
+
+        commander.abandon(self.coord, order["id"], actor="love",
+                          reason="the client is wedged; re-planning tomorrow")
+        result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
+                                 dispatch=False)
+        self.assertEqual([row["action"] for row in result["closed"]], ["abandoned"])
+        self.assertEqual(result["held"], [])
+        # Blocked, never done: abandoning a delivery is not evidence of the work.
+        self.assertEqual(result["tasks"]["execute"]["state"], "blocked")
+        # And the existing propagation does the rest: the dependent is marked
+        # blocked with the reason, rather than left pending forever with no
+        # explanation of why it will never start.
+        self.assertEqual(result["tasks"]["review"]["state"], "blocked")
+        self.assertIn("blocked by", engine.load(self.root, receipt["workspace"])
+                      ["tasks"]["review"]["note"])
+
+    def test_a_hold_reports_its_age_so_an_unbounded_wait_is_visible(self):
+        receipt, adapters = self._intake()
+        order = commander._orders(self.coord)[0]
+        _set_order(self.coord, order["id"], "MESSAGE_VISIBLE", session_id="4242")
+        _age_order(self.coord, order["id"], 3600)
+        _report(self.coord, "execute", "alpha")
+        result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
+                                 dispatch=False)
+        row = result["held"][0]
+        self.assertEqual(row["verdict"], "hold")
+        self.assertGreaterEqual(row["unacked_for_seconds"], 3600)
+        self.assertIsNone(row["limit_seconds"])
+        self.assertFalse(row["over_limit"])
+
+    def test_crossing_the_hold_limit_reports_it_without_advancing(self):
+        # A limit that advanced the DAG would be "no ACK, progress after N
+        # minutes" -- the guarantee deleted.  It only makes the hold loud.
+        receipt, adapters = self._intake()
+        order = commander._orders(self.coord)[0]
+        _set_order(self.coord, order["id"], "MESSAGE_VISIBLE", session_id="4242")
+        _age_order(self.coord, order["id"], 3600)
+        _report(self.coord, "execute", "alpha")
+        result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
+                                 dispatch=False, hold_limit_seconds=60)
+        row = result["held"][0]
+        self.assertTrue(row["over_limit"])
+        self.assertEqual(row["limit_seconds"], 60)
+        self.assertEqual(result["closed"], [])
+        self.assertEqual(result["tasks"]["execute"]["state"], "running")
+        self.assertEqual(result["tasks"]["review"]["state"], "pending")
 
 
 if __name__ == "__main__":

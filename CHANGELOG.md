@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.6.13 — Give the wait an exit, and never give progress a timer
+
+- Fixed the defect 0.6.10 shipped and documented: `hold_unacked` had no ceiling,
+  so an agent that never ACKs pinned a task in `running` forever with nothing in
+  the receipt but the word `hold_unacked`. In unattended operation that is a
+  silent deadlock, not caution.
+- The obvious fix -- treat a timeout as a failure and hand the work to someone
+  else -- was rejected, because it deletes the guarantee: "no ACK, no progress"
+  becomes "no ACK, progress after N minutes", a schedule instead of a judgement.
+  Re-sending is worse still, since it assumes the first delivery did not arrive,
+  which is exactly what `SUBMISSION_UNCONFIRMED` says we do not know.
+- Holds are now visible. Each `held` row carries `unacked_for_seconds`, `sent_at`,
+  `limit_seconds` and `over_limit`, from a new `step(..., hold_limit_seconds=)`.
+  Crossing the limit **changes nothing except that someone is told**: the task
+  stays `running` and `closed` stays empty, asserted by
+  `test_crossing_the_hold_limit_reports_it_without_advancing`. `sent_at` comes
+  from the verdict rather than a second read of the order, because two reads
+  eventually disagree and then nothing can settle which is right.
+- Ending the wait now costs a signature: `aep coord-ack --order-id <id> --abandon
+  --by <name> --reason <text>`, both required. Its consequence is `blocked`,
+  never `done` -- a task marked finished because an operator got tired of waiting
+  is the failure this protocol exists to prevent. It does not go through
+  `fail_task`: that asks "who takes over next", and re-delivery is the one action
+  an abandonment exists to rule out. Abandoning an acknowledged order is refused,
+  and abandoning twice is idempotent with the **first** signature kept, because
+  the first is the decision and the second is a retry.
+- New `engine.abandon()` and `commander.abandon()`; `ack_protocol` gains a fifth
+  `state`, `abandoned`, plus `abandoned()` and `sent_at` on the verdict.
+- Defect found by running the new command against a real order, and fixed in the
+  same release: abandoning overwrote `state` with `ABANDONED`, so an order whose
+  `MESSAGE_VISIBLE` existed only in `state` and not in `attempts` reported
+  `sent: false, delivery: "none"` -- the sign-off had un-sent the message. The
+  prior state is now kept in `state_before_abandon` and `delivery()` reads it. An
+  action that erases a fact is worse than no action; this is the same class of
+  error as 0.6.11, introduced by me in the same release that fixed it.
+- Not done: the limit is a report, not a policy -- nothing delivers `over_limit`
+  anywhere, and `held` only exists in `step()`'s return value, so 7x24 operation
+  needs someone reading it; an abandoned task cannot be reopened; and a late ACK
+  still upgrades an `ABANDONED` order to `AGENT_ACK` (deliberate: a late reply
+  must be accepted) while the task stays `blocked`, so the two can disagree until
+  a person reconciles them.
+
 ## 0.6.12 — A hang guard that was doing a latency assertion's job
 
 - Test-only change; no product code touched. `test_improvement_stage_watcher.py`

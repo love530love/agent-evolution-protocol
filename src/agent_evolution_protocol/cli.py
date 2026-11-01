@@ -2864,10 +2864,23 @@ def coord_ack(args: argparse.Namespace) -> None:
     "Not acknowledged" is not actionable on its own.  The token appearing in
     another conversation, or appearing as an outgoing line, are different facts
     that look identical to a yes/no check.
+
+    ``--abandon`` ends the wait instead of reporting on it, and it is the only
+    way a held task stops being held.  It exits 0 when the abandonment was
+    recorded -- not when the ACK arrived, because it did not.  Exiting 2 there
+    would report a successful decision as a failure and invite a retry.
     """
     root = coord_root(args)
     if not args.order_id:
         raise ProtocolError("coord-ack needs --order-id")
+    if args.abandon:
+        try:
+            value = commander.abandon(root, args.order_id,
+                                      reason=args.reason or "", actor=args.by or "")
+        except ValueError as exc:
+            raise ProtocolError(str(exc)) from exc
+        print(json.dumps(value, ensure_ascii=False, indent=2))
+        return
     try:
         value = commander.ack_state(root, args.order_id)
     except ValueError as exc:
@@ -3216,6 +3229,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     ack = commands.add_parser("coord-ack", help="the ACK judgement for one order, with the reasons a token did not count")
     ack.add_argument("--order-id", required=True)
+    ack.add_argument("--abandon", action="store_true",
+                     help="stop waiting on a named person's signature; the task becomes blocked, never done")
+    ack.add_argument("--reason", help="why the wait is ending; required with --abandon")
+    ack.add_argument("--by", help="who is ending it; required with --abandon")
     ack.set_defaults(func=coord_ack)
 
     providers = commands.add_parser("coord-providers", help="list, promote or retire optional execution providers")

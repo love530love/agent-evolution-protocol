@@ -870,6 +870,59 @@ def ack_state(root: Path, order_id: str) -> dict:
         order, events=bus.read_events(root, agent=order["target"], limit=500))
 
 
+def abandon(root: Path, order_id: str, *, reason: str, actor: str) -> dict:
+    """End the wait for one order, on a named person's signature.
+
+    "No ACK, no progress" has no ceiling, and that is deliberate: a timeout that
+    advanced the DAG would delete the guarantee and turn it into a schedule.
+    What it lacked was a way out that is not a lie, so this is it -- and it costs
+    a name and a written reason, because the record has to answer "who decided to
+    stop waiting, and why" long after everyone has forgotten.
+
+    The consequence is *blocked*, never *done*.  Abandoning a delivery is not
+    evidence that the work happened, and the only thing worse than a task stuck
+    in ``running`` is a task marked finished because someone got tired of waiting.
+
+    Abandoning an acknowledged order is refused: there is a real answer on
+    record, and hiding it behind "we gave up" would be a downgrade of the record.
+    Abandoning twice is idempotent and keeps the *first* signature, because the
+    first one is the decision and the second one is a retry.
+    """
+    if not isinstance(order_id, str) or not order_id.strip():
+        raise ValueError("order_id is required")
+    said = str(reason or "").strip()
+    if not said:
+        raise ValueError("a reason is required: 'we gave up' is not a record")
+    who = str(actor or "").strip()
+    if not who:
+        raise ValueError("an actor is required: an anonymous abandonment is not a decision")
+
+    order = next((row for row in _orders(root) if row.get("id") == order_id), None)
+    if order is None:
+        raise ValueError(f"no order {order_id}")
+    events = bus.read_events(root, agent=order.get("target", ""), limit=500)
+    if ack_protocol.abandoned(order) is not None:
+        value = ack_protocol.verdict(order, events=events)
+        value["already_abandoned"] = True
+        return value
+    if str(order.get("state", "")) == "AGENT_ACK":
+        raise ValueError("order already acknowledged; there is no wait to abandon")
+
+    order["abandoned_by"] = who
+    order["abandoned_at"] = now()
+    order["abandon_reason"] = said
+    # ``_record_attempt`` overwrites ``state``, so without this the sign-off would
+    # delete the only record that the message was ever delivered -- and the
+    # verdict would then report ``not_sent`` about an order that was sent.  That
+    # is the same class of false statement this release exists to remove.
+    order["state_before_abandon"] = str(order.get("state", ""))
+    _record_attempt(root, order, state=ack_protocol.ABANDONED_STATE,
+                    note=f"human decision by {who}: {said}")
+    value = ack_protocol.verdict(order, events=events)
+    value["already_abandoned"] = False
+    return value
+
+
 def _parse_candidates(raw: object) -> list[str]:
     """Split a comma/space separated candidate string into safe agent names."""
     if not raw:

@@ -65,8 +65,16 @@ def build_adapters(*, coord_root, agents, capabilities=None, sender="kernel",
 
 def step(root, coord_root, workspace_id, adapters, *, now=None,
          heartbeat_timeout=900, dispatch=True, perceive_first=False,
-         moment=None):
-    """Advance one bounded step.  Returns what changed and why."""
+         moment=None, hold_limit_seconds=None):
+    """Advance one bounded step.  Returns what changed and why.
+
+    ``hold_limit_seconds`` does not advance anything when it is exceeded.  A hold
+    that turns into progress on a timer is not "no ACK, no progress" any more; it
+    is "no ACK, progress after N minutes", which is the behaviour the guarantee
+    exists to rule out.  Crossing the limit only makes the hold *loud* -- the
+    receipt says how long it has waited and that the limit is past, so a person
+    can decide.  Ending the wait takes ``commander.abandon`` and a signature.
+    """
     from agent_evolution_protocol.coordination import commander
 
     now = now or datetime.now(timezone.utc)
@@ -77,7 +85,8 @@ def step(root, coord_root, workspace_id, adapters, *, now=None,
     #    ready *now*, so it can be scheduled in this same step instead of
     #    waiting a whole heartbeat interval for no reason.
     closed, held = _settle(root, coord_root, workspace_id, adapters, moment=moment,
-                           actions=actions)
+                           actions=actions, now=now,
+                           hold_limit_seconds=hold_limit_seconds)
 
     # 2. heart: schedule and queue
     state = engine.load(root, workspace_id)
@@ -107,7 +116,8 @@ def step(root, coord_root, workspace_id, adapters, *, now=None,
                       for task_id, row in sorted(state["tasks"].items())}}
 
 
-def _settle(root, coord_root, workspace_id, adapters, *, moment, actions):
+def _settle(root, coord_root, workspace_id, adapters, *, moment, actions,
+            now=None, hold_limit_seconds=None):
     """Close every running task whose assignee produced evidence, or died."""
     from agent_evolution_protocol.coordination import commander
 
@@ -131,7 +141,17 @@ def _settle(root, coord_root, workspace_id, adapters, *, moment, actions):
             continue
         report = assignment.complete_evidence(coord_root, task_id=task_id, agent=task["owner"])
         if report.get("done"):
-            blocked = _ack_blocks(adapter, task_id)
+            blocked = _ack_blocks(adapter, task_id, now=now,
+                                  hold_limit_seconds=hold_limit_seconds)
+            if blocked is not None and blocked.get("verdict") == "abandon":
+                # A person ended the wait.  The task becomes blocked, not done:
+                # nothing was proven about the work, only about the waiting.
+                engine.abandon(root, state, task_id=task_id,
+                               reason=blocked.get("reason_text") or "order abandoned",
+                               actor=blocked.get("by") or "unknown", moment=moment)
+                closed.append({"task": task_id, "action": "abandoned",
+                               "by": blocked.get("by", "")})
+                continue
             if blocked is not None:
                 held.append({"task": task_id, "action": "hold_unacked", **blocked})
                 continue
@@ -157,7 +177,20 @@ def _settle(root, coord_root, workspace_id, adapters, *, moment, actions):
     return closed, held
 
 
-def _ack_blocks(adapter, task_id):
+def _seconds_since(value, now):
+    """Age of an ISO timestamp in whole seconds, or ``None`` if unreadable."""
+    if not value or now is None:
+        return None
+    try:
+        moment = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return max(0, int((now - moment).total_seconds()))
+
+
+def _ack_blocks(adapter, task_id, *, now=None, hold_limit_seconds=None):
     """Why this completion may not advance the DAG, or ``None`` when it may.
 
     The rule is "no ACK, no progress" -- but only for orders that were actually
@@ -168,6 +201,11 @@ def _ack_blocks(adapter, task_id):
     An adapter with no way to report an ACK is not held to one.  Requiring
     evidence an adapter cannot produce is not rigour, it is a deadlock with good
     intentions.
+
+    Two different answers come back, and they are not interchangeable.  A hold
+    means "keep waiting" and is now reported with its age, so an unbounded wait
+    is visible instead of silent.  An abandonment means a person ended the wait,
+    and it resolves to ``blocked`` -- never to a completion.
     """
     from agent_evolution_protocol.coordination import ack_protocol
 
@@ -178,12 +216,31 @@ def _ack_blocks(adapter, task_id):
         value = probe(task_id)
     except (OSError, ValueError, KeyError, TypeError):
         return None
-    if not isinstance(value, dict) or not value.get("sent"):
+    if not isinstance(value, dict):
+        return None
+    signoff = value.get("abandoned")
+    if isinstance(signoff, dict):
+        # Checked before "was it sent": an abandonment is a decision about the
+        # wait, and it blocks the task whether or not anything was delivered.
+        return {"verdict": "abandon", "reason": "abandoned", "state": value.get("state"),
+                "by": signoff.get("by", ""), "at": signoff.get("at", ""),
+                "reason_text": signoff.get("reason", "")}
+    if not value.get("sent"):
         return None
     if ack_protocol.may_advance(value):
         return None
-    return {"reason": value.get("reason") or "no_ack", "state": value.get("state"),
-            "event_id": value.get("event_id", "")}
+    waited = _seconds_since(value.get("sent_at"), now)
+    return {"verdict": "hold",
+            "reason": value.get("reason") or "no_ack",
+            "state": value.get("state"),
+            "event_id": value.get("event_id", ""),
+            "sent_at": value.get("sent_at", ""),
+            "unacked_for_seconds": waited,
+            "limit_seconds": hold_limit_seconds,
+            # Over the limit changes nothing except that a person is now told to
+            # look.  It is deliberately not a trigger to advance.
+            "over_limit": (hold_limit_seconds is not None and waited is not None
+                           and waited >= hold_limit_seconds)}
 
 
 def _claim_scopes(coord_root, state, root, *, moment=None):

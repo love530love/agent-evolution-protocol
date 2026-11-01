@@ -425,9 +425,14 @@ python -m pytest tests/test_ocr_wiring.py tests/test_uia_argv.py `
 
 **新出现的、尚未处理的缺陷**（不在旧表里，因为它是这一版引入的）：
 
-- `hold_unacked` **没有上限**。一个永不 ACK 的 agent 会把任务永久钉在 `running`，
-  下游永不启动。这是有意的（无人值守不该在未验证的工作上宣布胜利），
-  但缺一个「放弃并标 blocked」的策略。
+- `hold_unacked` **没有上限**（v0.6.10 引入）。一个永不 ACK 的 agent 会把任务永久钉在
+  `running`，下游永不启动，而回执里只有 `hold_unacked` 一个词——无人值守下这是静默死锁。
+  **v0.6.13 已处理**：`held` 现在带 `unacked_for_seconds` / `sent_at` / `limit_seconds` /
+  `over_limit`，超限**只报警不推进**（测试断言超限后任务仍是 `running`）；
+  结束等要签字（`coord-ack --abandon --by --reason`），后果是 **`blocked` 而不是 `done`**。
+  **仍未做**：`over_limit` 只是 `step()` 返回值里的字段，没有任何通道把它送到人眼前；
+  被放弃的任务不能复活；迟到的 ACK 仍会把订单从 `ABANDONED` 升级成 `AGENT_ACK`
+  而任务停在 `blocked`，两者会不一致，需要人收拾。
 - **WSL 抓到我引入的缺陷**：`_normalise()` 原本用 `os.path.normcase`，
   而它在 POSIX 上是恒等函数、也不认 `\`，于是同一路径在两个宿主算出两个指纹
   （`test_path_case_and_separators_do_not_change_the_identity` 在 Linux 失败）。
