@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.6.12 — A hang guard that was doing a latency assertion's job
+
+- Test-only change; no product code touched. `test_improvement_stage_watcher.py`
+  spawned `pwsh` with `timeout=12`, which is about twice the measured cost (~6s
+  per invocation; the file's nine tests take 57.84s) and not enough under
+  full-suite concurrency. On 2026-11-01 the full run failed once with
+  `subprocess.TimeoutExpired`; the same file alone passed 9/9 and the next full
+  run passed 968/968.
+- That timeout asserted nothing. The tests assert `returncode != 0` and
+  `"watcher.lock" in stderr`; the 12 seconds only meant "do not hang forever".
+  It is now `PWSH_HANG_GUARD = 60`, and no assertion changed. A hung script still
+  fails the test, just 48 seconds later; a slow-starting one no longer does.
+- Deliberately not changed: the two `process.wait(timeout=12)` calls and
+  `_wait(timeout=12)`. The first wait on a running process reacting to a file
+  event rather than on startup, and have no failure evidence; the second already
+  fails with its own message instead of a `TimeoutExpired` traceback. Widening
+  every timeout in sight would hide the problem rather than fix it.
+
 ## 0.6.11 — The previous release stated something it did not know
 
 - Corrected a false claim shipped in 0.6.10. `ack_protocol.sent()` returned

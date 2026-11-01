@@ -16,6 +16,21 @@ from agent_evolution_protocol.coordination import commander, improvement, improv
 from agent_evolution_protocol.coordination.battle_orders import _atomic_json, _task_writer_lock
 
 
+#: How long a spawned ``pwsh`` may take before the test calls it a hang.
+#:
+#: This is a hang guard, not a latency assertion: what these tests assert is
+#: ``returncode != 0`` and a message on stderr, and none of them claims anything
+#: about how fast the script starts.  It used to be 12 seconds, which is roughly
+#: twice the measured cost on an idle machine -- nine tests in this file take
+#: 57.84s, so a single invocation is about six seconds -- and under full-suite
+#: concurrency that margin is not enough.  Measured on 2026-11-01: the full run
+#: failed once with ``subprocess.TimeoutExpired`` at ``timeout=12``, the same
+#: file alone passed 9/9, and the next full run passed 968/968.  Raising the
+#: guard changes no assertion; leaving it at 12 made a clean full-suite result a
+#: coin flip, which is worse than a slow test.
+PWSH_HANG_GUARD = 60
+
+
 def _tempdir():
     """A temp root that survives a scanner holding a just-released lock file.
 
@@ -243,7 +258,7 @@ class ImprovementStageWatcherTests(unittest.TestCase):
                 second = subprocess.run([PWSH, "-NoProfile", "-File",
                     str(REPO / "scripts/watch-improvements.ps1"), "-Python", sys.executable,
                     "-CoordRoot", str(root), "-Once"], capture_output=True, text=True,
-                    timeout=12, creationflags=subprocess.CREATE_NO_WINDOW)
+                    timeout=PWSH_HANG_GUARD, creationflags=subprocess.CREATE_NO_WINDOW)
                 self.assertNotEqual(second.returncode, 0)
                 self.assertIn("watcher.lock", second.stderr)
                 self.assertIsNone(process.poll(), log.read_text(encoding="utf-8", errors="replace"))
@@ -262,7 +277,7 @@ class ImprovementStageWatcherTests(unittest.TestCase):
                     result = subprocess.run([PWSH, "-NoProfile", "-File",
                         str(REPO / "scripts/watch-improvements.ps1"), "-Python", sys.executable,
                         "-CoordRoot", str(root), "-RosterFile", str(roster), "-ReadyFile", str(path),
-                        "-Once"], capture_output=True, text=True, timeout=12,
+                        "-Once"], capture_output=True, text=True, timeout=PWSH_HANG_GUARD,
                         creationflags=subprocess.CREATE_NO_WINDOW)
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn(reason, result.stderr)
