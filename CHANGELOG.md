@@ -1,5 +1,66 @@
 # Changelog
 
+## 0.6.10 — Do not advance without an ACK, and do not send into a different session
+
+- New `coordination/ack_protocol.py`. The token we ask the peer to echo is a
+  string we ourselves put in the outgoing message, so *any* "look for this token
+  in the transcript" implementation matches our own request first. An ACK is now
+  an event with a role, in the right session, recorded after the order was
+  created. Four guards, four distinct rejection reasons: `not_assistant` (our
+  own line, the user's line, or an input-box draft), `not_incoming` (the same
+  line captured as outgoing), `foreign_session` (another conversation answering
+  the same question), `stale` (an answer to a previous delivery -- the event id
+  is per task, so a re-send reuses it). They are kept separate because they
+  demand different handling: waiting, mis-delivery, and reading our own request
+  are not the same failure.
+- `state` has three values and **no timeout**: `not_sent`, `sent_unacked`,
+  `acked`. A late reply must be accepted. A timeout is a statement about our
+  patience, not about the peer; treating it as a rejection is exactly what
+  produces duplicate sends. Measured once on 2026-10-31: the reply arrived about
+  a minute past a 60-second window while the message had long been delivered.
+- New `aep coord-ack --order-id`, exiting 2 when the ACK is not accepted, and
+  reporting the `rejected` candidates with individual reasons rather than a bare
+  `False`.
+- `supervisor._settle()` now refreshes ACKs (read-only; it upgrades state and
+  never types) and refuses to close a task whose order was sent, whose adapter
+  can report ACKs, and which has none. The task stays `running`, downstream
+  nodes do not start, and `step()` returns it under `held` so "why did nothing
+  advance" is a receipt field instead of an inference. `CommanderAdapter` gained
+  `ack_verdict()`; before this, `acknowledged()` existed with no caller -- a
+  check that only existed in its own definition.
+- Three deliberate limits on that gate: only orders that were actually sent
+  (waiting on an undelivered message is a deadlock, not rigour); only adapters
+  that can report ACKs (demanding evidence an adapter cannot produce is the
+  other kind of deadlock); `FAILED` stays terminal while `CEASED` can still be
+  upgraded by a late ACK.
+- New `coordination/session_fingerprint.py`. A marker check answers "is this
+  string on screen" -- it is also in the sidebar, and in another instance's
+  session list. The fingerprint answers "is it still that session":
+  `agent + exe + title + session_marker + model_marker`. **pid is deliberately
+  excluded** -- a restart is not a session change, and a fingerprint that
+  expires on every restart teaches the operator to re-record blindly, which is
+  the same as having none. pid is still recorded as context.
+- Live, read-only measurement on this machine:
+  `qoder pid=22796 fp=332555763b7f26a5`, `qoder_cn pid=56368 fp=20eb3eb74f41b52d`,
+  `workbuddy pid=3560 fp=82dad2ad037bae62`. The two Qoder products differ by
+  fingerprint as well as by executable.
+- `compare().match` is `None` when nothing was recorded, **not `True`**:
+  "nobody wrote it down" and "it agrees" are different claims. `None` sends and
+  records the fingerprint in the `WINDOW_FOUND` receipt; `False` defers with
+  `SESSION_FINGERPRINT_MISMATCH` and a `diff` naming the differing fields.
+- Fixed during the WSL run: `_normalise()` used `os.path.normcase`, which on
+  POSIX is the identity function and does not treat `\` as a separator, so the
+  same path produced two different fingerprints on two hosts. The normalisation
+  is now implemented here instead of delegated to the host.
+- Not done, deliberately: session *content* is not in the fingerprint (the two
+  markers come from the profile, not the screen, so "the window is now showing a
+  different session" is still `SESSION_NOT_VERIFIED`'s job); `hold_unacked` has
+  no ceiling, so an agent that never ACKs pins a task in `running` forever;
+  `ack_tracker.py`'s lease-based ACK record is *not* merged with this protocol --
+  two coexisting schemes is what this repository keeps warning about, so it is
+  written down rather than papered over; `provider_readback`'s `aep-readback-v1`
+  is still a separate contract and `TASK_RESULT_READBACK` is still unimplemented.
+
 ## 0.6.9 — Prove the message should be sent before arguing about how
 
 - `client_registry.py`: window identity was a title substring, and `Qoder` is a

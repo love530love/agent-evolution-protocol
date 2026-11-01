@@ -34,6 +34,8 @@ from agent_evolution_protocol.coordination import desktop_health
 from agent_evolution_protocol.coordination import overlay_audit
 from agent_evolution_protocol.coordination import dispatch_contract
 from agent_evolution_protocol.coordination import dispatch_gate
+from agent_evolution_protocol.coordination import ack_protocol
+from agent_evolution_protocol.coordination import session_fingerprint
 from agent_evolution_protocol.coordination.overlay_detector import classify
 from agent_evolution_protocol.coordination.provider_readback import receipt as make_readback, accepted as readback_accepted
 from agent_evolution_protocol.coordination.workspace_identity import validate_workspace_id
@@ -745,6 +747,20 @@ def _dispatch(root: Path, *, order: dict) -> dict:
                                note=f"WINDOW_NOT_UNIQUE: {len(windows)} windows; refusing to guess")
 
     window = next((row for row in windows if row.get("is_anchor")), windows[0])
+    # Which session this is, before anything is typed into it.  A marker check
+    # answers "is the string present", which is not the same question: the
+    # marker also appears in the sidebar and in the other instance's session
+    # list, so a message can land in the right client's wrong conversation while
+    # every marker matches.
+    observed_identity = session_fingerprint.observe(
+        agent=target, window=window, profile=profile_row)
+    identity = session_fingerprint.compare(
+        session_fingerprint.read(root, target), observed_identity)
+    if identity["match"] is False:
+        return _record_attempt(
+            root, order, state="DEFERRED",
+            receipt={"session_fingerprint": identity, "observed": observed_identity},
+            note=f"SESSION_FINGERPRINT_MISMATCH: {identity['reason']}")
     # Last gate before anything is typed.  It runs here, not inside a transport,
     # because "which text goes where" is a property of the order, and a check
     # implemented per transport is a check that will be missing from the next
@@ -754,7 +770,8 @@ def _dispatch(root: Path, *, order: dict) -> dict:
         return refused
     order["session_id"] = str(window["pid"])
     transport, info = _pick_transport(root, target, order.get("transport", "auto"))
-    _record_attempt(root, order, state="WINDOW_FOUND", transport=transport, receipt=info)
+    _record_attempt(root, order, state="WINDOW_FOUND", transport=transport,
+                    receipt={**info, "session_fingerprint": identity})
 
     if transport == "cdp":
         try:
@@ -805,9 +822,16 @@ def _dispatch(root: Path, *, order: dict) -> dict:
 
 
 def check_acks(root: Path) -> dict:
-    """Accept only a role-attributed reply event, never a raw screen snapshot."""
+    """Accept only a role-attributed reply event, never a raw screen snapshot.
+
+    The judgement itself lives in ``ack_protocol``: it is the one place that
+    knows the four guards, and keeping it out of the loop means a second caller
+    cannot reimplement three of them.  What stays here is the state transition
+    and the receipt.
+    """
     acked = []
-    for order in _orders(root):
+    orders = _orders(root)
+    for order in orders:
         # CEASED means the delivery attempt stopped without an ACK; it does
         # not mean the event can never be acknowledged.  A desktop agent may
         # answer after the bounded read-back window.  Re-checking a late
@@ -817,22 +841,33 @@ def check_acks(root: Path) -> dict:
         # adapter/input failure rather than an uncertain send.
         if order.get("state") in ("AGENT_ACK", "FAILED", "RETIRED"):
             continue
-        token = f"{ACK_TOKEN}:{order['event_id']}"
-        for event in bus.read_events(root, agent=order["target"], limit=500):
-            if event.get("role") != "assistant" or event.get("direction") != "incoming":
-                continue
-            if event.get("session_id") != order.get("session_id") or not event.get("session_id"):
-                continue
-            if event.get("recorded_at", "") <= order.get("created_at", ""):
-                continue
-            if token not in "\n".join(event.get("added_lines", [])):
-                continue
-            _record_attempt(root, order, state="AGENT_ACK",
-                            receipt={"evidence": token, "event_id": event.get("id")},
-                            note="role-attributed agent reply in the anchored session")
-            acked.append({"order": order["id"], "target": order["target"], "token": token})
-            break
-    return {"at": now(), "acked": acked, "checked": len(_orders(root))}
+        result = ack_protocol.verdict(
+            order, events=bus.read_events(root, agent=order["target"], limit=500))
+        if not result["accepted"]:
+            continue
+        _record_attempt(root, order, state="AGENT_ACK",
+                        receipt={"evidence": result["token"],
+                                 "event_id": result["evidence"]["event"],
+                                 "ack_verdict": result},
+                        note="role-attributed agent reply in the anchored session")
+        acked.append({"order": order["id"], "target": order["target"],
+                      "token": result["token"]})
+    return {"at": now(), "acked": acked, "checked": len(orders)}
+
+
+def ack_state(root: Path, order_id: str) -> dict:
+    """The ACK verdict for one order, with the rejections that did not count.
+
+    A bare "not acked" tells an operator nothing they can act on; "the token
+    appeared in another conversation" tells them the message went somewhere
+    else, and "the token appeared as outgoing" tells them they are reading their
+    own request back.
+    """
+    order = next((row for row in _orders(root) if row.get("id") == order_id), None)
+    if order is None:
+        raise ValueError(f"no order {order_id}")
+    return ack_protocol.verdict(
+        order, events=bus.read_events(root, agent=order["target"], limit=500))
 
 
 def _parse_candidates(raw: object) -> list[str]:

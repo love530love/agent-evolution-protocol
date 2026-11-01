@@ -231,5 +231,60 @@ class CommanderRefusalTests(unittest.TestCase):
         self.assertNotEqual(stored["state"], "DEFERRED")
 
 
+class FingerprintGateTests(unittest.TestCase):
+    """The session identity is checked before the content is even considered."""
+
+    def setUp(self):
+        self.temp = TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        profile = self.root / "clients" / "qoder.json"
+        profile.parent.mkdir(parents=True, exist_ok=True)
+        profile.write_text(
+            '{"agent": "qoder", "process": "Qoder", "title": "Qoder",'
+            ' "exe": "D:\\\\Programs\\\\Qoder\\\\Qoder.exe",'
+            ' "session_marker": "赛事夺冠执行", "model_marker": "DeepSeek-Flash",'
+            ' "transport": "uia"}', encoding="utf-8")
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def _client(self):
+        return {"agent": "qoder",
+                "windows": [{"pid": 7, "title": "Qoder",
+                             "exe": r"D:\Programs\Qoder\Qoder.exe",
+                             "identity": "exe"}],
+                "unique": True, "anchored": False}
+
+    def test_a_recorded_fingerprint_from_another_conversation_defers_the_send(self):
+        from agent_evolution_protocol.coordination import session_fingerprint
+        session_fingerprint.record(self.root, "qoder", {
+            "agent": "qoder", "pid": 7, "title": "Qoder",
+            "exe": r"D:\Programs\Qoder\Qoder.exe",
+            "session_marker": "另一个会话", "model_marker": "DeepSeek-Flash"})
+        order = _order(self.root)
+        from unittest.mock import patch
+        with (patch.object(commander.registry, "discover", return_value={"clients": [self._client()]}),
+              patch.object(commander, "_pick_transport") as pick,
+              patch.object(commander, "_profiled_deliver") as profiled):
+            result = commander.dispatch(self.root, order=order)
+        self.assertEqual(result["state"], "DEFERRED")
+        self.assertIn("SESSION_FINGERPRINT_MISMATCH", result["attempts"][-1]["note"])
+        self.assertEqual(result["attempts"][-1]["receipt"]["session_fingerprint"]["diff"],
+                         ["session_marker"])
+        pick.assert_not_called()
+        profiled.assert_not_called()
+
+    def test_without_a_recorded_fingerprint_the_send_proceeds_and_says_so(self):
+        order = _order(self.root)
+        from unittest.mock import patch
+        with (patch.object(commander.registry, "discover", return_value={"clients": [self._client()]}),
+              patch.object(commander, "_pick_transport", return_value=("uia", {})),
+              patch.object(commander, "_uia_deliver", return_value={"status": "NO_RECEIPT"})):
+            result = commander.dispatch(self.root, order=order)
+        found = next(attempt for attempt in result["attempts"]
+                     if attempt["state"] == "WINDOW_FOUND")
+        self.assertIsNone(found["receipt"]["session_fingerprint"]["match"])
+
+
 if __name__ == "__main__":
     unittest.main()

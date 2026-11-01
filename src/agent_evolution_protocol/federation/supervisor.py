@@ -76,8 +76,8 @@ def step(root, coord_root, workspace_id, adapters, *, now=None,
     # 1. settle first: a task that finished last tick makes its downstream node
     #    ready *now*, so it can be scheduled in this same step instead of
     #    waiting a whole heartbeat interval for no reason.
-    closed = _settle(root, coord_root, workspace_id, adapters, moment=moment,
-                     actions=actions)
+    closed, held = _settle(root, coord_root, workspace_id, adapters, moment=moment,
+                           actions=actions)
 
     # 2. heart: schedule and queue
     state = engine.load(root, workspace_id)
@@ -101,7 +101,7 @@ def step(root, coord_root, workspace_id, adapters, *, now=None,
     state = engine.load(root, workspace_id)
     return {"at": now.isoformat(), "workspace": workspace_id,
             "scheduled": ticked.get("actions") or [], "sent": sent,
-            "claims": claims, "closed": closed,
+            "claims": claims, "closed": closed, "held": held,
             "tasks": {task_id: {"state": row["state"], "owner": row["owner"],
                                 "attempts": row["attempts"]}
                       for task_id, row in sorted(state["tasks"].items())}}
@@ -109,8 +109,19 @@ def step(root, coord_root, workspace_id, adapters, *, now=None,
 
 def _settle(root, coord_root, workspace_id, adapters, *, moment, actions):
     """Close every running task whose assignee produced evidence, or died."""
+    from agent_evolution_protocol.coordination import commander
+
+    # Refresh the ACK state before judging anything.  `commander.tick` does this
+    # too, but it runs after this function, so without the refresh every verdict
+    # here is one step stale -- and a task would be held for an ACK that already
+    # arrived.  Reading a transcript and upgrading a receipt never types.
+    try:
+        commander.check_acks(Path(coord_root))
+    except (OSError, ValueError):
+        pass
     state = engine.load(root, workspace_id)
     closed = []
+    held = []
     for task_id in sorted(state["tasks"]):
         task = state["tasks"][task_id]
         if task["state"] != "running" or not task["owner"]:
@@ -120,6 +131,10 @@ def _settle(root, coord_root, workspace_id, adapters, *, moment, actions):
             continue
         report = assignment.complete_evidence(coord_root, task_id=task_id, agent=task["owner"])
         if report.get("done"):
+            blocked = _ack_blocks(adapter, task_id)
+            if blocked is not None:
+                held.append({"task": task_id, "action": "hold_unacked", **blocked})
+                continue
             artifact = _first_existing(report.get("evidence") or [])
             engine.complete(root, state, task_id=task_id, artifact_path=artifact, moment=moment)
             closed.append({"task": task_id, "action": "complete", "artifact": str(artifact or "")})
@@ -139,7 +154,36 @@ def _settle(root, coord_root, workspace_id, adapters, *, moment, actions):
             engine.fail_task(root, state, adapters, task_id=task_id, signal=signal,
                              moment=moment, actions=actions)
             closed.append({"task": task_id, "action": "fail", "signal": signal})
-    return closed
+    return closed, held
+
+
+def _ack_blocks(adapter, task_id):
+    """Why this completion may not advance the DAG, or ``None`` when it may.
+
+    The rule is "no ACK, no progress" -- but only for orders that were actually
+    sent.  An order that never reached a conversation has nothing to acknowledge,
+    and holding it would be waiting for a reply to a message nobody delivered;
+    the agent's own written evidence is the only signal that can exist there.
+
+    An adapter with no way to report an ACK is not held to one.  Requiring
+    evidence an adapter cannot produce is not rigour, it is a deadlock with good
+    intentions.
+    """
+    from agent_evolution_protocol.coordination import ack_protocol
+
+    probe = getattr(adapter, "ack_verdict", None)
+    if not callable(probe):
+        return None
+    try:
+        value = probe(task_id)
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if not isinstance(value, dict) or not value.get("sent"):
+        return None
+    if ack_protocol.may_advance(value):
+        return None
+    return {"reason": value.get("reason") or "no_ack", "state": value.get("state"),
+            "event_id": value.get("event_id", "")}
 
 
 def _claim_scopes(coord_root, state, root, *, moment=None):

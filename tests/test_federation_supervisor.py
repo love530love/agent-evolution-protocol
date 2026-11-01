@@ -21,12 +21,14 @@ def _report(coord, task_id, agent, phase="done", **extra):
     (folder / f"{task_id}.json").write_text(json.dumps(payload), encoding="utf-8")
 
 
-def _set_order(coord, order_id, state, note=""):
+def _set_order(coord, order_id, state, note="", session_id=""):
     path = Path(coord) / "commander" / "inbox" / f"{order_id}.json"
     payload = json.loads(path.read_text(encoding="utf-8"))
     payload["state"] = state
     if note:
         payload["note"] = note
+    if session_id:
+        payload["session_id"] = session_id
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
 
@@ -128,6 +130,66 @@ class SupervisorTests(unittest.TestCase):
         adapters = supervisor.build_adapters(coord_root=self.coord, agents=["alpha"],
                                              capabilities={"alpha": ["execute", "review"]})
         self.assertEqual(adapters[0].capabilities(), {"execute", "review"})
+
+
+class AckGateTests(unittest.TestCase):
+    """No ACK, no downstream progress -- for orders that were actually sent."""
+
+    def setUp(self):
+        self._temp = TemporaryDirectory()
+        self.root = Path(self._temp.name) / "state"
+        self.coord = str(Path(self._temp.name) / "coordination")
+        self.addCleanup(self._temp.cleanup)
+
+    def _intake(self):
+        receipt = intake.intake(self.root, self.coord, text="跑通 README",
+                                agents=["alpha", "beta"], shape="reviewed", sender="kernel")
+        adapters = supervisor.build_adapters(coord_root=self.coord, agents=["alpha", "beta"],
+                                             workspace_id=receipt["workspace"])
+        return receipt, adapters
+
+    def test_a_sent_order_without_an_ack_does_not_close_the_task(self):
+        receipt, adapters = self._intake()
+        order = commander._orders(self.coord)[0]
+        _set_order(self.coord, order["id"], "MESSAGE_VISIBLE")
+        _report(self.coord, "execute", "alpha")
+        result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
+                                 dispatch=False)
+        self.assertEqual(result["closed"], [])
+        self.assertEqual([row["action"] for row in result["held"]], ["hold_unacked"])
+        self.assertEqual(result["held"][0]["state"], "sent_unacked")
+        self.assertEqual(result["tasks"]["execute"]["state"], "running")
+        # The reviewer must not start on work nobody accepted.
+        self.assertEqual(result["tasks"]["review"]["state"], "pending")
+
+    def test_the_same_task_closes_once_the_ack_arrives(self):
+        from agent_evolution_protocol.coordination import transcript_bus
+        receipt, adapters = self._intake()
+        order = commander._orders(self.coord)[0]
+        _set_order(self.coord, order["id"], "MESSAGE_VISIBLE", session_id="4242")
+        _report(self.coord, "execute", "alpha")
+        held = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
+                               dispatch=False)
+        self.assertEqual(held["closed"], [])
+        transcript_bus.publish(self.coord, agent="alpha",
+                               text="AEP-ACK:" + order["event_id"],
+                               session_id="4242",
+                               role="assistant", direction="incoming")
+        result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
+                                 dispatch=False)
+        self.assertIn({"task": "execute", "action": "complete", "artifact": ""},
+                      result["closed"])
+        self.assertEqual(result["held"], [])
+
+    def test_an_order_that_was_never_sent_is_not_held_for_an_ack(self):
+        # Nothing reached a conversation, so nothing can acknowledge it; holding
+        # here would be waiting for a reply to a message nobody delivered.
+        receipt, adapters = self._intake()
+        _report(self.coord, "execute", "alpha")
+        result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
+                                 dispatch=False)
+        self.assertEqual(result["held"], [])
+        self.assertEqual(result["tasks"]["execute"]["state"], "done")
 
 
 if __name__ == "__main__":

@@ -398,3 +398,45 @@ python -m pytest tests/test_ocr_wiring.py tests/test_uia_argv.py `
   tests/test_federation_assignment.py tests/test_federation_supervisor.py `
   tests/test_federation_commander_adapter.py tests/test_federation_conformance.py -q
 ```
+
+---
+
+## 2026-11-01 追加：派工前闸门、ACK 判定、会话指纹
+
+上面那份状态写于 v0.6.7。此后三版（v0.6.8 / v0.6.9 / v0.6.10）动的都不是「手」本身，
+而是**手之前和手之后的两端**：打字前该不该打，打完对方到底接单没有。
+
+| 环节 | 之前的状态 | 现在 | 证据强度 |
+|---|---|---|---|
+| 打字前 | 窗口找到就发 | `dispatch_gate` 12 项纯检查，硬阻断 exit 2 | **真实 dry-run 验过**（干净单 `send`，追加旧 ACK 行双命中 `refuse`） |
+| 窗口身份 | 标题子串 | exe 仲裁（`exe`/`title`/`process-substring` 三档） | **本机实测抓到 `workbuddy` 一直误认 `WorkBuddy AI` 窗口** |
+| 会话身份 | 无 | `session_fingerprint`（`agent+exe+title+session_marker+model_marker`） | **本机 3 个客户端真跑只读**，qoder 与 qoder_cn 指纹不同 |
+| 打完回执 | 字符串找 token | `ack_protocol` 四道守卫（角色/方向/会话/时间） | 单测 14 项；**活会话上未端到端复验** |
+| 能否推进 | agent 自己报 done 就算完 | 已发送 + 能报 ACK + 无 ACK → `hold_unacked` | supervisor 单测 3 项；**未在真任务时间线上跑过** |
+
+**这一版最容易被误读的两点，写在这里：**
+
+1. **会话指纹不读屏幕**。`session_marker` / `model_marker` 来自 profile，不是从窗口里抓的。
+   「窗口现在显示的是另一个会话」指纹**发现不了**，那仍是 `ui_fallback` 的
+   `SESSION_NOT_VERIFIED` 在管。把指纹说成能解决会话错配，是这一版最容易犯的过度声称。
+2. **ACK 判定统一了，回读契约没统一**。`provider_readback` 的 `aep-readback-v1` 仍是独立契约，
+   `TASK_RESULT_READBACK` 仍未做，`ack_tracker.py` 那套基于租约的 ACK 记录**没有**合并进来。
+   「没有 ACK 不得推进」目前只覆盖 `CommanderAdapter` 这一条路径。
+
+**新出现的、尚未处理的缺陷**（不在旧表里，因为它是这一版引入的）：
+
+- `hold_unacked` **没有上限**。一个永不 ACK 的 agent 会把任务永久钉在 `running`，
+  下游永不启动。这是有意的（无人值守不该在未验证的工作上宣布胜利），
+  但缺一个「放弃并标 blocked」的策略。
+- **WSL 抓到我引入的缺陷**：`_normalise()` 原本用 `os.path.normcase`，
+  而它在 POSIX 上是恒等函数、也不认 `\`，于是同一路径在两个宿主算出两个指纹
+  （`test_path_case_and_separators_do_not_change_the_identity` 在 Linux 失败）。
+  已改为自己实现规范化，不再让宿主决定路径含义。修完 Windows 与 WSL 各 9 passed。
+
+验收命令（新增）：
+
+```bash
+aep --coord-root coordination coord-dispatch --order-id <id>                   # 发送前闸门，被拒 exit 2
+aep --coord-root coordination coord-ack --order-id <id>                        # ACK 判定，未接受 exit 2
+aep --coord-root coordination coord-client fingerprint --agent qoder --show    # 只看不记
+```

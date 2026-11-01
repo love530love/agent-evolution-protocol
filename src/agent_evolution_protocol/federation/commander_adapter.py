@@ -179,6 +179,23 @@ class CommanderAdapter:
         order = self.order_for_task(task_id)
         return bool(order and order.get("state") == "AGENT_ACK")
 
+    def ack_verdict(self, task_id):
+        """The full ACK judgement for this task's newest order, or ``None``.
+
+        ``acknowledged`` answers a yes/no question and throws away the reason,
+        which is the part an operator needs: "the token appeared in another
+        conversation" and "nothing has answered yet" require different actions
+        and look identical as ``False``.
+        """
+        from agent_evolution_protocol.coordination import ack_protocol, transcript_bus
+
+        order = self.order_for_task(task_id)
+        if order is None:
+            return None
+        return ack_protocol.verdict(
+            order, events=transcript_bus.read_events(self.coord_root, agent=self.agent,
+                                                     limit=500))
+
     def failure_signal(self, task_id):
         """Translate a terminal order into a diagnosis signal, or ``""``.
 

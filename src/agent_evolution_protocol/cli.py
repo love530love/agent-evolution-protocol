@@ -52,6 +52,8 @@ from agent_evolution_protocol.coordination import improvement_acceptance
 from agent_evolution_protocol.coordination import improvement_dispatch
 from agent_evolution_protocol.coordination import client_registry
 from agent_evolution_protocol.coordination import dispatch_gate
+from agent_evolution_protocol.coordination import session_fingerprint
+from agent_evolution_protocol.coordination import ack_protocol
 from agent_evolution_protocol.coordination import transcript_bus
 from agent_evolution_protocol.coordination import transport_cdp
 from agent_evolution_protocol.coordination import commander
@@ -2704,6 +2706,29 @@ def coord_client(args: argparse.Namespace) -> None:
             root, agent=valid_agent(args.agent), pid=args.pid,
             title=args.title or "", session_id=args.session_id or ""), ensure_ascii=False, indent=2))
         return
+    if action == "fingerprint":
+        if not args.agent:
+            raise ProtocolError("fingerprint needs --agent")
+        agent = valid_agent(args.agent)
+        try:
+            profile_row = client_registry.profile(root, agent)
+        except ValueError as exc:
+            raise ProtocolError(str(exc)) from exc
+        discovered = client_registry.discover(root, agent)
+        row = next((item for item in discovered["clients"] if item["agent"] == agent), None)
+        hits = (row or {}).get("windows") or []
+        if not hits:
+            raise ProtocolError(f"no window for {agent}; nothing to fingerprint")
+        if len(hits) > 1 and not any(hit.get("is_anchor") for hit in hits):
+            raise ProtocolError(f"{len(hits)} windows for {agent}; anchor one before fingerprinting")
+        window = next((hit for hit in hits if hit.get("is_anchor")), hits[0])
+        observed = session_fingerprint.observe(agent=agent, window=window, profile=profile_row)
+        comparison = session_fingerprint.compare(session_fingerprint.read(root, agent), observed)
+        payload = {"observed": observed, "comparison": comparison}
+        if not args.show:
+            payload["recorded"] = session_fingerprint.record(root, agent, observed)
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
     if not args.agent:
         raise ProtocolError("launch needs --agent")
     result = client_registry.launch(root, valid_agent(args.agent), allow=args.allow_launch,
@@ -2831,6 +2856,25 @@ def coord_commander(args: argparse.Namespace) -> None:
     if action == "watch":
         raise SystemExit(commander.watch(root, interval=args.interval, max_ticks=args.max_ticks))
     print(json.dumps(commander.status(root, tail=args.limit), ensure_ascii=False, indent=2))
+
+
+def coord_ack(args: argparse.Namespace) -> None:
+    """Show the ACK judgement for one order, including why a token did not count.
+
+    "Not acknowledged" is not actionable on its own.  The token appearing in
+    another conversation, or appearing as an outgoing line, are different facts
+    that look identical to a yes/no check.
+    """
+    root = coord_root(args)
+    if not args.order_id:
+        raise ProtocolError("coord-ack needs --order-id")
+    try:
+        value = commander.ack_state(root, args.order_id)
+    except ValueError as exc:
+        raise ProtocolError(str(exc)) from exc
+    print(json.dumps(value, ensure_ascii=False, indent=2))
+    if not value["accepted"]:
+        raise SystemExit(2)
 
 
 def coord_dispatch(args: argparse.Namespace) -> None:
@@ -3170,6 +3214,10 @@ def build_parser() -> argparse.ArgumentParser:
     gate.add_argument("--show-body", action="store_true", help="print the human preview before the JSON")
     gate.set_defaults(func=coord_dispatch)
 
+    ack = commands.add_parser("coord-ack", help="the ACK judgement for one order, with the reasons a token did not count")
+    ack.add_argument("--order-id", required=True)
+    ack.set_defaults(func=coord_ack)
+
     providers = commands.add_parser("coord-providers", help="list, promote or retire optional execution providers")
     providers.add_argument("action", choices=("list", "promote", "retire", "history"))
     providers.add_argument("--id")
@@ -3188,7 +3236,7 @@ def build_parser() -> argparse.ArgumentParser:
     acc.add_argument("--persist", action="store_true", help="write the user profile so the setting survives a reboot")
     acc.set_defaults(func=coord_a11y)
 
-    client = commands.add_parser("coord-client"); client.add_argument("action", choices=("register", "list", "discover", "anchor", "launch")); client.add_argument("--agent"); client.add_argument("--display"); client.add_argument("--process"); client.add_argument("--exe"); client.add_argument("--window-titles", nargs="*", default=[]); client.add_argument("--transports", nargs="*", default=[]); client.add_argument("--launch-args", nargs="*", default=[]); client.add_argument("--notes"); client.add_argument("--session-label", default=""); client.add_argument("--no-electron", action="store_true"); client.add_argument("--pid", type=int); client.add_argument("--title"); client.add_argument("--session-id"); client.add_argument("--allow-launch", action="store_true"); client.add_argument("--debug-port", type=int); client.set_defaults(func=coord_client)
+    client = commands.add_parser("coord-client"); client.add_argument("action", choices=("register", "list", "discover", "anchor", "launch", "fingerprint")); client.add_argument("--agent"); client.add_argument("--display"); client.add_argument("--process"); client.add_argument("--exe"); client.add_argument("--window-titles", nargs="*", default=[]); client.add_argument("--transports", nargs="*", default=[]); client.add_argument("--launch-args", nargs="*", default=[]); client.add_argument("--notes"); client.add_argument("--session-label", default=""); client.add_argument("--no-electron", action="store_true"); client.add_argument("--pid", type=int); client.add_argument("--title"); client.add_argument("--session-id"); client.add_argument("--allow-launch", action="store_true"); client.add_argument("--debug-port", type=int); client.add_argument("--show", action="store_true", help="show the fingerprint without recording it"); client.set_defaults(func=coord_client)
 
     transcript = commands.add_parser("coord-transcript"); transcript.add_argument("action", choices=("publish", "read", "awareness", "digest")); transcript.add_argument("--agent"); transcript.add_argument("--text"); transcript.add_argument("--file"); transcript.add_argument("--source"); transcript.add_argument("--title"); transcript.add_argument("--after"); transcript.add_argument("--limit", type=int, default=100); transcript.add_argument("--tail", type=int, default=6); transcript.add_argument("--markdown", action="store_true"); transcript.set_defaults(func=coord_transcript)
 
