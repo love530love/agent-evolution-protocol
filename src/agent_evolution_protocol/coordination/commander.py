@@ -33,6 +33,7 @@ from agent_evolution_protocol.coordination import desktop_providers
 from agent_evolution_protocol.coordination import desktop_health
 from agent_evolution_protocol.coordination import overlay_audit
 from agent_evolution_protocol.coordination import dispatch_contract
+from agent_evolution_protocol.coordination import dispatch_gate
 from agent_evolution_protocol.coordination.overlay_detector import classify
 from agent_evolution_protocol.coordination.provider_readback import receipt as make_readback, accepted as readback_accepted
 from agent_evolution_protocol.coordination.workspace_identity import validate_workspace_id
@@ -164,6 +165,11 @@ def submit_order(root: Path, *, target: str, task: str, text: str, sender: str,
     }
     if event not in body:
         raise ValueError("event id must appear in the message so read-back can verify it")
+    # Record the hash of the exact bytes that will be typed.  A gate that runs at
+    # send time but has nothing to compare against can only check the text
+    # against itself; this is what makes "the message was edited after it was
+    # queued" a detectable condition instead of an invisible one.
+    payload["content_sha256"] = dispatch_gate.content_sha256(body)
     if source_wake is not None:
         # Persist provenance with the first order write, not in a second update
         # that could be lost if the wake ingress crashes between writes.
@@ -594,6 +600,44 @@ def _preinput_retryable(order: dict) -> bool:
     return True
 
 
+def _workspace_state(root: Path, order: dict) -> dict | None:
+    """The federation state that owns this order's task, when it can be read.
+
+    Read-only and best-effort.  A coordination root and a federation root are
+    allowed to be different places, so an unreadable workspace is reported as
+    "not checked" by the gate instead of being treated as a mismatch -- turning
+    "I could not look" into "it is wrong" is how a safety check starts refusing
+    correct work.
+    """
+    workspace_id = str(order.get("workspace_id", "")).strip()
+    if not workspace_id:
+        return None
+    try:
+        from agent_evolution_protocol.federation import engine
+        return engine.load(Path(root), workspace_id)
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _gate_refusal(root: Path, order: dict, *, profile_row: dict,
+                  window: dict) -> dict | None:
+    """Run the pre-send gate; return a terminal refusal or ``None`` to proceed.
+
+    The state is ``FAILED``, not ``DEFERRED``, on purpose: content that does not
+    match its own order will not become correct by waiting, and a retryable
+    state would put it back in the queue to be refused again every tick.
+    """
+    verdict = dispatch_gate.check(
+        order, profile=profile_row, workspace=_workspace_state(root, order),
+        newer_orders=_orders(root), window=window)
+    if verdict["verdict"] == "send":
+        return None
+    return _record_attempt(
+        root, order, state="FAILED",
+        receipt={**verdict, "signal": "dispatch_refused"},
+        note=f"DISPATCH_REFUSED:{verdict['reason']}: {verdict['detail']}")
+
+
 def dispatch(root: Path, *, order: dict) -> dict:
     if str(order.get("task", "")).startswith("improvement:"):
         from .battle_orders import _task_writer_lock
@@ -667,7 +711,7 @@ def _dispatch(root: Path, *, order: dict) -> dict:
                                    note="IMPROVEMENT_ALREADY_CLAIMED: coordinate with owner before delivery")
     target = order["target"]
     try:
-        registry.profile(root, target)
+        profile_row = registry.profile(root, target)
     except ValueError:
         return _record_attempt(root, order, state="DEFERRED",
                                note="UNREGISTERED_CLIENT: register a verified client profile before delivery")
@@ -701,6 +745,13 @@ def _dispatch(root: Path, *, order: dict) -> dict:
                                note=f"WINDOW_NOT_UNIQUE: {len(windows)} windows; refusing to guess")
 
     window = next((row for row in windows if row.get("is_anchor")), windows[0])
+    # Last gate before anything is typed.  It runs here, not inside a transport,
+    # because "which text goes where" is a property of the order, and a check
+    # implemented per transport is a check that will be missing from the next
+    # transport someone adds.
+    refused = _gate_refusal(root, order, profile_row=profile_row, window=window)
+    if refused is not None:
+        return refused
     order["session_id"] = str(window["pid"])
     transport, info = _pick_transport(root, target, order.get("transport", "auto"))
     _record_attempt(root, order, state="WINDOW_FOUND", transport=transport, receipt=info)

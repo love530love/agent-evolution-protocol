@@ -95,7 +95,34 @@ def _user32():
     return u32
 
 
-def visible_windows() -> list[dict]:
+def _exe_for(pid: int) -> str:
+    """Best-effort executable path for a window's process.
+
+    ``QueryFullProcessImageNameW`` answers for elevated processes too, but it is
+    still allowed to fail -- a protected process, a race with exit.  An empty
+    string therefore means "not known", and every caller treats it that way
+    rather than as a mismatch: a probe failure must not make a client silently
+    undiscoverable, which is the failure mode that looks like "the app is not
+    running".
+    """
+    from agent_evolution_protocol.coordination import process_info
+
+    if not pid or not process_info.available():
+        return ""
+    try:
+        return process_info.image_path(int(pid))
+    except (OSError, ValueError):
+        return ""
+
+
+def _same_path(left: str, right: str) -> bool:
+    if not left or not right:
+        return False
+    return (os.path.normcase(os.path.normpath(left))
+            == os.path.normcase(os.path.normpath(right)))
+
+
+def visible_windows(*, probe_exe: bool = True) -> list[dict]:
     """Enumerate visible top-level windows with titles. No UI is touched."""
     u32 = _user32()
     WNDENUMPROC = ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)
@@ -113,7 +140,17 @@ def visible_windows() -> list[dict]:
         return True
 
     u32.EnumWindows(WNDENUMPROC(cb), 0)
-    return [row for row in rows if row["title"].strip()]
+    out = [row for row in rows if row["title"].strip()]
+    if probe_exe:
+        # One lookup per process, not per window: a client with a settings
+        # dialog open has several top-level windows and the same executable.
+        seen: dict[int, str] = {}
+        for row in out:
+            pid = row["pid"]
+            if pid not in seen:
+                seen[pid] = _exe_for(pid)
+            row["exe"] = seen[pid]
+    return out
 
 
 def _write_json(path: Path, payload: dict) -> None:
@@ -203,6 +240,79 @@ def matches(profile_row: dict, window: dict) -> bool:
     return False
 
 
+def identity(profile_row: dict, window: dict) -> str:
+    """How strongly this window was tied to this profile.
+
+    ``exe`` is the only strength that survives two products with nested names,
+    because it is the one fact a title cannot forge.  ``title`` and
+    ``process-substring`` are progressively weaker guesses, and a dispatcher is
+    entitled to demand better than the last one before typing into a window.
+    """
+    if _same_path(str(profile_row.get("exe", "")), str(window.get("exe", ""))):
+        return "exe"
+    title = str(window.get("title", "")).lower()
+    exact = bool(profile_row.get("window_titles_exact"))
+    for wanted in profile_row.get("window_titles", []):
+        wanted_lower = wanted.lower()
+        if (wanted_lower == title) if exact else (wanted_lower in title):
+            return "title"
+    return "process-substring"
+
+
+def _executable_owners(root: Path, names: list[str]) -> dict[str, str]:
+    """Map every registered profile's executable to the agent that claims it."""
+    owners: dict[str, str] = {}
+    for name in names:
+        try:
+            row = profile(root, name)
+        except (ValueError, OSError):
+            continue
+        path = str(row.get("exe", ""))
+        if path:
+            owners[os.path.normcase(os.path.normpath(path))] = name
+    return owners
+
+
+def _settle_by_executable(found: list[dict], owners: dict[str, str] | None = None) -> list[dict]:
+    """Take a window away from every agent whose claim another profile refutes.
+
+    Title matching cannot separate two products whose names nest: measured on
+    this machine, the ``qoder`` profile matches the ``Qoder CN`` window because
+    ``Qoder`` is a substring of ``Qoder CN``, while ``qoder_cn`` correctly does
+    not match ``Qoder`` -- an asymmetry that silently sends Qoder's work into
+    Qoder CN whenever only the CN client is running.
+
+    The executable path settles it, but it must not be used as a *filter*: a
+    profile pinned to a version directory goes stale the moment the client
+    updates, and turning that drift into "no window found" trades a wrong send
+    for a client that cannot be reached at all.  So the path is used only to
+    resolve a disagreement -- when a window's executable is exactly the one
+    another registered profile names, that profile owns it.
+
+    ``owners`` is built from *all* registered profiles, not just the ones being
+    discovered: the whole point is to notice that the window belongs to someone
+    who was not asked about.
+    """
+    if owners is None:
+        owners = {os.path.normcase(os.path.normpath(str(row.get("exe", "")))): row["agent"]
+                  for row in found if row.get("exe")}
+    rejected: list[dict] = []
+    for row in found:
+        kept = []
+        for hit in row["windows"]:
+            exe = str(hit.get("exe", ""))
+            owner = owners.get(os.path.normcase(os.path.normpath(exe))) if exe else None
+            if owner and owner != row["agent"]:
+                rejected.append({"agent": row["agent"], "hwnd": hit["hwnd"],
+                                 "title": hit.get("title", ""), "exe": exe,
+                                 "owner": owner,
+                                 "reason": "the executable belongs to another registered profile"})
+                continue
+            kept.append(hit)
+        row["windows"] = kept
+    return rejected
+
+
 def discover(root: Path, agent: str = "") -> dict:
     """Find live windows for one agent or the whole roster."""
     windows = visible_windows()
@@ -227,6 +337,7 @@ def discover(root: Path, agent: str = "") -> dict:
             hit["is_anchor"] = bool(anchor.get("pid")) and hit["pid"] == anchor["pid"]
             hit["fingerprint_match"] = bool(anchor.get("fingerprint")) and hit.get("title") == anchor.get("title")
             hit["agent"] = name
+            hit["identity"] = identity(row, window)
             hits.append(hit)
         found.append({
             "agent": name,
@@ -238,10 +349,17 @@ def discover(root: Path, agent: str = "") -> dict:
             "unique": len(hits) == 1,
             "anchored": any(item["is_anchor"] for item in hits),
         })
+    rejected = _settle_by_executable(found, _executable_owners(root, known(root)))
+    for row in found:
+        # Recompute after arbitration: an anchor window that was refuted by
+        # another profile's executable is no longer an anchor for this agent.
+        row["unique"] = len(row["windows"]) == 1
+        row["anchored"] = any(item["is_anchor"] for item in row["windows"])
     return {
         "discovered_at": datetime.now(timezone.utc).isoformat(),
         "total_windows": len(windows),
         "clients": found,
+        "rejected": rejected,
         "note": "unique=false means the window cannot be targeted safely until an anchor pid or session fingerprint is set.",
     }
 

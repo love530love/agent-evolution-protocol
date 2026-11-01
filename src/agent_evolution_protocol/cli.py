@@ -51,6 +51,7 @@ from agent_evolution_protocol.coordination import improvement_policy
 from agent_evolution_protocol.coordination import improvement_acceptance
 from agent_evolution_protocol.coordination import improvement_dispatch
 from agent_evolution_protocol.coordination import client_registry
+from agent_evolution_protocol.coordination import dispatch_gate
 from agent_evolution_protocol.coordination import transcript_bus
 from agent_evolution_protocol.coordination import transport_cdp
 from agent_evolution_protocol.coordination import commander
@@ -2832,6 +2833,45 @@ def coord_commander(args: argparse.Namespace) -> None:
     print(json.dumps(commander.status(root, tail=args.limit), ensure_ascii=False, indent=2))
 
 
+def coord_dispatch(args: argparse.Namespace) -> None:
+    """Preview and gate queued orders without touching the desktop.
+
+    This is the argument the send path cannot have with itself: same order, same
+    checks, no window.  An operator can see exactly what would be typed, into
+    which agent, and which check would stop it -- before anything is typed.
+    """
+    root = coord_root(args)
+    orders = commander._orders(root)
+    if args.order_id:
+        selected = [row for row in orders if str(row.get("id", "")) == args.order_id]
+        if not selected:
+            raise ProtocolError(f"no order {args.order_id} under {root}")
+    elif args.all:
+        selected = [row for row in orders
+                    if str(row.get("state", "")) not in {"AGENT_ACK", "FAILED", "CEASED", "RETIRED"}]
+    else:
+        raise ProtocolError("coord-dispatch needs --order-id or --all")
+    window = {"identity": args.window_identity} if args.window_identity else None
+    results = []
+    for order in selected:
+        try:
+            profile_row = client_registry.profile(root, str(order.get("target", "")))
+        except ValueError:
+            profile_row = None
+        verdict = dispatch_gate.check(
+            order, profile=profile_row,
+            workspace=commander._workspace_state(root, order),
+            newer_orders=orders, window=window, strict=args.strict)
+        if args.show_body:
+            print(dispatch_gate.render_preview(order))
+            print()
+        results.append({"preview": dispatch_gate.preview(order), "gate": verdict})
+    print(json.dumps(results if len(results) != 1 else results[0],
+                     ensure_ascii=False, indent=2))
+    if any(item["gate"]["verdict"] == "refuse" for item in results):
+        raise SystemExit(2)
+
+
 def coord_clawchat(args: argparse.Namespace) -> None:
     body = args.text if args.text is not None else Path(args.text_file).read_text(encoding="utf-8")
     message = clawchat_transport.envelope(event_id=args.event_id, sender=args.sender,
@@ -3119,6 +3159,16 @@ def build_parser() -> argparse.ArgumentParser:
     route.add_argument("--policy-result", help="a coord-policy result, to include the send verdict")
     route.add_argument("--catalog")
     route.set_defaults(func=coord_route)
+
+    gate = commands.add_parser("coord-dispatch", help="preview a queued order and refuse it before any input")
+    gate.add_argument("--order-id", help="the order to inspect; omit with --all")
+    gate.add_argument("--all", action="store_true", help="every order that has not reached a terminal state")
+    gate.add_argument("--strict", action="store_true",
+                      help="also refuse when the body does not name its task, assignee or workspace")
+    gate.add_argument("--window-identity", choices=dispatch_gate.IDENTITY_ORDER,
+                      help="how strongly the window was tied to the profile, when known")
+    gate.add_argument("--show-body", action="store_true", help="print the human preview before the JSON")
+    gate.set_defaults(func=coord_dispatch)
 
     providers = commands.add_parser("coord-providers", help="list, promote or retire optional execution providers")
     providers.add_argument("action", choices=("list", "promote", "retire", "history"))

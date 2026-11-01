@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.6.9 — Prove the message should be sent before arguing about how
+
+- `client_registry.py`: window identity was a title substring, and `Qoder` is a
+  substring of `Qoder CN`. Measured: the `qoder` profile matched the `Qoder CN`
+  window while `qoder_cn` correctly did not match `Qoder` -- so a dispatch to
+  `qoder` on a machine running only the CN client entered the wrong product's
+  window and reported `unique: True`. The executable path now arbitrates: a
+  window whose image is exactly the one another registered profile names belongs
+  to that profile, and every other claim on it is dropped. Deliberately *not* a
+  filter -- two of the four live profiles here have already drifted to a new
+  version directory, and turning that drift into "no window found" trades a
+  wrong send for an unreachable client. Each hit now reports `identity` as
+  `exe`, `title` or `process-substring`, and `discover()` returns the rejections
+  it made. First live run found `workbuddy` had been claiming the `WorkBuddy AI`
+  window while both clients were running.
+- New `coordination/dispatch_gate.py`: twelve pure checks on the exact string
+  about to be typed, run in `commander._dispatch()` after the window is chosen
+  and before any transport is selected. Content hash, a single event id, a
+  single task marker, the ACK instruction, target-vs-profile, not superseded by
+  a newer order, the workspace DAG's own event id, and expiry are blocking; the
+  three "does the body name itself" checks and the window identity strength are
+  warnings that `--strict` promotes. A refusal is recorded as `FAILED` with
+  `signal: dispatch_refused`, not `DEFERRED`: content that is wrong does not
+  become right by waiting, and a retryable state would re-queue and re-refuse it
+  every tick.
+- `commander.submit_order` now records `content_sha256` of the final body, so
+  "the text was edited after it was queued" is a detectable condition instead of
+  an invisible one.
+- New `aep coord-dispatch --order-id|--all [--strict] [--show-body]`, which
+  previews the order and replays the gate offline. A refused order exits 2.
+  Measured on a real rendered assignment: 12 checks, `send`, exit 0; after
+  appending an old task's ACK line, `content_unchanged` and `one_event_id` both
+  fire and it exits 2 -- two independent judgements, so re-recording the hash
+  does not rescue it.
+- Not done, deliberately: no human confirmation step, because it conflicts with
+  unattended operation -- the substitute is a reproducible refusal. The gate
+  does not catch "right order, wrong conversation" (that is session
+  verification), does not prove the agent accepted anything, and was never
+  replayed against the original incident's order, which is not in the workspace.
+
 ## 0.6.8 — Put the rule on the live path, then find out it doesn't know what's right
 
 - `ui_fallback.py`: `input_routing.resolve_target()` now runs on every attempt of
