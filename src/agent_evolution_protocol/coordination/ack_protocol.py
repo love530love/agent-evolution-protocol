@@ -10,7 +10,9 @@ produces a detector that reports success while nothing has been accepted:
 * ``role == "assistant"`` -- otherwise it is our own line, or the user's.
 * ``direction == "incoming"`` -- the same line can be captured twice.
 * ``session_id`` equals the order's -- an agent in another conversation answering
-  the same question is not this task's answer.
+  the same question is not this task's answer.  An order that recorded *no*
+  session id is a separate case (``session_unknown``): no reply can be attributed
+  to it at all, and 6 of the 24 orders on disk here are in that state.
 * ``recorded_at > created_at`` -- event ids are stable per task, so a re-delivery
   reuses the id and an old reply would otherwise satisfy the new order.
 
@@ -65,6 +67,9 @@ REJECTIONS = {
     "not_assistant": "the line is not attributed to the agent; our own request reads the same",
     "not_incoming": "the line was captured as outgoing, so it is something we sent",
     "foreign_session": "the reply came from a different conversation than the order's",
+    "session_unknown": ("the order recorded no session id, so no reply can be attributed to "
+                        "it -- not the same fact as a reply from elsewhere, and not fixable by "
+                        "looking harder in this conversation"),
     "stale": "the reply predates this order; event ids are stable per task, so this is an older delivery's answer",
     "no_timestamp": "the reply carries no timestamp, so it cannot be placed after the send",
 }
@@ -164,7 +169,16 @@ def classify(event: dict[str, Any], *, token: str, session_id: str,
     if event.get("direction") != "incoming":
         row["reason"] = "not_incoming"
         return row
-    if not session_id or row["session_id"] != session_id:
+    if not session_id:
+        # Measured on the real inbox: 6 of 24 orders carry no session id, so this
+        # branch decides their verdict forever.  Calling it ``foreign_session``
+        # would claim the reply came from somewhere else, which we do not know --
+        # and it would send an operator hunting through other windows for an
+        # answer that could never be accepted.  The true statement is narrower:
+        # nothing can be attributed to a conversation that was never recorded.
+        row["reason"] = "session_unknown"
+        return row
+    if row["session_id"] != session_id:
         row["reason"] = "foreign_session"
         return row
     moment = _moment(row["recorded_at"])

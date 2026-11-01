@@ -433,6 +433,15 @@ python -m pytest tests/test_ocr_wiring.py tests/test_uia_argv.py `
   **仍未做**：`over_limit` 只是 `step()` 返回值里的字段，没有任何通道把它送到人眼前；
   被放弃的任务不能复活；迟到的 ACK 仍会把订单从 `ABANDONED` 升级成 `AGENT_ACK`
   而任务停在 `blocked`，两者会不一致，需要人收拾。
+- **v0.6.13 发布后自查又抓到一个**：`commander.tick` 的跳过列表是
+  `("AGENT_ACK", "CEASED", "RETIRED")`，**没有 `ABANDONED`**。于是一张人已放弃的单
+  只要过了 `expires_at`，就被改写成 `FAILED`/`EXPIRED`——签字还在
+  `abandoned_by`/`abandon_reason` 里，但 `state` 不再这么说，`ack_protocol.abandoned()`
+  随之返回 `None`。**人的决定静默变成了自动失败。**已修（加进跳过列表），
+  并验证过「去掉修复后测试确实报 `'FAILED' != 'ABANDONED'`」。
+  顺带查了 `reinforce`：补位不会给放弃的单派替补（第 977 行的状态白名单挡住了），
+  但仍在 `reinforce` 里加了同样的守卫，并在测试注释里写明
+  **它今天不是修 bug 而是纵深防御**——一条只在别处列表漏项时才成立的守卫，离误发只差一次编辑。
 - **WSL 抓到我引入的缺陷**：`_normalise()` 原本用 `os.path.normcase`，
   而它在 POSIX 上是恒等函数、也不认 `\`，于是同一路径在两个宿主算出两个指纹
   （`test_path_case_and_separators_do_not_change_the_identity` 在 Linux 失败）。
@@ -452,3 +461,45 @@ aep --coord-root coordination coord-dispatch --order-id <id>                   #
 aep --coord-root coordination coord-ack --order-id <id>                        # ACK 判定，未接受 exit 2
 aep --coord-root coordination coord-client fingerprint --agent qoder --show    # 只看不记
 ```
+
+## 2026-11-01 追加二：回执之后，还要看结果（v0.6.14）
+
+v0.6.11~v0.6.13 补的是「**对方接单了吗**」。这一版补的是它后面那段：
+**接单了，活真干了吗**。
+
+| 环节 | 之前 | 现在 | 证据强度 |
+|---|---|---|---|
+| 任务算不算完成 | agent 自己写 `phase=done` | `result_readback` 比对「声称」与「会话里说过」 | 单测 19 项 + supervisor 层 3 项；**活会话上未端到端复验** |
+| 超限的等 | 只活在 `step()` 返回值里 | `hold_alerts` 写进 `messages/<to>/<id>.json` | **临时协作区真跑**：首次 count=1 落盘，第二次 count=0 被抑制 |
+| 没记会话的单 | 报「回复来自别的会话」 | 新增 `session_unknown` | **24 张真实单实测**，其中 6 张无 `session_id` |
+| 已放弃的单 | 过期后被改写成 `FAILED` | 跳过列表补 `ABANDONED` | 回退验证：去掉修复即报 `'FAILED' != 'ABANDONED'` |
+
+**这一版最容易误读的三点：**
+
+1. **`match is None` 不是通过，也不是失败。** 它的意思是「会话里没有可比的东西」——
+   抓取失败时转录为空是常态。所以 `None` 允许完成，但把 `result.match = None` 和原因
+   写进完成回执；只有 `match is False`（**确凿矛盾**）才阻断。
+   把 `None` 当 `True`，回读就退化成装饰；把 `None` 当阻断，第一个忘写路径的 agent 就锁死 DAG。
+2. **产物必须是路径。** `done` / `tests pass` 没有第二方可以打开的东西，一律进 `unchecked` 判 `None`。
+   这不是保守，是「可核验」这个词的边界。
+3. **`hold_limit_seconds=3600` 是策略不是测量。** 代码里没有任何东西推导出这个数。
+   选它的唯一理由是要短到人还能在自己手上做决定。传 `None` 恢复 v0.6.13 行为。
+
+**仍未做**（这一版没有假装解决）：
+
+- 回读的**会话守卫没接线**：现在拿整条转录比，`session_checked` 在证据里如实写 `False`。
+  写 `False` 而不是写 `True` 是有意的——它记录的是「这件事没做」，不是「这件事通过了」。
+- `match is None` 的完成**不要求人复核**，只是把怀疑记下来。
+- `ack_tracker`（租约式 ACK）**未合并**。调查结论在
+  `docs/ACK_TRACKER_MERGE_20261101.zh-CN.md`：磁盘上租约式实有 0 行，
+  且 `wake_ingress` 崩溃重放会复用 `event_id`，与「一个 event 只允许一行」直接冲突。
+- **「没有 ACK 不得推进」可被一次 handoff 绕过**：`engine.tick` 会在两步之间做 handoff，
+  生成第二张从未发送过的订单，下一轮判定 `sent: False`、hold 合法消失。
+  真实派发下新单会被发出、闸门重新生效，但**这条路径没有实测过**。
+- 被放弃的任务不能复活；迟到的 ACK 仍会把订单从 `ABANDONED` 升成 `AGENT_ACK` 而任务停在 `blocked`。
+
+**并行协作的诚实记录**：本版三个独立模块由三个 subagent 并行产出，集成与验证由主进程做。
+每个 subagent 声称的事实都自己复跑过（消息路径 / `kind` 取值 / 消息 id 是否被
+`coord-ack-message` 的正则接受 / 24 张单里 6 张缺 `session_id`），
+并修了集成时的两处不一致：`step` 自己发告警导致模块测试重复计数、
+`held["task"]` 是工作区任务 id 而订单的 `task` 字段是另一回事（已在 `held` 里补 `order`）。

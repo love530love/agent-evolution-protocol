@@ -92,9 +92,19 @@ class AckVerdictTests(unittest.TestCase):
         self.assertNotIn("timeout", value["state"])
 
     def test_a_missing_session_id_on_the_order_cannot_be_satisfied(self):
+        # 6 of 24 real orders carry no session id.  Their verdict is unreachable
+        # by design, but the reason must not claim the reply came from elsewhere:
+        # "we never recorded which conversation this went to" is a different fact
+        # with a different remedy (re-send with a session id, or accept it).
         value = ack_protocol.verdict(
             _order(session_id=""), events=[_event(TOKEN)], now=NOW)
         self.assertFalse(value["accepted"])
+        self.assertEqual(value["reason"], "session_unknown")
+
+    def test_a_reply_from_another_conversation_is_still_foreign(self):
+        # The distinction is only worth making if the other case keeps its name.
+        value = ack_protocol.verdict(
+            _order(session_id="4242"), events=[_event(TOKEN, session_id="9999")], now=NOW)
         self.assertEqual(value["reason"], "foreign_session")
 
     def test_nothing_sent_yet_is_not_sent_rather_than_unacked(self):

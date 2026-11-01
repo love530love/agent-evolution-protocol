@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from agent_evolution_protocol.coordination import claim_conflicts, commander
+from agent_evolution_protocol.coordination import claim_conflicts, commander, hold_alerts
 from agent_evolution_protocol.federation import engine, intake, supervisor
 
 
@@ -70,8 +70,14 @@ class SupervisorTests(unittest.TestCase):
         _report(self.coord, "execute", "alpha")
         result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
                                  dispatch=False)
-        self.assertIn({"task": "execute", "action": "complete", "artifact": ""},
-                      result["closed"])
+        # The receipt gained a `result` field: what the readback could prove
+        # about the agent's output, which is None here because this fixture
+        # names no artifact.  Matching on the subset keeps the assertion about
+        # the completion itself and leaves the verification separate.
+        done = [row for row in result["closed"] if row["action"] == "complete"]
+        self.assertEqual(len(done), 1)
+        self.assertEqual({key: done[0][key] for key in ("task", "artifact")},
+                         {"task": "execute", "artifact": ""})
         self.assertEqual(result["tasks"]["execute"]["state"], "done")
         # Independence: the reviewer must not be the executor.
         self.assertEqual(result["tasks"]["review"]["owner"], "beta")
@@ -187,8 +193,14 @@ class AckGateTests(unittest.TestCase):
                                role="assistant", direction="incoming")
         result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
                                  dispatch=False)
-        self.assertIn({"task": "execute", "action": "complete", "artifact": ""},
-                      result["closed"])
+        # The receipt gained a `result` field: what the readback could prove
+        # about the agent's output, which is None here because this fixture
+        # names no artifact.  Matching on the subset keeps the assertion about
+        # the completion itself and leaves the verification separate.
+        done = [row for row in result["closed"] if row["action"] == "complete"]
+        self.assertEqual(len(done), 1)
+        self.assertEqual({key: done[0][key] for key in ("task", "artifact")},
+                         {"task": "execute", "artifact": ""})
         self.assertEqual(result["held"], [])
 
     def test_an_order_that_was_never_sent_is_not_held_for_an_ack(self):
@@ -231,13 +243,16 @@ class AckGateTests(unittest.TestCase):
         _set_order(self.coord, order["id"], "MESSAGE_VISIBLE", session_id="4242")
         _age_order(self.coord, order["id"], 3600)
         _report(self.coord, "execute", "alpha")
+        # hold_limit_seconds=None is the pre-v0.6.14 behaviour and must still be
+        # available: a deployment may prefer to watch `held` itself.
         result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
-                                 dispatch=False)
+                                 dispatch=False, hold_limit_seconds=None)
         row = result["held"][0]
         self.assertEqual(row["verdict"], "hold")
         self.assertGreaterEqual(row["unacked_for_seconds"], 3600)
         self.assertIsNone(row["limit_seconds"])
         self.assertFalse(row["over_limit"])
+        self.assertEqual(result["alerts"]["count"], 0)
 
     def test_crossing_the_hold_limit_reports_it_without_advancing(self):
         # A limit that advanced the DAG would be "no ACK, progress after N
@@ -255,6 +270,116 @@ class AckGateTests(unittest.TestCase):
         self.assertEqual(result["closed"], [])
         self.assertEqual(result["tasks"]["execute"]["state"], "running")
         self.assertEqual(result["tasks"]["review"]["state"], "pending")
+
+    def test_a_hold_past_the_limit_leaves_an_alert_a_person_will_see(self):
+        # Before this, `held` existed only in step()'s return value, so an
+        # unattended loop held a task past its limit and told nobody.
+        receipt, adapters = self._intake()
+        order = commander._orders(self.coord)[0]
+        _set_order(self.coord, order["id"], "MESSAGE_VISIBLE", session_id="4242")
+        _age_order(self.coord, order["id"], 3600)
+        _report(self.coord, "execute", "alpha")
+        result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
+                                 dispatch=False, hold_limit_seconds=60)
+        self.assertEqual(result["alerts"]["count"], 1)
+        alert = result["alerts"]["alerts"][0]
+        self.assertEqual(alert["task"], "execute")
+        self.assertEqual(alert["order"], order["id"])
+        # The alert names the agent the order actually went to, taken from the
+        # order record rather than guessed from the workspace task id.
+        self.assertEqual(alert["agent"], "alpha")
+        files = list((Path(self.coord) / "messages").rglob("*.json"))
+        self.assertEqual(len(files), 1)
+        body = json.loads(files[0].read_text(encoding="utf-8"))
+        self.assertEqual(body["kind"], "warning")
+        self.assertIn("execute", body["text"])
+        # An alert is a message, not a transition: the hold still holds.
+        self.assertEqual(result["tasks"]["execute"]["state"], "running")
+
+    def test_the_same_hold_is_announced_once(self):
+        # Announced-once is asserted at the module level (``test_hold_alerts``),
+        # because at *this* level a second identical step does not exist: the
+        # engine hands the task off between steps, which mints a second order
+        # that was never sent, so the next verdict is ``not sent`` and the hold
+        # legitimately disappears.  What is asserted here is the part this layer
+        # owns -- that one crossing produces exactly one message.
+        receipt, adapters = self._intake()
+        order = commander._orders(self.coord)[0]
+        _set_order(self.coord, order["id"], "MESSAGE_VISIBLE", session_id="4242")
+        _age_order(self.coord, order["id"], 3600)
+        _report(self.coord, "execute", "alpha")
+        result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
+                                 dispatch=False, hold_limit_seconds=60)
+        messages = list((Path(self.coord) / "messages").rglob("*.json"))
+        self.assertEqual(len(messages), 1)
+        again = hold_alerts.emit(self.coord, result["held"])
+        self.assertEqual(again["count"], 0)
+        self.assertEqual([row["reason"] for row in again["suppressed"]], ["already_alerted"])
+        self.assertEqual(len(list((Path(self.coord) / "messages").rglob("*.json"))), 1)
+
+    def test_a_hold_under_the_limit_says_nothing(self):
+        receipt, adapters = self._intake()
+        order = commander._orders(self.coord)[0]
+        _set_order(self.coord, order["id"], "MESSAGE_VISIBLE", session_id="4242")
+        _report(self.coord, "execute", "alpha")
+        result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
+                                 dispatch=False, hold_limit_seconds=60)
+        self.assertEqual(result["alerts"]["count"], 0)
+        self.assertEqual([row["task"] for row in result["alerts"]["waiting"]], ["execute"])
+        self.assertEqual(list((Path(self.coord) / "messages").rglob("*.json")), [])
+
+
+class ResultReadbackTests(unittest.TestCase):
+    """Acknowledged is not the same as produced.
+
+    The ACK gate proves the agent answered.  This proves -- or refuses to claim --
+    that what it says it made is what the conversation shows it made.
+    """
+
+    def setUp(self):
+        self._temp = TemporaryDirectory()
+        self.root = Path(self._temp.name) / "state"
+        self.coord = str(Path(self._temp.name) / "coordination")
+        self.addCleanup(self._temp.cleanup)
+
+    def _acked(self, *, claimed, said):
+        """A task whose order was sent and acknowledged, with both statements."""
+        from agent_evolution_protocol.coordination import transcript_bus
+        receipt = intake.intake(self.root, self.coord, text="跑通 README",
+                                agents=["alpha", "beta"], shape="reviewed", sender="kernel")
+        adapters = supervisor.build_adapters(coord_root=self.coord, agents=["alpha", "beta"],
+                                             workspace_id=receipt["workspace"])
+        order = commander._orders(self.coord)[0]
+        _set_order(self.coord, order["id"], "MESSAGE_VISIBLE", session_id="4242")
+        transcript_bus.publish(self.coord, agent="alpha",
+                               text="AEP-ACK:" + order["event_id"] + "\n" + said,
+                               session_id="4242", role="assistant", direction="incoming")
+        _report(self.coord, "execute", "alpha", evidence=[claimed])
+        result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
+                                 dispatch=False)
+        return result, adapters
+
+    def test_a_contradicted_artifact_does_not_complete_the_task(self):
+        result, _ = self._acked(claimed="docs/claimed.md", said="wrote docs/other.md")
+        self.assertEqual([row["action"] for row in result["held"]], ["hold_result_mismatch"])
+        self.assertEqual(result["tasks"]["execute"]["state"], "running")
+        self.assertEqual(result["closed"], [])
+
+    def test_a_confirmed_artifact_completes_and_says_it_was_verified(self):
+        result, _ = self._acked(claimed="docs/claimed.md", said="wrote docs/claimed.md")
+        done = [row for row in result["closed"] if row["action"] == "complete"]
+        self.assertEqual(len(done), 1)
+        self.assertEqual(done[0]["result"]["match"], True)
+
+    def test_an_unverifiable_claim_still_completes_but_records_the_doubt(self):
+        # None must not block: a module that refused whenever an agent named no
+        # file would deadlock the DAG on its first task.  It must not read as
+        # verified either, so the receipt carries the fact.
+        result, _ = self._acked(claimed="done", said="all finished, nothing to show")
+        done = [row for row in result["closed"] if row["action"] == "complete"]
+        self.assertEqual(len(done), 1)
+        self.assertIsNone(done[0]["result"]["match"])
+        self.assertTrue(done[0]["result"]["reason"])
 
 
 if __name__ == "__main__":

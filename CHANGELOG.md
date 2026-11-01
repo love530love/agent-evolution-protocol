@@ -1,5 +1,57 @@
 # Changelog
 
+## 0.6.14 — After the receipt, look at the result
+
+- The three previous versions closed "correct dispatch -> correct conversation ->
+  correct receipt". This one closes the fourth segment: the receipt said the work
+  was done, but nothing checked that the work exists.
+  `assignment.complete_evidence()` still accepts an agent's own `phase=done`, so
+  "done" remained only the agent's own statement. New `result_readback` module
+  compares the two statements that already exist: what the agent **claims** in
+  `coord-task-state` (`claim()`) and what the transcript shows it **said**
+  (`observe()`).
+- `match` is three-valued on purpose. `None` means "there was nothing in the
+  conversation to compare against", and it is **not** `True`. An empty transcript
+  is the normal outcome of a failed capture; reading that as agreement would turn
+  readback into decoration.
+- The artifact must be a **path**, not a word. `done` and `tests pass` leave
+  nothing a second party can open, so they land in `unchecked` and judge to
+  `None` -- neither pass nor fail.
+- No new schema. `aep-readback-v1` is the receipt of the *transport ladder*: five
+  states, two booleans, one string list. It has no field for "compared, and they
+  disagree", and its `accepted()` is defined on `AGENT_ACK` -- the very claim this
+  module exists to test. So the verdict carries **no `schema` key**, like
+  `session_fingerprint.compare()`: it consumes receipts, it is not one.
+- Wiring in `supervisor._settle()` blocks **only on a proven contradiction**
+  (`match is False` -> `hold_result_mismatch`, task stays `running`). `None`
+  completes the task and records `result.match = None` with the reason. Blocking
+  on `None` would deadlock the DAG on the first agent that forgot to name a file.
+- `hold_alerts` delivers an over-limit hold to the **existing** mailbox
+  (`coordination/messages/<to>/<id>.json`, `kind = "warning"`) instead of a new
+  channel, because `coord-send` already writes that path and `kind` already has
+  `warning`. The recipient is the order's own `sender`: who dispatched the work is
+  a recorded fact, while `"operator"` is a mailbox nobody promised to read.
+- Alert idempotency needs no ledger. The message id derives from the hold's
+  identity (`task|event_id|sent_at`), so the mailbox file **is** the durable mark:
+  a second tick computes the same id, finds the file and stays silent.
+- `step(..., hold_limit_seconds=3600)` now defaults to a number instead of
+  `None`. This is **policy, not measurement** -- nothing in the code derives it.
+  `None` still restores the 0.6.13 behaviour.
+- Fixed: orders with no `session_id` were reported as `foreign_session`. 6 of the
+  24 real orders in `coordination/commander/inbox` have no `session_id`, so their
+  verdict was unreachable while the reason claimed knowledge we do not have. New
+  reason `session_unknown`.
+- Fixed: `commander.tick`'s skip list omitted `ABANDONED`, so an abandoned order
+  past `expires_at` was rewritten to `FAILED`/`EXPIRED` -- the signature stayed but
+  the state stopped saying so, and a human decision silently became an automatic
+  failure. Verified by reverting the fix and watching the test report
+  `'FAILED' != 'ABANDONED'`.
+- Known, documented, not fixed: `engine.tick` can hand off between steps and mint
+  a second never-sent order, after which the hold legitimately disappears -- so
+  "no ACK, no progress" is bypassable by one handoff. The readback session guard is
+  not wired (`session_checked` honestly reports `False`). `ack_tracker` was
+  investigated (`docs/ACK_TRACKER_MERGE_20261101.zh-CN.md`) and **not** merged.
+
 ## 0.6.13 — Give the wait an exit, and never give progress a timer
 
 - Fixed the defect 0.6.10 shipped and documented: `hold_unacked` had no ceiling,

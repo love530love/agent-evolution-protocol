@@ -957,7 +957,13 @@ def reinforce(root: Path, order_id: str) -> dict | None:
     or None.
     """
     order = next((o for o in _orders(root) if o.get("id") == order_id), None)
-    if not order or order.get("state") in ("AGENT_ACK", "RETIRED"):
+    # An abandoned order must never be reinforced: spawning a backup wave is
+    # re-delivery, which is the one action abandonment exists to rule out.  The
+    # state whitelist further down already happens to exclude it, and that is
+    # exactly why the guard is here as well -- a guard that only works because a
+    # list elsewhere omits a value is one edit away from sending abandoned work.
+    if not order or order.get("state") in ("AGENT_ACK", "RETIRED",
+                                           ack_protocol.ABANDONED_STATE):
         return None
     if str(order.get("task", "")).startswith("improvement:"):
         # This pipeline has stable stage IDs, leases and explicit pre-input
@@ -1002,7 +1008,15 @@ def tick(root: Path, *, perceive_first: bool = True) -> dict:
     acks = check_acks(root)
     dispatched = []
     for order in _orders(root):
-        if order.get("state") in ("AGENT_ACK", "CEASED", "RETIRED"):
+        # ABANDONED is skipped for the same reason AGENT_ACK is: a person has
+        # already ended this order's life, so expiry and ceasefire have nothing
+        # left to decide.  Without this, an abandoned order that later passed
+        # expires_at was rewritten to FAILED/EXPIRED -- the sign-off survived in
+        # abandoned_by/abandon_reason but the state stopped saying so, and
+        # ack_protocol.abandoned() returned None.  A human's decision silently
+        # became an automatic failure.
+        if order.get("state") in ("AGENT_ACK", "CEASED", "RETIRED",
+                                  ack_protocol.ABANDONED_STATE):
             continue
         try:
             expiry = datetime.fromisoformat(order["expires_at"])

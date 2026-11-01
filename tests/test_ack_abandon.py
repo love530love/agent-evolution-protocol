@@ -106,5 +106,63 @@ class AbandonTests(unittest.TestCase):
         self.assertEqual(value["delivery"], "none")
 
 
+class AbandonedOrdersAreLeftAloneTests(unittest.TestCase):
+    """The tick loop must not keep managing an order a person has closed.
+
+    Found by self-review after v0.6.13 shipped: ``tick`` skipped ``AGENT_ACK``,
+    ``CEASED`` and ``RETIRED`` but not ``ABANDONED``, so an abandoned order that
+    later passed ``expires_at`` was rewritten to ``FAILED``/``EXPIRED``.  The
+    signature survived in ``abandoned_by``/``abandon_reason`` but the state
+    stopped saying so, and ``ack_protocol.abandoned()`` then returned ``None`` --
+    a human's decision had silently become an automatic failure.
+    """
+
+    def setUp(self):
+        self._temp = TemporaryDirectory()
+        self.coord = str(Path(self._temp.name) / "coordination")
+        self.addCleanup(self._temp.cleanup)
+
+    def _expired(self, **extra):
+        order = _sent(self.coord)
+        commander.abandon(self.coord, order["id"], actor="love",
+                          reason="the client is wedged")
+        path = Path(self.coord) / "commander" / "inbox" / f"{order['id']}.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["expires_at"] = "2020-01-01T00:00:00+00:00"
+        for key, value in extra.items():
+            payload[key] = value
+        path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        return payload
+
+    def _order(self, order_id):
+        return next(row for row in commander._orders(Path(self.coord))
+                    if row["id"] == order_id)
+
+    def test_expiry_does_not_overwrite_an_abandonment(self):
+        order = self._expired()
+        commander.tick(Path(self.coord), perceive_first=False)
+        stored = self._order(order["id"])
+        self.assertEqual(stored["state"], "ABANDONED")
+        self.assertEqual(stored["abandoned_by"], "love")
+
+    def test_no_backup_wave_is_spawned_for_abandoned_work(self):
+        # Reinforcement is re-delivery; abandonment exists to rule it out.
+        # Honest note: this already passed before the guard was added to
+        # reinforce(), because the state whitelist further down omits ABANDONED.
+        # So this is a regression guard for the behaviour, not evidence that the
+        # new guard was needed -- it exists so a future edit to that whitelist
+        # cannot start sending abandoned work to a backup agent.
+        order = _sent(self.coord)
+        commander.abandon(self.coord, order["id"], actor="love",
+                          reason="the client is wedged")
+        path = Path(self.coord) / "commander" / "inbox" / f"{order['id']}.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["candidates"] = "beta"
+        payload["created_at"] = "2020-01-01T00:00:00+00:00"
+        path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        commander.tick(Path(self.coord), perceive_first=False)
+        self.assertEqual(len(commander._orders(Path(self.coord))), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

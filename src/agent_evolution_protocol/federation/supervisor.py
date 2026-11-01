@@ -26,6 +26,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from agent_evolution_protocol.coordination import hold_alerts
 from agent_evolution_protocol.federation import assignment, engine
 from agent_evolution_protocol.federation.commander_adapter import CommanderAdapter
 
@@ -65,15 +66,22 @@ def build_adapters(*, coord_root, agents, capabilities=None, sender="kernel",
 
 def step(root, coord_root, workspace_id, adapters, *, now=None,
          heartbeat_timeout=900, dispatch=True, perceive_first=False,
-         moment=None, hold_limit_seconds=None):
+         moment=None, hold_limit_seconds=3600):
     """Advance one bounded step.  Returns what changed and why.
 
     ``hold_limit_seconds`` does not advance anything when it is exceeded.  A hold
     that turns into progress on a timer is not "no ACK, no progress" any more; it
     is "no ACK, progress after N minutes", which is the behaviour the guarantee
-    exists to rule out.  Crossing the limit only makes the hold *loud* -- the
-    receipt says how long it has waited and that the limit is past, so a person
-    can decide.  Ending the wait takes ``commander.abandon`` and a signature.
+    exists to rule out.  Crossing the limit makes the hold *loud*: the receipt
+    says how long it has waited, and an alert lands in the mailbox a person
+    already reads.  Ending the wait takes ``commander.abandon`` and a signature.
+
+    The default 3600 is a **policy, not a measurement** -- nothing here derives it
+    from observed latencies.  It is short enough that a person hears about a hold
+    while the decision is still theirs to make, and it is overridable per call.
+    Pass ``None`` to disable alerting entirely; that is the pre-v0.6.14 behaviour
+    and it is available on purpose, because a deployment may prefer to watch
+    ``held`` itself.
     """
     from agent_evolution_protocol.coordination import commander
 
@@ -87,6 +95,16 @@ def step(root, coord_root, workspace_id, adapters, *, now=None,
     closed, held = _settle(root, coord_root, workspace_id, adapters, moment=moment,
                            actions=actions, now=now,
                            hold_limit_seconds=hold_limit_seconds)
+
+    # 2. tell a person about a hold that has outlived its limit.  This is a
+    #    message, never a transition: `held` rows are still held afterwards.
+    #    A failure here must not stop the heartbeat -- an alerting path that can
+    #    take the loop down is worse than the silence it replaced.
+    alerts = {}
+    try:
+        alerts = hold_alerts.emit(coord_root, held)
+    except (OSError, ValueError, TypeError) as exc:
+        alerts = {"error": str(exc)}
 
     # 2. heart: schedule and queue
     state = engine.load(root, workspace_id)
@@ -110,10 +128,39 @@ def step(root, coord_root, workspace_id, adapters, *, now=None,
     state = engine.load(root, workspace_id)
     return {"at": now.isoformat(), "workspace": workspace_id,
             "scheduled": ticked.get("actions") or [], "sent": sent,
-            "claims": claims, "closed": closed, "held": held,
+            "claims": claims, "closed": closed, "held": held, "alerts": alerts,
             "tasks": {task_id: {"state": row["state"], "owner": row["owner"],
                                 "attempts": row["attempts"]}
                       for task_id, row in sorted(state["tasks"].items())}}
+
+
+def _result_blocks(task_id, report, coord_root, task):
+    """Whether the agent's claim about its own output contradicts the transcript.
+
+    Only ``match is False`` blocks.  ``None`` -- "the transcript carries nothing
+    comparable" -- does not, and that asymmetry is the whole design: a module
+    that returned ``None`` for every agent that never names a file path would
+    deadlock the DAG on its first task.  The verdict is still recorded on the
+    completion, so "we did not verify this" is a field in the receipt instead of
+    an assumption nobody wrote down.
+
+    Not wired yet, and deliberately: the session guard.  The claim is compared
+    against the whole transcript for this agent rather than against the anchored
+    conversation, so ``session_checked`` in the evidence reads ``False``.  Doing
+    it properly needs the order's session id here, and this function is given the
+    task, not the order.
+    """
+    from agent_evolution_protocol.coordination import result_readback, transcript_bus
+
+    events = transcript_bus.read_events(coord_root, agent=task.get("owner") or "", limit=500)
+    claim = result_readback.claim({**report, "task": task_id})
+    observed = result_readback.observe(events)
+    value = result_readback.judge(claim, observed)
+    if value.get("match") is not False:
+        return None, value
+    return {"reason": value.get("reason") or "result_mismatch",
+            "match": False, "claimed": value.get("claimed"),
+            "seen": value.get("seen")}, value
 
 
 def _settle(root, coord_root, workspace_id, adapters, *, moment, actions,
@@ -155,9 +202,18 @@ def _settle(root, coord_root, workspace_id, adapters, *, moment, actions,
             if blocked is not None:
                 held.append({"task": task_id, "action": "hold_unacked", **blocked})
                 continue
+            mismatch, verdict = _result_blocks(task_id, report, coord_root, task)
+            if mismatch is not None:
+                # The agent named an artifact and the transcript names a
+                # different one.  That is a contradiction, not a missing detail,
+                # so it does not complete and it does not wait for an ACK either.
+                held.append({"task": task_id, "action": "hold_result_mismatch", **mismatch})
+                continue
             artifact = _first_existing(report.get("evidence") or [])
             engine.complete(root, state, task_id=task_id, artifact_path=artifact, moment=moment)
-            closed.append({"task": task_id, "action": "complete", "artifact": str(artifact or "")})
+            closed.append({"task": task_id, "action": "complete", "artifact": str(artifact or ""),
+                           "result": {"match": verdict.get("match"),
+                                      "reason": verdict.get("reason", "")}})
             continue
         if report.get("blocked"):
             signal = "refusal"
@@ -234,6 +290,12 @@ def _ack_blocks(adapter, task_id, *, now=None, hold_limit_seconds=None):
             "reason": value.get("reason") or "no_ack",
             "state": value.get("state"),
             "event_id": value.get("event_id", ""),
+            # The order id, because the held row's ``task`` is the *workspace*
+            # task id (``execute``) and the order's ``task`` field is whatever
+            # the adapter was told to send -- different namespaces.  An alerting
+            # layer that had to guess which order a hold is about would name the
+            # wrong agent, or none.
+            "order": value.get("order_id", ""),
             "sent_at": value.get("sent_at", ""),
             "unacked_for_seconds": waited,
             "limit_seconds": hold_limit_seconds,
