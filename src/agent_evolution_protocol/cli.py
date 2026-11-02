@@ -40,6 +40,9 @@ from agent_evolution_protocol.coordination import desktop_providers
 from agent_evolution_protocol.coordination import agent_mcp_registry
 from agent_evolution_protocol.coordination import execution_provider_catalog
 from agent_evolution_protocol.coordination import input_routing
+from agent_evolution_protocol.coordination import action_verification
+from agent_evolution_protocol.coordination import skill_manifest
+from agent_evolution_protocol.coordination import trajectory
 from agent_evolution_protocol.coordination import policy_executor
 from agent_evolution_protocol.coordination import vision_grounding
 from agent_evolution_protocol.coordination import desktop_runner
@@ -2654,15 +2657,40 @@ def coord_route(args: argparse.Namespace) -> None:
         observation, window=window, grounder=grounder, reference=reference,
         min_confidence=args.min_confidence, target=args.target)
     payload: dict[str, Any] = {"decision": decision}
-    if args.policy_result:
+    verification = None
+    if args.send_report:
         try:
-            result = json.loads(Path(args.policy_result).read_text(encoding="utf-8"))
+            report = json.loads(Path(args.send_report).read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
-            raise ProtocolError(f"cannot read policy result: {exc}") from exc
-        if not isinstance(result, dict):
-            raise ProtocolError("policy result must be a JSON object")
-        payload["verdict"] = input_routing.delivery_verdict(locate=decision,
-                                                            policy_result=result)
+            raise ProtocolError(f"cannot read send report: {exc}") from exc
+        if not isinstance(report, dict):
+            raise ProtocolError("send report must be a JSON object")
+        # The driver's own receipt is the cheapest honest verifier: it was
+        # measured during the attempt, not reconstructed afterwards.
+        extracted = action_verification.from_send_report(report)
+        verification = action_verification.verdict(
+            extracted["checks"],
+            required=("text_arrived", "text_left_composer", "composer_emptied"))
+        payload["verification"] = verification
+    elif args.verification:
+        try:
+            verification = json.loads(Path(args.verification).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ProtocolError(f"cannot read verification: {exc}") from exc
+        if not isinstance(verification, dict):
+            raise ProtocolError("verification must be a JSON object")
+        payload["verification"] = verification
+    if args.policy_result or verification is not None:
+        policy_result = None
+        if args.policy_result:
+            try:
+                policy_result = json.loads(Path(args.policy_result).read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ProtocolError(f"cannot read policy result: {exc}") from exc
+            if not isinstance(policy_result, dict):
+                raise ProtocolError("policy result must be a JSON object")
+        payload["verdict"] = input_routing.delivery_verdict(
+            locate=decision, policy_result=policy_result, verification=verification)
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
@@ -2803,6 +2831,40 @@ def coord_client(args: argparse.Namespace) -> None:
         if not args.show:
             payload["recorded"] = session_fingerprint.record(root, agent, observed)
         print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    if action == "continuity":
+        if not args.agent:
+            raise ProtocolError("continuity needs --agent")
+        agent = valid_agent(args.agent)
+        recorded = session_fingerprint.read(root, agent)
+        if recorded is None:
+            raise ProtocolError(f"no fingerprint recorded for {agent}; run `coord-client fingerprint`")
+        # Offline on purpose: two recorded fingerprints can be compared without a
+        # live window, so the answer is the same on a machine where the client is
+        # closed -- and the test does not need a desktop.
+        if args.target_agent:
+            other_agent = valid_agent(args.target_agent)
+            other = session_fingerprint.read(root, other_agent)
+            if other is None:
+                raise ProtocolError(f"no fingerprint recorded for {other_agent}")
+            payload = {
+                "schema": "aep-session-continuity-v1",
+                "from": agent, "to": other_agent,
+                "continuity": session_fingerprint.continuity(recorded, other),
+                "reverse": session_fingerprint.continuity(other, recorded),
+            }
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+            return
+        groups = session_fingerprint.group_by_conversation(
+            session_fingerprint.all_recorded(root))
+        mine = next((group for group in groups
+                     if any(surface["agent"] == agent for surface in group["surfaces"])), None)
+        print(json.dumps({
+            "schema": "aep-session-continuity-v1", "agent": agent,
+            "conversation": mine,
+            "shared": [group for group in groups if len(group["surfaces"]) > 1],
+            "groups": groups,
+        }, ensure_ascii=False, indent=2))
         return
     if not args.agent:
         raise ProtocolError("launch needs --agent")
@@ -3142,6 +3204,95 @@ def federate(args: argparse.Namespace) -> None:
     }, ensure_ascii=False, indent=2))
 
 
+def coord_skill_manifest(args: argparse.Namespace) -> None:
+    """Describe the command surface from the parser that defines it.
+
+    ``show``, ``write`` and ``check`` all read the same parser, so the committed
+    copy and the live CLI cannot describe different things.  ``check`` is
+    reachable outside the test suite on purpose: a guard that only runs under
+    pytest is a guard the next packaging change quietly skips.
+    """
+    directory = args.directory or (Path("docs") / "coordination")
+    manifest = skill_manifest.build()
+    if args.action == "write":
+        print(json.dumps(skill_manifest.write(directory, manifest),
+                         ensure_ascii=False, indent=2))
+        return
+    if args.action == "check":
+        report = skill_manifest.check(directory, manifest)
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        if not report["in_sync"]:
+            raise ProtocolError(
+                "the committed skill manifest does not describe this CLI; "
+                "run `aep coord-skill-manifest write`")
+        return
+    if args.markdown:
+        print(skill_manifest.render_markdown(manifest))
+        return
+    print(json.dumps(manifest, ensure_ascii=False, indent=2))
+
+
+def coord_trajectory(args: argparse.Namespace) -> None:
+    """Record, check and replay a run without letting the replay re-fire it.
+
+    ``replay`` prints an argv plan and stops there.  Even a read-only step is a
+    command, and a tool whose job is to print a record should not also be the
+    thing that runs it -- ``route_guidance`` makes the same choice for the same
+    reason.
+    """
+    root = coord_root(args)
+    if args.action == "start":
+        if not args.id:
+            raise ProtocolError("start needs --id")
+        try:
+            payload = trajectory.start(root, trajectory_id=args.id, agent=args.agent or "",
+                                       task=args.task or "", surface=args.surface or "",
+                                       note=args.note or "")
+        except ValueError as exc:
+            raise ProtocolError(str(exc)) from exc
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    if not args.id:
+        raise ProtocolError(f"{args.action} needs --id")
+    if args.action == "record":
+        result = None
+        if args.result_file:
+            try:
+                result = json.loads(Path(args.result_file).read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ProtocolError(f"cannot read result: {exc}") from exc
+        argv = list(args.argv or [])
+        if args.argv_file:
+            try:
+                loaded = json.loads(Path(args.argv_file).read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ProtocolError(f"cannot read argv: {exc}") from exc
+            if not isinstance(loaded, list):
+                raise ProtocolError("argv file must hold a JSON array")
+            argv = [str(token) for token in loaded]
+        try:
+            step = trajectory.record(root, trajectory_id=args.id, argv=argv,
+                                     exit_code=args.exit_code, result=result,
+                                     result_ref=args.result_ref or "", note=args.note or "")
+        except ValueError as exc:
+            raise ProtocolError(str(exc)) from exc
+        print(json.dumps(step, ensure_ascii=False, indent=2))
+        return
+    try:
+        payload = trajectory.load(root, args.id)
+    except ValueError as exc:
+        raise ProtocolError(str(exc)) from exc
+    if payload is None:
+        raise ProtocolError(f"no trajectory {args.id}")
+    if args.action == "verify":
+        print(json.dumps(trajectory.verify(payload), ensure_ascii=False, indent=2))
+        return
+    if args.action == "replay":
+        print(json.dumps(trajectory.replay_plan(payload), ensure_ascii=False, indent=2))
+        return
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path(".agent-evolution"))
@@ -3320,8 +3471,36 @@ def build_parser() -> argparse.ArgumentParser:
     route.add_argument("--provider", default="mage_vl_cowork")
     route.add_argument("--min-confidence", type=float, default=vision_grounding.DEFAULT_MIN_CONFIDENCE)
     route.add_argument("--policy-result", help="a coord-policy result, to include the send verdict")
+    route.add_argument("--send-report", help="a driver send receipt; its own booleans become the verification")
+    route.add_argument("--verification", help="a pre-computed verification object, instead of --send-report")
     route.add_argument("--catalog")
     route.set_defaults(func=coord_route)
+
+    skill = commands.add_parser("coord-skill-manifest",
+                                help="generate or check the CLI surface that agents are handed")
+    skill.add_argument("action", nargs="?", choices=("show", "write", "check"), default="show")
+    skill.add_argument("--directory", type=Path,
+                       help="where SKILL.md and skill-manifest.json live; defaults to docs/coordination")
+    skill.add_argument("--markdown", action="store_true", help="print the rendered SKILL.md instead of JSON")
+    skill.set_defaults(func=coord_skill_manifest)
+
+    trace = commands.add_parser("coord-trajectory",
+                                help="record a run as command-to-result bindings, and replay the reads")
+    trace.add_argument("action", choices=("start", "record", "show", "verify", "replay"))
+    trace.add_argument("--id", help="trajectory id; also its filename")
+    trace.add_argument("--agent")
+    trace.add_argument("--task")
+    trace.add_argument("--surface", help="the client or transport the run happened on")
+    trace.add_argument("--note")
+    trace.add_argument("--argv", nargs="*", default=[],
+                       help="argv for the step, when it carries no leading-dash flags; "
+                            "use --argv-file for anything that does")
+    trace.add_argument("--argv-file", type=Path,
+                       help="a JSON array of argv tokens, which is the only way to pass flags")
+    trace.add_argument("--exit-code", type=int, default=0)
+    trace.add_argument("--result-file", type=Path, help="a JSON result to bind to this step")
+    trace.add_argument("--result-ref", help="a path to a stored result, digested instead of inlined")
+    trace.set_defaults(func=coord_trajectory)
 
     gate = commands.add_parser("coord-dispatch", help="preview a queued order and refuse it before any input")
     gate.add_argument("--order-id", help="the order to inspect; omit with --all")
@@ -3359,7 +3538,7 @@ def build_parser() -> argparse.ArgumentParser:
     acc.add_argument("--persist", action="store_true", help="write the user profile so the setting survives a reboot")
     acc.set_defaults(func=coord_a11y)
 
-    client = commands.add_parser("coord-client"); client.add_argument("action", choices=("register", "list", "discover", "anchor", "launch", "fingerprint")); client.add_argument("--agent"); client.add_argument("--display"); client.add_argument("--process"); client.add_argument("--exe"); client.add_argument("--window-titles", nargs="*", default=[]); client.add_argument("--transports", nargs="*", default=[]); client.add_argument("--launch-args", nargs="*", default=[]); client.add_argument("--notes"); client.add_argument("--session-label", default=""); client.add_argument("--no-electron", action="store_true"); client.add_argument("--pid", type=int); client.add_argument("--title"); client.add_argument("--session-id"); client.add_argument("--allow-launch", action="store_true"); client.add_argument("--debug-port", type=int); client.add_argument("--show", action="store_true", help="show the fingerprint without recording it"); client.set_defaults(func=coord_client)
+    client = commands.add_parser("coord-client"); client.add_argument("action", choices=("register", "list", "discover", "anchor", "launch", "fingerprint", "continuity")); client.add_argument("--agent"); client.add_argument("--display"); client.add_argument("--process"); client.add_argument("--exe"); client.add_argument("--window-titles", nargs="*", default=[]); client.add_argument("--transports", nargs="*", default=[]); client.add_argument("--launch-args", nargs="*", default=[]); client.add_argument("--notes"); client.add_argument("--session-label", default=""); client.add_argument("--no-electron", action="store_true"); client.add_argument("--pid", type=int); client.add_argument("--title"); client.add_argument("--session-id"); client.add_argument("--allow-launch", action="store_true"); client.add_argument("--debug-port", type=int); client.add_argument("--target-agent", help="the other surface to compare against, for action=continuity"); client.add_argument("--show", action="store_true", help="show the fingerprint without recording it"); client.set_defaults(func=coord_client)
 
     transcript = commands.add_parser("coord-transcript"); transcript.add_argument("action", choices=("publish", "read", "awareness", "digest")); transcript.add_argument("--agent"); transcript.add_argument("--text"); transcript.add_argument("--file"); transcript.add_argument("--source"); transcript.add_argument("--title"); transcript.add_argument("--after"); transcript.add_argument("--limit", type=int, default=100); transcript.add_argument("--tail", type=int, default=6); transcript.add_argument("--markdown", action="store_true"); transcript.set_defaults(func=coord_transcript)
 

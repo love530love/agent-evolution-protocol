@@ -172,13 +172,21 @@ def unproven_steps(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def delivery_verdict(*, locate: dict[str, Any],
-                     policy_result: dict[str, Any] | None = None) -> dict[str, Any]:
+                     policy_result: dict[str, Any] | None = None,
+                     verification: dict[str, Any] | None = None) -> dict[str, Any]:
     """Should anything be sent?  Defaults to defer.
 
     The three ways to reach "send" are all evidence-shaped: the input was
     located by something that can prove it, every write step the policy took is
     accounted for, and the policy stopped because it finished rather than
     because it ran out of budget.
+
+    ``verification`` is an ``action_verification.verdict`` result.  Passing it
+    is what turns "send after somebody checks" into an actual decision: a
+    refutation defers, an incomplete verification keeps the unverified state,
+    and only a pass lets a guessed location be sent to.  Omitting it is allowed
+    and changes nothing -- a caller that has not measured anything gets the same
+    answer as before, which is the honest one.
     """
     if not locate.get("locate_source"):
         return {"action": "defer", "state": "DEFERRED",
@@ -198,9 +206,28 @@ def delivery_verdict(*, locate: dict[str, Any],
             return {"action": "defer", "state": "DEFERRED", "reason": stopped or "UNKNOWN_STOP",
                     "note": "the policy did not run to completion"}
 
-    if locate.get("needs_verification"):
+    if verification is not None:
+        outcome = verification.get("verified")
+        if outcome is False:
+            return {"action": "defer", "state": "DEFERRED", "reason": "VERIFICATION_REFUTED",
+                    "check": (verification.get("failed") or [None])[0],
+                    "verification": verification,
+                    "note": "a check failed, so the action is not accounted for"}
+        if outcome is None:
+            return {"action": "send-after-verification", "state": "READY_UNVERIFIED",
+                    "reason": "VERIFICATION_INCOMPLETE",
+                    "missing": verification.get("missing") or [],
+                    "verification": verification,
+                    "note": "not enough was checked to conclude anything"}
+
+    if locate.get("needs_verification") and not (verification or {}).get("verified") is True:
         return {"action": "send-after-verification", "state": "READY_UNVERIFIED",
                 "reason": f"LOCATED_BY_{str(locate['locate_source']).upper()}",
                 "note": "confirm the input received the text before sending"}
-    return {"action": "send", "state": "READY", "reason": "",
-            "note": "the location is an observation, not a guess"}
+    note = ("the location is an observation, not a guess"
+            if not locate.get("needs_verification")
+            else "the guess was verified before sending")
+    result = {"action": "send", "state": "READY", "reason": "", "note": note}
+    if verification is not None:
+        result["verification"] = verification
+    return result

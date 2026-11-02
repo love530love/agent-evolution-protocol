@@ -1,0 +1,5361 @@
+{
+  "by_risk": {
+    "irreversible": 15,
+    "mutating": 53,
+    "read-only": 21
+  },
+  "commands": [
+    {
+      "arguments": [
+        {
+          "dest": "round_id",
+          "flags": [
+            "--round-id"
+          ],
+          "kind": "option",
+          "required": true
+        }
+      ],
+      "documented": false,
+      "name": "audit",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "round_id",
+          "flags": [
+            "--round-id"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "actor",
+          "flags": [
+            "--actor"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "file",
+          "flags": [
+            "--file"
+          ],
+          "kind": "option",
+          "required": true
+        }
+      ],
+      "documented": false,
+      "name": "challenge",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "round_id",
+          "flags": [
+            "--round-id"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "card",
+          "flags": [
+            "--card"
+          ],
+          "kind": "option",
+          "required": true
+        }
+      ],
+      "documented": false,
+      "name": "commit",
+      "risk": "irreversible"
+    },
+    {
+      "arguments": [
+        {
+          "choices": [
+            "check",
+            "disable",
+            "enable",
+            "status"
+          ],
+          "dest": "action",
+          "flags": [],
+          "kind": "positional",
+          "required": true
+        },
+        {
+          "dest": "pid",
+          "flags": [
+            "--pid"
+          ],
+          "help": "also report this process's elevation and whether it can be driven",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "persist",
+          "flags": [
+            "--persist"
+          ],
+          "help": "write the user profile so the setting survives a reboot",
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "documented": true,
+      "name": "coord-a11y",
+      "purpose": "Report or set the Windows screen-reader flag that gates Electron UIA trees.",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "order_id",
+          "flags": [
+            "--order-id"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "default": false,
+          "dest": "abandon",
+          "flags": [
+            "--abandon"
+          ],
+          "help": "stop waiting on a named person's signature; the task becomes blocked, never done",
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "dest": "reason",
+          "flags": [
+            "--reason"
+          ],
+          "help": "why the wait is ending; required with --abandon",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "by",
+          "flags": [
+            "--by"
+          ],
+          "help": "who is ending it; required with --abandon",
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": true,
+      "name": "coord-ack",
+      "purpose": "Show the ACK judgement for one order, including why a token did not count.",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "agent",
+          "flags": [
+            "--agent"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "id",
+          "flags": [
+            "--id"
+          ],
+          "kind": "option",
+          "required": true
+        }
+      ],
+      "documented": false,
+      "name": "coord-ack-message",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "agent",
+          "flags": [
+            "--agent"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "topic",
+          "flags": [
+            "--topic"
+          ],
+          "kind": "option",
+          "required": true
+        }
+      ],
+      "documented": false,
+      "name": "coord-ack-topic",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "choices": [
+            "review",
+            "status"
+          ],
+          "dest": "action",
+          "flags": [],
+          "kind": "positional",
+          "required": true
+        },
+        {
+          "dest": "task",
+          "flags": [
+            "--task"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "submission",
+          "flags": [
+            "--submission"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "agent",
+          "flags": [
+            "--agent"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "choices": [
+            "bias_auditor",
+            "falsifier",
+            "ideator",
+            "referee",
+            "replicator"
+          ],
+          "dest": "role",
+          "flags": [
+            "--role"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "review_file",
+          "flags": [
+            "--review-file"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "coord-adversarial",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "choices": [
+            "inventory",
+            "plan",
+            "register",
+            "render-config"
+          ],
+          "dest": "action",
+          "flags": [],
+          "kind": "positional",
+          "required": true
+        },
+        {
+          "dest": "profile_file",
+          "flags": [
+            "--profile-file"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "agent",
+          "flags": [
+            "--agent"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "workspace_id",
+          "flags": [
+            "--workspace-id"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "choices": [
+            "browser",
+            "dispatch",
+            "launch",
+            "locate",
+            "mcp_probe",
+            "rea",
+            "readback",
+            "wake"
+          ],
+          "dest": "operation",
+          "flags": [
+            "--operation"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "session_id",
+          "flags": [
+            "--session-id"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "no_replace",
+          "flags": [
+            "--no-replace"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "documented": true,
+      "name": "coord-agent-mcp",
+      "purpose": "Manage per-Agent MCP bundles without claiming delivery or ACK.",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "default": 24,
+          "dest": "older_than_hours",
+          "flags": [
+            "--older-than-hours"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": "archived-stale",
+          "dest": "archive_name",
+          "flags": [
+            "--archive-name"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "all",
+          "flags": [
+            "--all"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "coord-archive-stale",
+      "risk": "irreversible"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "workspace",
+          "flags": [
+            "--workspace"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "task",
+          "flags": [
+            "--task"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "target",
+          "flags": [
+            "--target"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "requirement",
+          "flags": [
+            "--requirement"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "requirement_file",
+          "flags": [
+            "--requirement-file"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": [],
+          "dest": "paths",
+          "flags": [
+            "--paths"
+          ],
+          "kind": "option",
+          "nargs": "*",
+          "required": false
+        },
+        {
+          "default": [],
+          "dest": "deps",
+          "flags": [
+            "--deps"
+          ],
+          "kind": "option",
+          "nargs": "*",
+          "required": false
+        },
+        {
+          "default": "kernel",
+          "dest": "sender",
+          "flags": [
+            "--sender"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "choices": [
+            "low",
+            "normal",
+            "urgent"
+          ],
+          "default": "normal",
+          "dest": "priority",
+          "flags": [
+            "--priority"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 24.0,
+          "dest": "ttl_hours",
+          "flags": [
+            "--ttl-hours"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": "auto",
+          "dest": "transport",
+          "flags": [
+            "--transport"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "allow_launch",
+          "flags": [
+            "--allow-launch"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "urgent_interject",
+          "flags": [
+            "--urgent-interject"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "default": ".agent-evolution",
+          "dest": "federation_root",
+          "flags": [
+            "--federation-root"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": true,
+      "name": "coord-assign",
+      "purpose": "One call that writes a DAG node, takes the lease and deposits the order.",
+      "risk": "irreversible"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "agent",
+          "flags": [
+            "--agent"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "text",
+          "flags": [
+            "--text"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": [],
+          "dest": "to",
+          "flags": [
+            "--to"
+          ],
+          "kind": "option",
+          "nargs": "*",
+          "required": false
+        },
+        {
+          "dest": "deputy",
+          "flags": [
+            "--deputy"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": [],
+          "dest": "evidence",
+          "flags": [
+            "--evidence"
+          ],
+          "kind": "option",
+          "nargs": "*",
+          "required": false
+        },
+        {
+          "dest": "reviewer",
+          "flags": [
+            "--reviewer"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "fix_author",
+          "flags": [
+            "--fix-author"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "status_task",
+          "flags": [
+            "--status-task"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "coord-battle-order",
+      "risk": "irreversible"
+    },
+    {
+      "arguments": [],
+      "documented": false,
+      "name": "coord-bootstrap",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "choices": [
+            "declare",
+            "match"
+          ],
+          "dest": "action",
+          "flags": [],
+          "kind": "positional",
+          "required": true
+        },
+        {
+          "dest": "agent",
+          "flags": [
+            "--agent"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": [],
+          "dest": "chips",
+          "flags": [
+            "--chips"
+          ],
+          "kind": "option",
+          "nargs": "*",
+          "required": false
+        },
+        {
+          "default": [],
+          "dest": "compilers",
+          "flags": [
+            "--compilers"
+          ],
+          "kind": "option",
+          "nargs": "*",
+          "required": false
+        },
+        {
+          "default": [],
+          "dest": "strengths",
+          "flags": [
+            "--strengths"
+          ],
+          "kind": "option",
+          "nargs": "*",
+          "required": false
+        },
+        {
+          "default": [],
+          "dest": "evidence",
+          "flags": [
+            "--evidence"
+          ],
+          "kind": "option",
+          "nargs": "*",
+          "required": false
+        },
+        {
+          "default": 30,
+          "dest": "ttl_minutes",
+          "flags": [
+            "--ttl-minutes"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "chip",
+          "flags": [
+            "--chip"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "compiler",
+          "flags": [
+            "--compiler"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "strength",
+          "flags": [
+            "--strength"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "coord-capabilities",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "intent",
+          "flags": [
+            "--intent"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "choices": [
+            "click",
+            "keys",
+            "locate",
+            "observe",
+            "read",
+            "screenshot",
+            "select",
+            "send",
+            "type",
+            "wait"
+          ],
+          "dest": "operation",
+          "flags": [
+            "--operation"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "manifest",
+          "flags": [
+            "--manifest"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "allow_high_risk",
+          "flags": [
+            "--allow-high-risk"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "coord-capability-plan",
+      "risk": "read-only"
+    },
+    {
+      "arguments": [
+        {
+          "choices": [
+            "read",
+            "scan",
+            "send",
+            "targets"
+          ],
+          "dest": "action",
+          "flags": [],
+          "kind": "positional",
+          "required": true
+        },
+        {
+          "default": 9222,
+          "dest": "port",
+          "flags": [
+            "--port"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "title",
+          "flags": [
+            "--title"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "text",
+          "flags": [
+            "--text"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "text_file",
+          "flags": [
+            "--text-file"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "event_id",
+          "flags": [
+            "--event-id"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "out_file",
+          "flags": [
+            "--out-file"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 600,
+          "dest": "preview_chars",
+          "flags": [
+            "--preview-chars"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 10,
+          "dest": "timeout",
+          "flags": [
+            "--timeout"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": true,
+      "name": "coord-cdp",
+      "purpose": "Chrome DevTools Protocol transport: exact DOM read and composer write.",
+      "risk": "irreversible"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "agent",
+          "flags": [
+            "--agent"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "through",
+          "flags": [
+            "--through"
+          ],
+          "kind": "option",
+          "required": true
+        }
+      ],
+      "documented": false,
+      "name": "coord-chat-ack",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "agent",
+          "flags": [
+            "--agent"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "default": 24,
+          "dest": "since_hours",
+          "flags": [
+            "--since-hours"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 4,
+          "dest": "per_actor",
+          "flags": [
+            "--per-actor"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 240,
+          "dest": "chars",
+          "flags": [
+            "--chars"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "markdown",
+          "flags": [
+            "--markdown"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "documented": true,
+      "name": "coord-chat-digest",
+      "purpose": "What has the rest of the legion said recently, for an agent just joining.",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "source",
+          "flags": [
+            "--source"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "choices": [
+            "assistant",
+            "user"
+          ],
+          "dest": "role",
+          "flags": [
+            "--role"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "default": "workspace",
+          "dest": "room",
+          "flags": [
+            "--room"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "session_id",
+          "flags": [
+            "--session-id"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "workspace",
+          "flags": [
+            "--workspace"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "text",
+          "flags": [
+            "--text"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "text_file",
+          "flags": [
+            "--text-file"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "coord-chat-publish",
+      "risk": "irreversible"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "agent",
+          "flags": [
+            "--agent"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "after",
+          "flags": [
+            "--after"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 50,
+          "dest": "limit",
+          "flags": [
+            "--limit"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "include_raw",
+          "flags": [
+            "--include-raw"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "coord-chat-read",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "agent",
+          "flags": [
+            "--agent"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "task",
+          "flags": [
+            "--task"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "paths",
+          "flags": [
+            "--paths"
+          ],
+          "kind": "option",
+          "nargs": "*",
+          "required": false
+        },
+        {
+          "default": 48.0,
+          "dest": "ttl_hours",
+          "flags": [
+            "--ttl-hours"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "coord-claim",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "agent",
+          "flags": [
+            "--agent"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "task",
+          "flags": [
+            "--task"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "default": 48.0,
+          "dest": "ttl_hours",
+          "flags": [
+            "--ttl-hours"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": true,
+      "name": "coord-claim-renew",
+      "purpose": "Extend the caller's claim lease through the normal ``aep`` entrypoint.",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "default": "127.0.0.1",
+          "dest": "host",
+          "flags": [
+            "--host"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 0,
+          "dest": "port",
+          "flags": [
+            "--port"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": "workspace",
+          "dest": "room",
+          "flags": [
+            "--room"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "sender",
+          "flags": [
+            "--sender"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "target",
+          "flags": [
+            "--target"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "task",
+          "flags": [
+            "--task"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "event_id",
+          "flags": [
+            "--event-id"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "text",
+          "flags": [
+            "--text"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "text_file",
+          "flags": [
+            "--text-file"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 5,
+          "dest": "timeout",
+          "flags": [
+            "--timeout"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "execute",
+          "flags": [
+            "--execute"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "coord-clawchat",
+      "risk": "irreversible"
+    },
+    {
+      "arguments": [
+        {
+          "choices": [
+            "anchor",
+            "continuity",
+            "discover",
+            "fingerprint",
+            "launch",
+            "list",
+            "register"
+          ],
+          "dest": "action",
+          "flags": [],
+          "kind": "positional",
+          "required": true
+        },
+        {
+          "dest": "agent",
+          "flags": [
+            "--agent"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "display",
+          "flags": [
+            "--display"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "process",
+          "flags": [
+            "--process"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "exe",
+          "flags": [
+            "--exe"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": [],
+          "dest": "window_titles",
+          "flags": [
+            "--window-titles"
+          ],
+          "kind": "option",
+          "nargs": "*",
+          "required": false
+        },
+        {
+          "default": [],
+          "dest": "transports",
+          "flags": [
+            "--transports"
+          ],
+          "kind": "option",
+          "nargs": "*",
+          "required": false
+        },
+        {
+          "default": [],
+          "dest": "launch_args",
+          "flags": [
+            "--launch-args"
+          ],
+          "kind": "option",
+          "nargs": "*",
+          "required": false
+        },
+        {
+          "dest": "notes",
+          "flags": [
+            "--notes"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": "",
+          "dest": "session_label",
+          "flags": [
+            "--session-label"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "no_electron",
+          "flags": [
+            "--no-electron"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "dest": "pid",
+          "flags": [
+            "--pid"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "title",
+          "flags": [
+            "--title"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "session_id",
+          "flags": [
+            "--session-id"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "allow_launch",
+          "flags": [
+            "--allow-launch"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "dest": "debug_port",
+          "flags": [
+            "--debug-port"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "target_agent",
+          "flags": [
+            "--target-agent"
+          ],
+          "help": "the other surface to compare against, for action=continuity",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "show",
+          "flags": [
+            "--show"
+          ],
+          "help": "show the fingerprint without recording it",
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "documented": true,
+      "name": "coord-client",
+      "purpose": "Name, find, anchor and open the desktop clients the legion can command.",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "choices": [
+            "ack",
+            "perceive",
+            "resume-deferred",
+            "status",
+            "submit",
+            "tick",
+            "watch"
+          ],
+          "dest": "action",
+          "flags": [],
+          "kind": "positional",
+          "required": true
+        },
+        {
+          "dest": "target",
+          "flags": [
+            "--target"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "order_id",
+          "flags": [
+            "--order-id"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": "human",
+          "dest": "sender",
+          "flags": [
+            "--sender"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "task",
+          "flags": [
+            "--task"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "text",
+          "flags": [
+            "--text"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "text_file",
+          "flags": [
+            "--text-file"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "event_id",
+          "flags": [
+            "--event-id"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "choices": [
+            "low",
+            "normal",
+            "urgent"
+          ],
+          "default": "normal",
+          "dest": "priority",
+          "flags": [
+            "--priority"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": "auto",
+          "dest": "transport",
+          "flags": [
+            "--transport"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 120,
+          "dest": "expires_minutes",
+          "flags": [
+            "--expires-minutes"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "allow_launch",
+          "flags": [
+            "--allow-launch"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "urgent_interject",
+          "flags": [
+            "--urgent-interject"
+          ],
+          "help": "send through an exact non-interrupting interject action while the agent is busy",
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "no_perceive",
+          "flags": [
+            "--no-perceive"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "dest": "agent",
+          "flags": [
+            "--agent"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 20,
+          "dest": "limit",
+          "flags": [
+            "--limit"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 30,
+          "dest": "interval",
+          "flags": [
+            "--interval"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 0,
+          "dest": "max_ticks",
+          "flags": [
+            "--max-ticks"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": true,
+      "name": "coord-commander",
+      "purpose": "Queue directives, run the unattended loop, and prove every transition.",
+      "risk": "irreversible"
+    },
+    {
+      "arguments": [
+        {
+          "default": "",
+          "dest": "agent",
+          "flags": [
+            "--agent"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": "",
+          "dest": "topic",
+          "flags": [
+            "--topic"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "summary_only",
+          "flags": [
+            "--summary-only"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "documented": true,
+      "name": "coord-delivery-audit",
+      "purpose": "Read-only evidence ladder for all locally recorded deliveries.",
+      "risk": "read-only"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "to",
+          "flags": [
+            "--to"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "id",
+          "flags": [
+            "--id"
+          ],
+          "kind": "option",
+          "required": true
+        }
+      ],
+      "documented": true,
+      "name": "coord-delivery-status",
+      "purpose": "Report observed mailbox state; never infer model receipt from file presence.",
+      "risk": "read-only"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "baseline",
+          "flags": [
+            "--baseline"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "wheelhouse",
+          "flags": [
+            "--wheelhouse"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "output",
+          "flags": [
+            "--output"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "default": false,
+          "dest": "apply",
+          "flags": [
+            "--apply"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "verify_pypi",
+          "flags": [
+            "--verify-pypi"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "coord-dependencies",
+      "risk": "read-only"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "lock",
+          "flags": [
+            "--lock"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "output",
+          "flags": [
+            "--output"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "default": false,
+          "dest": "apply",
+          "flags": [
+            "--apply"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "query_osv",
+          "flags": [
+            "--query-osv"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "coord-dependency-audit",
+      "risk": "read-only"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "lock",
+          "flags": [
+            "--lock"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "audit_dir",
+          "flags": [
+            "--audit-dir"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "inventory_dir",
+          "flags": [
+            "--inventory-dir"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "wheel_dir",
+          "flags": [
+            "--wheel-dir"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "output",
+          "flags": [
+            "--output"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "default": 24,
+          "dest": "max_age_hours",
+          "flags": [
+            "--max-age-hours"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "apply",
+          "flags": [
+            "--apply"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "coord-dependency-gate",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "lock",
+          "flags": [
+            "--lock"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "environment",
+          "flags": [
+            "--environment"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "output",
+          "flags": [
+            "--output"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "default": false,
+          "dest": "apply",
+          "flags": [
+            "--apply"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "verify_records",
+          "flags": [
+            "--verify-records"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "coord-dependency-inventory",
+      "risk": "read-only"
+    },
+    {
+      "arguments": [
+        {
+          "choices": [
+            "export-config",
+            "inventory",
+            "plan",
+            "probe",
+            "register"
+          ],
+          "dest": "action",
+          "flags": [],
+          "kind": "positional",
+          "required": true
+        },
+        {
+          "dest": "profile_file",
+          "flags": [
+            "--profile-file"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "provider",
+          "flags": [
+            "--provider"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "choices": [
+            "click",
+            "clipboard",
+            "keys",
+            "locate",
+            "read",
+            "screenshot",
+            "select",
+            "snapshot",
+            "type",
+            "wait",
+            "windows"
+          ],
+          "dest": "operation",
+          "flags": [
+            "--operation"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": "NOT_STARTED",
+          "dest": "previous_state",
+          "flags": [
+            "--previous-state"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 30,
+          "dest": "timeout",
+          "flags": [
+            "--timeout"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "details",
+          "flags": [
+            "--details"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "coord-desktop",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "choices": [
+            "ack",
+            "publish",
+            "read",
+            "recover",
+            "state"
+          ],
+          "dest": "action",
+          "flags": [],
+          "kind": "positional",
+          "required": true
+        },
+        {
+          "dest": "workspace_id",
+          "flags": [
+            "--workspace-id"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "agent",
+          "flags": [
+            "--agent"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "session_id",
+          "flags": [
+            "--session-id"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "event_id",
+          "flags": [
+            "--event-id"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "choices": [
+            "runner_command",
+            "runner_receipt",
+            "runner_status"
+          ],
+          "default": "runner_command",
+          "dest": "kind",
+          "flags": [
+            "--kind"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "choices": [
+            "READY",
+            "UNAVAILABLE",
+            "UNKNOWN"
+          ],
+          "dest": "status",
+          "flags": [
+            "--status"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "reason",
+          "flags": [
+            "--reason"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "payload_json",
+          "flags": [
+            "--payload-json"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "evidence_json",
+          "flags": [
+            "--evidence-json"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 100,
+          "dest": "limit",
+          "flags": [
+            "--limit"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": true,
+      "name": "coord-desktop-ipc",
+      "purpose": "Persist/recover Supervisor ↔ Desktop Runner events and receipts.",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "choices": [
+            "ensure",
+            "launch",
+            "wait"
+          ],
+          "dest": "action",
+          "flags": [],
+          "kind": "positional",
+          "required": true
+        },
+        {
+          "dest": "agent",
+          "flags": [
+            "--agent"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "default": false,
+          "dest": "apply",
+          "flags": [
+            "--apply"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "allow_launch",
+          "flags": [
+            "--allow-launch"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "default": 0,
+          "dest": "debug_port",
+          "flags": [
+            "--debug-port"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": [],
+          "dest": "extra_args",
+          "flags": [
+            "--extra-args"
+          ],
+          "kind": "option",
+          "nargs": "*",
+          "required": false
+        },
+        {
+          "default": 30.0,
+          "dest": "timeout",
+          "flags": [
+            "--timeout"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 0.25,
+          "dest": "poll_interval",
+          "flags": [
+            "--poll-interval"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": true,
+      "name": "coord-desktop-runner",
+      "purpose": "Plan/launch/wait for a GUI Agent in the interactive user session.",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "agent",
+          "flags": [
+            "--agent"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "default": 20,
+          "dest": "limit",
+          "flags": [
+            "--limit"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 2,
+          "dest": "samples",
+          "flags": [
+            "--samples"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 240,
+          "dest": "preview_chars",
+          "flags": [
+            "--preview-chars"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "coord-digest",
+      "risk": "read-only"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "order_id",
+          "flags": [
+            "--order-id"
+          ],
+          "help": "the order to inspect; omit with --all",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "all",
+          "flags": [
+            "--all"
+          ],
+          "help": "every order that has not reached a terminal state",
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "strict",
+          "flags": [
+            "--strict"
+          ],
+          "help": "also refuse when the body does not name its task, assignee or workspace",
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "choices": [
+            "exe",
+            "process-substring",
+            "title"
+          ],
+          "dest": "window_identity",
+          "flags": [
+            "--window-identity"
+          ],
+          "help": "how strongly the window was tied to the profile, when known",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "show_body",
+          "flags": [
+            "--show-body"
+          ],
+          "help": "print the human preview before the JSON",
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "documented": true,
+      "name": "coord-dispatch",
+      "purpose": "Preview and gate queued orders without touching the desktop.",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "choices": [
+            "evaluate",
+            "propose"
+          ],
+          "dest": "action",
+          "flags": [],
+          "kind": "positional",
+          "required": true
+        },
+        {
+          "dest": "metrics_file",
+          "flags": [
+            "--metrics-file"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "candidate_file",
+          "flags": [
+            "--candidate-file"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "proposal_id",
+          "flags": [
+            "--proposal-id"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "change",
+          "flags": [
+            "--change"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "rollback",
+          "flags": [
+            "--rollback"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "author",
+          "flags": [
+            "--author"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "coord-evolution",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "choices": [
+            "history",
+            "intervene",
+            "roles"
+          ],
+          "dest": "action",
+          "flags": [],
+          "kind": "positional",
+          "required": true
+        },
+        {
+          "dest": "request_file",
+          "flags": [
+            "--request-file"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "coord-governance",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "attempted_action",
+          "flags": [
+            "--attempted-action"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "error",
+          "flags": [
+            "--error"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "choices": [
+            "high",
+            "low",
+            "medium"
+          ],
+          "default": "medium",
+          "dest": "risk_level",
+          "flags": [
+            "--risk-level"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "goal",
+          "flags": [
+            "--goal"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "coord-guided-retry",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "choices": [
+            "advance",
+            "brief",
+            "checkpoint",
+            "checkpoints",
+            "claim",
+            "complete",
+            "delivery-status",
+            "drain",
+            "enqueue",
+            "ingest",
+            "inspect-handoff",
+            "overview",
+            "pending",
+            "policy",
+            "propose",
+            "recover-run",
+            "release",
+            "renew",
+            "reroute",
+            "retire",
+            "schedule",
+            "self-test",
+            "status",
+            "validate",
+            "validation-runs"
+          ],
+          "dest": "action",
+          "flags": [],
+          "kind": "positional",
+          "required": true
+        },
+        {
+          "dest": "run_id",
+          "flags": [
+            "--run-id"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "target",
+          "flags": [
+            "--target"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "choices": [
+            "cooperative",
+            "enforced"
+          ],
+          "dest": "mode",
+          "flags": [
+            "--mode"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "order_id",
+          "flags": [
+            "--order-id"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "apply",
+          "flags": [
+            "--apply"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "default": 1,
+          "dest": "limit",
+          "flags": [
+            "--limit"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 300,
+          "dest": "ttl",
+          "flags": [
+            "--ttl"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "token",
+          "flags": [
+            "--token"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "workspace",
+          "flags": [
+            "--workspace"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 120,
+          "dest": "timeout",
+          "flags": [
+            "--timeout"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "request_file",
+          "flags": [
+            "--request-file"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "id",
+          "flags": [
+            "--id"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "choices": [
+            "ADOPTED",
+            "PROPOSED",
+            "REJECTED",
+            "REVIEWED",
+            "ROLLED_BACK",
+            "TRIAL",
+            "VALIDATED"
+          ],
+          "dest": "state",
+          "flags": [
+            "--state"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "actor",
+          "flags": [
+            "--actor"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "note",
+          "flags": [
+            "--note"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": [],
+          "dest": "evidence",
+          "flags": [
+            "--evidence"
+          ],
+          "kind": "option",
+          "nargs": "+",
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "coord-improvement",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "choices": [
+            "open",
+            "review",
+            "status"
+          ],
+          "dest": "action",
+          "flags": [],
+          "kind": "positional",
+          "required": true
+        },
+        {
+          "dest": "task",
+          "flags": [
+            "--task"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "submission",
+          "flags": [
+            "--submission"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "lead",
+          "flags": [
+            "--lead"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "deputy",
+          "flags": [
+            "--deputy"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "artifact_sha256",
+          "flags": [
+            "--artifact-sha256"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "result_file",
+          "flags": [
+            "--result-file"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "agent",
+          "flags": [
+            "--agent"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "choices": [
+            "catfish",
+            "cross_platform",
+            "deputy",
+            "lead",
+            "package_reviewer"
+          ],
+          "dest": "role",
+          "flags": [
+            "--role"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "review_file",
+          "flags": [
+            "--review-file"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "coord-joint-case",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "choices": [
+            "adjudicate",
+            "challenge",
+            "chase",
+            "incentive-board",
+            "record",
+            "scoreboard",
+            "slacking"
+          ],
+          "dest": "action",
+          "flags": [],
+          "kind": "positional",
+          "required": true
+        },
+        {
+          "dest": "agent",
+          "flags": [
+            "--agent"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "kind",
+          "flags": [
+            "--kind"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "reporter",
+          "flags": [
+            "--reporter"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "reviewer",
+          "flags": [
+            "--reviewer"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "choices": [
+            "accepted",
+            "rejected"
+          ],
+          "dest": "verdict",
+          "flags": [
+            "--verdict"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "event_id",
+          "flags": [
+            "--event-id"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "task",
+          "flags": [
+            "--task"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "signature",
+          "flags": [
+            "--signature"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": [],
+          "dest": "evidence",
+          "flags": [
+            "--evidence"
+          ],
+          "kind": "option",
+          "nargs": "*",
+          "required": false
+        },
+        {
+          "dest": "note",
+          "flags": [
+            "--note"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "reason",
+          "flags": [
+            "--reason"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "alternative",
+          "flags": [
+            "--alternative"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "predicted_signature",
+          "flags": [
+            "--predicted-signature"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "cheapest_test",
+          "flags": [
+            "--cheapest-test"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "stop_condition",
+          "flags": [
+            "--stop-condition"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": [],
+          "dest": "expected",
+          "flags": [
+            "--expected"
+          ],
+          "kind": "option",
+          "nargs": "*",
+          "required": false
+        },
+        {
+          "default": 24,
+          "dest": "window_hours",
+          "flags": [
+            "--window-hours"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 1,
+          "dest": "min_productive",
+          "flags": [
+            "--min-productive"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "coord-legion",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "metrics_file",
+          "flags": [
+            "--metrics-file"
+          ],
+          "kind": "option",
+          "required": true
+        }
+      ],
+      "documented": false,
+      "name": "coord-mechanism-audit",
+      "risk": "read-only"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "agent",
+          "flags": [
+            "--agent"
+          ],
+          "kind": "option",
+          "required": true
+        }
+      ],
+      "documented": false,
+      "name": "coord-onboarding",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "choices": [
+            "bind",
+            "configure",
+            "doctor",
+            "probe",
+            "read",
+            "send",
+            "wait"
+          ],
+          "dest": "action",
+          "flags": [],
+          "kind": "positional",
+          "required": true
+        },
+        {
+          "default": 15,
+          "dest": "timeout",
+          "flags": [
+            "--timeout"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "command",
+          "flags": [
+            "--command"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "agent",
+          "flags": [
+            "--agent"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "terminal",
+          "flags": [
+            "--terminal"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "cursor",
+          "flags": [
+            "--cursor"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "event_id",
+          "flags": [
+            "--event-id"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "text_file",
+          "flags": [
+            "--text-file"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "apply",
+          "flags": [
+            "--apply"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "coord-orca",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "choices": [
+            "validate"
+          ],
+          "dest": "action",
+          "flags": [],
+          "kind": "positional",
+          "required": true
+        },
+        {
+          "dest": "plan",
+          "flags": [
+            "--plan"
+          ],
+          "help": "JSON list of actions, or an object with an actions list",
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "window",
+          "flags": [
+            "--window"
+          ],
+          "help": "WIDTHxHEIGHT the coordinates refer to",
+          "kind": "option",
+          "required": true
+        },
+        {
+          "default": "",
+          "dest": "task",
+          "flags": [
+            "--task"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 15,
+          "dest": "max_steps",
+          "flags": [
+            "--max-steps"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": true,
+      "name": "coord-policy",
+      "purpose": "Validate a proposed action plan without touching the desktop.",
+      "risk": "read-only"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "pid",
+          "flags": [
+            "--pid"
+          ],
+          "kind": "option",
+          "required": true
+        }
+      ],
+      "documented": false,
+      "name": "coord-process-probe",
+      "risk": "read-only"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "catalog",
+          "flags": [
+            "--catalog"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "layer",
+          "flags": [
+            "--layer"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "choices": [
+            "candidate",
+            "probed",
+            "retired",
+            "session-accepted",
+            "task-tested"
+          ],
+          "dest": "status",
+          "flags": [
+            "--status"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": true,
+      "name": "coord-provider-catalog",
+      "purpose": "List optional execution providers without installing or probing them.",
+      "risk": "read-only"
+    },
+    {
+      "arguments": [
+        {
+          "choices": [
+            "history",
+            "list",
+            "promote",
+            "retire"
+          ],
+          "dest": "action",
+          "flags": [],
+          "kind": "positional",
+          "required": true
+        },
+        {
+          "dest": "id",
+          "flags": [
+            "--id"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "choices": [
+            "probed",
+            "session-accepted",
+            "task-tested"
+          ],
+          "dest": "to",
+          "flags": [
+            "--to"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": [],
+          "dest": "evidence",
+          "flags": [
+            "--evidence"
+          ],
+          "help": "key=value evidence for the step being claimed",
+          "kind": "option",
+          "nargs": "*",
+          "required": false
+        },
+        {
+          "dest": "reason",
+          "flags": [
+            "--reason"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "layer",
+          "flags": [
+            "--layer"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "status",
+          "flags": [
+            "--status"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "catalog",
+          "flags": [
+            "--catalog"
+          ],
+          "help": "catalog path; defaults to examples/execution-provider-catalog.json",
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": true,
+      "name": "coord-providers",
+      "purpose": "List, promote or retire optional execution providers.",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "choices": [
+            "create",
+            "status"
+          ],
+          "dest": "action",
+          "flags": [],
+          "kind": "positional",
+          "required": true
+        },
+        {
+          "dest": "request_file",
+          "flags": [
+            "--request-file"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "task",
+          "flags": [
+            "--task"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "coord-reasoning",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "agent",
+          "flags": [
+            "--agent"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "task",
+          "flags": [
+            "--task"
+          ],
+          "kind": "option",
+          "required": true
+        }
+      ],
+      "documented": false,
+      "name": "coord-release",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "observation",
+          "flags": [
+            "--observation"
+          ],
+          "help": "a coord-uia observe receipt, as JSON",
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "window",
+          "flags": [
+            "--window"
+          ],
+          "help": "WIDTHxHEIGHT the coordinates refer to",
+          "kind": "option",
+          "required": true
+        },
+        {
+          "default": "composer",
+          "dest": "target",
+          "flags": [
+            "--target"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "reference",
+          "flags": [
+            "--reference"
+          ],
+          "help": "x,y,width,height of the configured region, if any",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "endpoint",
+          "flags": [
+            "--endpoint"
+          ],
+          "help": "grounding service base URL; omit to route with no grounder",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": "mage_vl_cowork",
+          "dest": "provider",
+          "flags": [
+            "--provider"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 0.5,
+          "dest": "min_confidence",
+          "flags": [
+            "--min-confidence"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "policy_result",
+          "flags": [
+            "--policy-result"
+          ],
+          "help": "a coord-policy result, to include the send verdict",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "send_report",
+          "flags": [
+            "--send-report"
+          ],
+          "help": "a driver send receipt; its own booleans become the verification",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "verification",
+          "flags": [
+            "--verification"
+          ],
+          "help": "a pre-computed verification object, instead of --send-report",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "catalog",
+          "flags": [
+            "--catalog"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": true,
+      "name": "coord-route",
+      "purpose": "Replay a routing decision from recorded receipts, offline.",
+      "risk": "read-only"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "sender",
+          "flags": [
+            "--from"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "to",
+          "flags": [
+            "--to"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "topic",
+          "flags": [
+            "--topic"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "choices": [
+            "context",
+            "proposal",
+            "question",
+            "result",
+            "update",
+            "warning"
+          ],
+          "dest": "kind",
+          "flags": [
+            "--kind"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "text",
+          "flags": [
+            "--text"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "text_file",
+          "flags": [
+            "--text-file"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "dispatch",
+          "flags": [
+            "--dispatch"
+          ],
+          "help": "immediately deliver to the target's existing desktop session",
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "mailbox_only",
+          "flags": [
+            "--mailbox-only"
+          ],
+          "help": "for warning messages, opt out of the default immediate desktop attempt",
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "allow_launch",
+          "flags": [
+            "--allow-launch"
+          ],
+          "help": "with --dispatch, allow launching the registered client if no window exists",
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "coord-send",
+      "risk": "irreversible"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "agent",
+          "flags": [
+            "--agent"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "choices": [
+            "manual",
+            "spawn-allowed",
+            "sticky"
+          ],
+          "default": "sticky",
+          "dest": "mode",
+          "flags": [
+            "--mode"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "thread_id",
+          "flags": [
+            "--thread-id"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "choices": [
+            "allow",
+            "allow-on-explicit-wake",
+            "forbid-by-default"
+          ],
+          "default": "forbid-by-default",
+          "dest": "new_session_policy",
+          "flags": [
+            "--new-session-policy"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "choices": [
+            "digest-first",
+            "full-context",
+            "minimal"
+          ],
+          "default": "digest-first",
+          "dest": "handoff_style",
+          "flags": [
+            "--handoff-style"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "notes",
+          "flags": [
+            "--notes"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "coord-session-set",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "choices": [
+            "check",
+            "show",
+            "write"
+          ],
+          "default": "show",
+          "dest": "action",
+          "flags": [],
+          "kind": "positional",
+          "nargs": "?",
+          "required": false
+        },
+        {
+          "dest": "directory",
+          "flags": [
+            "--directory"
+          ],
+          "help": "where SKILL.md and skill-manifest.json live; defaults to docs/coordination",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "markdown",
+          "flags": [
+            "--markdown"
+          ],
+          "help": "print the rendered SKILL.md instead of JSON",
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "documented": true,
+      "name": "coord-skill-manifest",
+      "purpose": "Describe the command surface from the parser that defines it.",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [],
+      "documented": false,
+      "name": "coord-status",
+      "risk": "read-only"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "agent",
+          "flags": [
+            "--agent"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "task",
+          "flags": [
+            "--task"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "phase",
+          "flags": [
+            "--phase"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "goal",
+          "flags": [
+            "--goal"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "evidence",
+          "flags": [
+            "--evidence"
+          ],
+          "kind": "option",
+          "nargs": "*",
+          "required": false
+        },
+        {
+          "dest": "blocked_reason",
+          "flags": [
+            "--blocked-reason"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "next_action",
+          "flags": [
+            "--next-action"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "wake_phrase",
+          "flags": [
+            "--wake-phrase"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "human_required",
+          "flags": [
+            "--human-required"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "default": 12,
+          "dest": "stale_after_hours",
+          "flags": [
+            "--stale-after-hours"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "coord-task-state",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "choices": [
+            "record",
+            "replay",
+            "show",
+            "start",
+            "verify"
+          ],
+          "dest": "action",
+          "flags": [],
+          "kind": "positional",
+          "required": true
+        },
+        {
+          "dest": "id",
+          "flags": [
+            "--id"
+          ],
+          "help": "trajectory id; also its filename",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "agent",
+          "flags": [
+            "--agent"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "task",
+          "flags": [
+            "--task"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "surface",
+          "flags": [
+            "--surface"
+          ],
+          "help": "the client or transport the run happened on",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "note",
+          "flags": [
+            "--note"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": [],
+          "dest": "argv",
+          "flags": [
+            "--argv"
+          ],
+          "help": "argv for the step, when it carries no leading-dash flags; use --argv-file for anything that does",
+          "kind": "option",
+          "nargs": "*",
+          "required": false
+        },
+        {
+          "dest": "argv_file",
+          "flags": [
+            "--argv-file"
+          ],
+          "help": "a JSON array of argv tokens, which is the only way to pass flags",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 0,
+          "dest": "exit_code",
+          "flags": [
+            "--exit-code"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "result_file",
+          "flags": [
+            "--result-file"
+          ],
+          "help": "a JSON result to bind to this step",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "result_ref",
+          "flags": [
+            "--result-ref"
+          ],
+          "help": "a path to a stored result, digested instead of inlined",
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": true,
+      "name": "coord-trajectory",
+      "purpose": "Record, check and replay a run without letting the replay re-fire it.",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "choices": [
+            "awareness",
+            "digest",
+            "publish",
+            "read"
+          ],
+          "dest": "action",
+          "flags": [],
+          "kind": "positional",
+          "required": true
+        },
+        {
+          "dest": "agent",
+          "flags": [
+            "--agent"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "text",
+          "flags": [
+            "--text"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "file",
+          "flags": [
+            "--file"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "source",
+          "flags": [
+            "--source"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "title",
+          "flags": [
+            "--title"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "after",
+          "flags": [
+            "--after"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 100,
+          "dest": "limit",
+          "flags": [
+            "--limit"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 6,
+          "dest": "tail",
+          "flags": [
+            "--tail"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "markdown",
+          "flags": [
+            "--markdown"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "documented": true,
+      "name": "coord-transcript",
+      "purpose": "Shared conversation bus so every agent can perceive every other session.",
+      "risk": "irreversible"
+    },
+    {
+      "arguments": [
+        {
+          "choices": [
+            "capture",
+            "deliver",
+            "observe"
+          ],
+          "dest": "action",
+          "flags": [],
+          "kind": "positional",
+          "required": true
+        },
+        {
+          "dest": "agent",
+          "flags": [
+            "--agent"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "process",
+          "flags": [
+            "--process"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "exe",
+          "flags": [
+            "--exe"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "title",
+          "flags": [
+            "--title"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "event_id",
+          "flags": [
+            "--event-id"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "text",
+          "flags": [
+            "--text"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "text_file",
+          "flags": [
+            "--text-file"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "out_file",
+          "flags": [
+            "--out-file"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "allow_unknown_path",
+          "flags": [
+            "--allow-unknown-path"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "allow_clipboard_paste",
+          "flags": [
+            "--allow-clipboard-paste"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "ocr",
+          "flags": [
+            "--ocr"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "default": 20,
+          "dest": "timeout",
+          "flags": [
+            "--timeout"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": true,
+      "name": "coord-uia",
+      "purpose": "Desktop transport probe: observe, capture or deliver to an original window.",
+      "risk": "irreversible"
+    },
+    {
+      "arguments": [
+        {
+          "choices": [
+            "ground",
+            "providers"
+          ],
+          "dest": "action",
+          "flags": [],
+          "kind": "positional",
+          "required": true
+        },
+        {
+          "default": "composer",
+          "dest": "target",
+          "flags": [
+            "--target"
+          ],
+          "help": "what to locate, e.g. composer or send button",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "window",
+          "flags": [
+            "--window"
+          ],
+          "help": "WIDTHxHEIGHT of the target window; required to convert the 0-999 grid",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "reference",
+          "flags": [
+            "--reference"
+          ],
+          "help": "x,y,width,height the deterministic path reported, for the comparison",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "image",
+          "flags": [
+            "--image"
+          ],
+          "help": "screenshot to send, if the grounder needs one",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "endpoint",
+          "flags": [
+            "--endpoint"
+          ],
+          "help": "grounding service base URL; omit to run with no grounder at all",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": "mage_vl_cowork",
+          "dest": "provider",
+          "flags": [
+            "--provider"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 0.5,
+          "dest": "min_confidence",
+          "flags": [
+            "--min-confidence"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "catalog",
+          "flags": [
+            "--catalog"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": true,
+      "name": "coord-vision",
+      "purpose": "Ask a grounder where a control is, and compare it with a known answer.",
+      "risk": "read-only"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "manifest_file",
+          "flags": [
+            "--manifest-file"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "results_file",
+          "flags": [
+            "--results-file"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "quota_remaining",
+          "flags": [
+            "--quota-remaining"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "default": 0,
+          "dest": "reserve",
+          "flags": [
+            "--reserve"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 3,
+          "dest": "wave_size",
+          "flags": [
+            "--wave-size"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "coord-volley-plan",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "sender",
+          "flags": [
+            "--from"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "to",
+          "flags": [
+            "--to"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "task",
+          "flags": [
+            "--task"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "reason",
+          "flags": [
+            "--reason"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "choices": [
+            "bounded",
+            "manual",
+            "one-shot"
+          ],
+          "default": "one-shot",
+          "dest": "budget",
+          "flags": [
+            "--budget"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "entrypoint",
+          "flags": [
+            "--entrypoint"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "requires_user_auth",
+          "flags": [
+            "--requires-user-auth"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "dry_run",
+          "flags": [
+            "--dry-run"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "allow_new_session",
+          "flags": [
+            "--allow-new-session"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "default": 600,
+          "dest": "claim_timeout_seconds",
+          "flags": [
+            "--claim-timeout-seconds"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "deliver_text",
+          "flags": [
+            "--deliver-text"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "dispatch",
+          "flags": [
+            "--dispatch"
+          ],
+          "help": "hand only this wake to commander now",
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "coord-wake",
+      "risk": "irreversible"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "id",
+          "flags": [
+            "--id"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "actor",
+          "flags": [
+            "--actor"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "reason",
+          "flags": [
+            "--reason"
+          ],
+          "kind": "option",
+          "required": true
+        }
+      ],
+      "documented": true,
+      "name": "coord-wake-cancel",
+      "purpose": "Cancel only an unconsumed wake request; never retract adapter input.",
+      "risk": "irreversible"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "id",
+          "flags": [
+            "--id"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "default": false,
+          "dest": "apply",
+          "flags": [
+            "--apply"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "retry_deferred",
+          "flags": [
+            "--retry-deferred"
+          ],
+          "help": "explicit retry of a proven pre-input deferral",
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "coord-wake-dispatch",
+      "risk": "irreversible"
+    },
+    {
+      "arguments": [
+        {
+          "default": 10,
+          "dest": "tail",
+          "flags": [
+            "--tail"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "coord-wake-status",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "lock",
+          "flags": [
+            "--lock"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "wheelhouse",
+          "flags": [
+            "--wheelhouse"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "environment",
+          "flags": [
+            "--environment"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "output",
+          "flags": [
+            "--output"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "default": false,
+          "dest": "apply",
+          "flags": [
+            "--apply"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "coord-wheel-compare",
+      "risk": "read-only"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "round_id",
+          "flags": [
+            "--round-id"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "actor",
+          "flags": [
+            "--actor"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "file",
+          "flags": [
+            "--file"
+          ],
+          "kind": "option",
+          "required": true
+        }
+      ],
+      "documented": false,
+      "name": "decide",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [],
+      "documented": false,
+      "name": "doctor",
+      "risk": "read-only"
+    },
+    {
+      "arguments": [
+        {
+          "choices": [
+            "intake",
+            "revive",
+            "serve",
+            "status",
+            "step"
+          ],
+          "dest": "action",
+          "flags": [],
+          "kind": "positional",
+          "required": true
+        },
+        {
+          "dest": "workspace",
+          "flags": [
+            "--workspace"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "goal",
+          "flags": [
+            "--goal"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "text",
+          "flags": [
+            "--text"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "text_file",
+          "flags": [
+            "--text-file"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "task",
+          "flags": [
+            "--task"
+          ],
+          "help": "task to revive; required with action=revive",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "by",
+          "flags": [
+            "--by"
+          ],
+          "help": "who is resuming it; required with action=revive",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "reason",
+          "flags": [
+            "--reason"
+          ],
+          "help": "why the abandonment is being undone; required with action=revive",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": [],
+          "dest": "agents",
+          "flags": [
+            "--agents"
+          ],
+          "kind": "option",
+          "nargs": "*",
+          "required": false
+        },
+        {
+          "default": [],
+          "dest": "capability",
+          "flags": [
+            "--capability"
+          ],
+          "kind": "option",
+          "nargs": "*",
+          "required": false
+        },
+        {
+          "choices": [
+            "reviewed",
+            "single"
+          ],
+          "default": "single",
+          "dest": "shape",
+          "flags": [
+            "--shape"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": "kernel",
+          "dest": "sender",
+          "flags": [
+            "--sender"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "choices": [
+            "low",
+            "normal",
+            "urgent"
+          ],
+          "default": "normal",
+          "dest": "priority",
+          "flags": [
+            "--priority"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 30.0,
+          "dest": "interval",
+          "flags": [
+            "--interval"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 0,
+          "dest": "max_ticks",
+          "flags": [
+            "--max-ticks"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 900.0,
+          "dest": "heartbeat_timeout",
+          "flags": [
+            "--heartbeat-timeout"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "no_dispatch",
+          "flags": [
+            "--no-dispatch"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "allow_launch",
+          "flags": [
+            "--allow-launch"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "urgent_interject",
+          "flags": [
+            "--urgent-interject"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "choices": [
+            "enforce",
+            "record"
+          ],
+          "default": "record",
+          "dest": "ack_policy",
+          "flags": [
+            "--ack-policy"
+          ],
+          "help": "what a sent-but-unacknowledged order does: record advances and writes the verdict into the receipt, enforce holds the task",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 3600.0,
+          "dest": "hold_limit_seconds",
+          "flags": [
+            "--hold-limit-seconds"
+          ],
+          "help": "how long a hold may wait before a person is alerted (0 disables)",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": ".agent-evolution",
+          "dest": "federation_root",
+          "flags": [
+            "--federation-root"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": true,
+      "name": "federate",
+      "purpose": "Heartbeat, intake, status and revival for the persistent federation workspace.",
+      "risk": "irreversible"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "round_id",
+          "flags": [
+            "--round-id"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "actor",
+          "flags": [
+            "--actor"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "reason",
+          "flags": [
+            "--reason"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "choices": [
+            "HUMAN_HOLD",
+            "INCIDENT_HOLD"
+          ],
+          "default": "HUMAN_HOLD",
+          "dest": "kind",
+          "flags": [
+            "--kind"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "hold",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "round_id",
+          "flags": [
+            "--round-id"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "task",
+          "flags": [
+            "--task"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "leader",
+          "flags": [
+            "--leader"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "cells",
+          "flags": [
+            "--cells"
+          ],
+          "kind": "option",
+          "nargs": "+",
+          "required": true
+        },
+        {
+          "dest": "budget",
+          "flags": [
+            "--budget"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "default": 0.2,
+          "dest": "reserve",
+          "flags": [
+            "--reserve"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "init",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "default": 24,
+          "dest": "stale_wake_hours",
+          "flags": [
+            "--stale-wake-hours"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 5,
+          "dest": "checkpoint_limit",
+          "flags": [
+            "--checkpoint-limit"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "markdown",
+          "flags": [
+            "--markdown"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "inspect",
+      "risk": "read-only"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "agent",
+          "flags": [
+            "--agent"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "task",
+          "flags": [
+            "--task"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "workspace",
+          "flags": [
+            "--workspace"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "requested_session_id",
+          "flags": [
+            "--requested-session-id"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "allow_new_session",
+          "flags": [
+            "--allow-new-session"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "markdown",
+          "flags": [
+            "--markdown"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "join",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "task_id",
+          "flags": [
+            "--task-id"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "executor",
+          "flags": [
+            "--executor"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "payload_json",
+          "flags": [
+            "--payload-json"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "payload_file",
+          "flags": [
+            "--payload-file"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "kernel-checkpoint",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "agent",
+          "flags": [
+            "--agent"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "workspace",
+          "flags": [
+            "--workspace"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "requested_session_id",
+          "flags": [
+            "--requested-session-id"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "allow_new_session",
+          "flags": [
+            "--allow-new-session"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "kernel-continuation-plan",
+      "risk": "read-only"
+    },
+    {
+      "arguments": [
+        {
+          "choices": [
+            "BROWSER_SESSION_LEASE",
+            "TASK_WRITE_LEASE",
+            "UPLOAD_INTENT_LEASE"
+          ],
+          "dest": "lease_type",
+          "flags": [
+            "--lease-type"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "resource",
+          "flags": [
+            "--resource"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "executor",
+          "flags": [
+            "--executor"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "task_id",
+          "flags": [
+            "--task-id"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "artifact_sha",
+          "flags": [
+            "--artifact-sha"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 300,
+          "dest": "ttl_seconds",
+          "flags": [
+            "--ttl-seconds"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "kernel-lease-acquire",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "choices": [
+            "BROWSER_SESSION_LEASE",
+            "TASK_WRITE_LEASE",
+            "UPLOAD_INTENT_LEASE"
+          ],
+          "dest": "lease_type",
+          "flags": [
+            "--lease-type"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "resource",
+          "flags": [
+            "--resource"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "executor",
+          "flags": [
+            "--executor"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "lease_epoch",
+          "flags": [
+            "--lease-epoch"
+          ],
+          "kind": "option",
+          "required": true
+        }
+      ],
+      "documented": false,
+      "name": "kernel-lease-release",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "operation_key",
+          "flags": [
+            "--operation-key"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "request_json",
+          "flags": [
+            "--request-json"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "request_file",
+          "flags": [
+            "--request-file"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "kernel-op-reserve",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "operation_key",
+          "flags": [
+            "--operation-key"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "choices": [
+            "COMMITTED",
+            "RESERVED",
+            "ROLLED_BACK",
+            "STARTED",
+            "UNKNOWN"
+          ],
+          "dest": "state",
+          "flags": [
+            "--state"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "evidence_json",
+          "flags": [
+            "--evidence-json"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "kernel-op-transition",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "agent",
+          "flags": [
+            "--agent"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "choices": [
+            "codebuddy",
+            "codex",
+            "github_copilot",
+            "hermes",
+            "qoder"
+          ],
+          "dest": "provider",
+          "flags": [
+            "--provider"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "workspace",
+          "flags": [
+            "--workspace"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "session_id",
+          "flags": [
+            "--session-id"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "default": false,
+          "dest": "no_resume",
+          "flags": [
+            "--no-resume"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "kernel-session-bind",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [],
+      "documented": false,
+      "name": "kernel-status",
+      "risk": "read-only"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "round_id",
+          "flags": [
+            "--round-id"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "result",
+          "flags": [
+            "--result"
+          ],
+          "kind": "option",
+          "required": true
+        }
+      ],
+      "documented": false,
+      "name": "record-result",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "round_id",
+          "flags": [
+            "--round-id"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "actor",
+          "flags": [
+            "--actor"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "reason",
+          "flags": [
+            "--reason"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "default": false,
+          "dest": "human_approved",
+          "flags": [
+            "--human-approved"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "resume",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "round_id",
+          "flags": [
+            "--round-id"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "card",
+          "flags": [
+            "--card"
+          ],
+          "kind": "option",
+          "required": true
+        }
+      ],
+      "documented": false,
+      "name": "reveal",
+      "risk": "read-only"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "agent",
+          "flags": [
+            "--agent"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "intent",
+          "flags": [
+            "--intent"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "task",
+          "flags": [
+            "--task"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "target_agent",
+          "flags": [
+            "--target-agent"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "workspace",
+          "flags": [
+            "--workspace"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "markdown",
+          "flags": [
+            "--markdown"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "route",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "round_id",
+          "flags": [
+            "--round-id"
+          ],
+          "kind": "option",
+          "required": true
+        }
+      ],
+      "documented": false,
+      "name": "status",
+      "risk": "read-only"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "round_id",
+          "flags": [
+            "--round-id"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "actor",
+          "flags": [
+            "--actor"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "file",
+          "flags": [
+            "--file"
+          ],
+          "kind": "option",
+          "required": true
+        }
+      ],
+      "documented": false,
+      "name": "threat",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "workspace",
+          "flags": [
+            "--workspace"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "coord_dir",
+          "flags": [
+            "--coord-dir"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "kernel_dir",
+          "flags": [
+            "--kernel-dir"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "default_task",
+          "flags": [
+            "--default-task"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "agents_md",
+          "flags": [
+            "--agents-md"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "documented": false,
+      "name": "workspace-init",
+      "risk": "mutating"
+    }
+  ],
+  "count": 89,
+  "digest": "sha256:ef23851d7a24a570d892f15925cff3a647485ac31de7c68155cc3c736932d4c3",
+  "documented": 25,
+  "generated_from": "agent_evolution_protocol.cli:build_parser",
+  "global_arguments": [
+    {
+      "default": ".agent-evolution",
+      "dest": "root",
+      "flags": [
+        "--root"
+      ],
+      "kind": "option",
+      "required": false
+    },
+    {
+      "dest": "coord_root",
+      "flags": [
+        "--coord-root"
+      ],
+      "help": "local coordination root for coord-* commands",
+      "kind": "option",
+      "required": false
+    },
+    {
+      "dest": "kernel_root",
+      "flags": [
+        "--kernel-root"
+      ],
+      "help": "local recovery kernel root for kernel-* commands",
+      "kind": "option",
+      "required": false
+    }
+  ],
+  "schema": "aep-skill-manifest-v1",
+  "undocumented": 64
+}

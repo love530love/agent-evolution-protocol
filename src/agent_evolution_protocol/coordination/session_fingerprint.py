@@ -29,6 +29,23 @@ SCHEMA = "aep-session-fingerprint-v1"
 #: Hashed, in this order, so the digest is reproducible.
 IDENTITY_FIELDS = ("agent", "exe", "title", "session_marker", "model_marker")
 
+#: Where the conversation is being shown.  Changes when a person opens the same
+#: work in another client, or renames the window.
+SURFACE_FIELDS = ("agent", "exe", "title")
+#: What the conversation *is*.  The only field that names it, and the one that
+#: survives a move to another surface -- which is why the digest cannot be the
+#: whole answer: it covers all five fields, so a surface move breaks it.
+CONVERSATION_FIELD = "session_marker"
+MODEL_FIELD = "model_marker"
+#: Below this a marker collides with unrelated conversations ("新会话", "Hi").
+MIN_MARKER_CHARS = 4
+
+REASON_SAME_SURFACE = "SAME_SURFACE"
+REASON_SURFACE_CHANGED = "SURFACE_CHANGED"
+REASON_DIFFERENT_SESSION = "DIFFERENT_SESSION"
+REASON_NO_RECORDED_SURFACE = "NO_RECORDED_SURFACE"
+REASON_WEAK_SESSION_MARKER = "WEAK_SESSION_MARKER"
+
 
 def _normalise(value: Any) -> str:
     """Canonical form of one identity field, decided here and not by the host.
@@ -131,6 +148,32 @@ def path(coord_root, agent: str) -> Path:
     return Path(coord_root) / "clients" / "fingerprints" / f"{agent}.json"
 
 
+def directory(coord_root) -> Path:
+    return Path(coord_root) / "clients" / "fingerprints"
+
+
+def all_recorded(coord_root) -> list[dict[str, Any]]:
+    """Every fingerprint on disk, with the agent name filled in from the filename.
+
+    A row whose ``agent`` disagrees with its filename is returned as-is rather
+    than repaired: the file is named after the agent it was recorded for, so a
+    mismatch is evidence of a hand edit and hiding it would erase the clue.
+    """
+    rows: list[dict[str, Any]] = []
+    folder = directory(coord_root)
+    if not folder.is_dir():
+        return rows
+    for item in sorted(folder.glob("*.json")):
+        try:
+            payload = json.loads(item.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(payload, dict):
+            payload.setdefault("agent", item.stem)
+            rows.append(payload)
+    return rows
+
+
 def record(coord_root, agent: str, row: dict[str, Any],
            moment: datetime | None = None) -> dict[str, Any]:
     """Store the fingerprint an operator confirmed for this agent."""
@@ -180,3 +223,93 @@ def compare(recorded: dict[str, Any] | None, observed: dict[str, Any]) -> dict[s
     diff = [field for field in IDENTITY_FIELDS if left[field] != right[field]]
     return {"match": False, "diff": diff, "recorded": expected, "observed": actual,
             "reason": "the session identity differs in " + ", ".join(diff or ["(nothing comparable)"])}
+
+
+def marker(row: dict[str, Any]) -> str:
+    """The conversation marker, normalised the same way the digest normalises it."""
+    return canonical(row)[CONVERSATION_FIELD]
+
+
+def same_surface(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    """Are these two observations of the same window on the same client?"""
+    a, b = canonical(left), canonical(right)
+    return all(a[field] == b[field] for field in SURFACE_FIELDS)
+
+
+def continuity(recorded: dict[str, Any] | None,
+               observed: dict[str, Any]) -> dict[str, Any]:
+    """Can a delivery recorded on one surface continue on this one?
+
+    This is the cross-surface question, and the digest cannot answer it: the
+    digest covers agent, exe and title, so the same conversation opened in a
+    different client produces a different digest and reads as a different
+    session.  Splitting the fields is what makes "same conversation, new
+    surface" expressible at all.
+
+    Four answers, and the third is the one worth keeping:
+
+    * ``True`` -- the marker matches.  ``same_surface`` says whether anything
+      else changed, and ``model_changed`` is a note rather than a refusal
+      because switching models does not start a new conversation.
+    * ``False`` -- both sides name a conversation and they are different ones.
+    * ``None`` -- nothing recorded, or the marker is too short to be an
+      identity.  ``None`` is not ``True``: two conversations in the same client
+      with no marker are indistinguishable, and pretending otherwise is how a
+      message lands in the wrong thread.
+    """
+    if not isinstance(observed, dict):
+        raise ValueError("observed fingerprint must be an object")
+    if not recorded:
+        return {"continues": None, "same_surface": False, "model_changed": False,
+                "reason": REASON_NO_RECORDED_SURFACE,
+                "note": "no surface was recorded for this conversation"}
+
+    left, right = canonical(recorded), canonical(observed)
+    expected = marker(recorded)
+    actual = marker(observed)
+    if len(expected) < MIN_MARKER_CHARS or len(actual) < MIN_MARKER_CHARS:
+        return {"continues": None, "same_surface": same_surface(recorded, observed),
+                "model_changed": False, "reason": REASON_WEAK_SESSION_MARKER,
+                "note": f"a session marker shorter than {MIN_MARKER_CHARS} characters "
+                        "does not separate one conversation from another"}
+
+    model_changed = (left[MODEL_FIELD] != right[MODEL_FIELD])
+    if expected != actual:
+        return {"continues": False, "same_surface": same_surface(recorded, observed),
+                "model_changed": model_changed, "reason": REASON_DIFFERENT_SESSION,
+                "note": "both sides name a conversation, and they are different ones",
+                "recorded_marker": recorded.get(CONVERSATION_FIELD, ""),
+                "observed_marker": observed.get(CONVERSATION_FIELD, "")}
+
+    on_same_surface = same_surface(recorded, observed)
+    return {"continues": True, "same_surface": on_same_surface,
+            "model_changed": model_changed,
+            "reason": REASON_SAME_SURFACE if on_same_surface else REASON_SURFACE_CHANGED,
+            "note": "" if on_same_surface else
+                    "the conversation moved to another surface; the marker still names it",
+            "surface_differs": [field for field in SURFACE_FIELDS
+                                if left[field] != right[field]]}
+
+
+def group_by_conversation(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Every surface currently showing each conversation.
+
+    Grouping is by marker, so a conversation observed on two clients appears
+    once with two surfaces.  Rows with a weak marker are returned in their own
+    group keyed by fingerprint instead of being merged with everything else that
+    happens to have an empty marker -- merging them would produce one group that
+    claims to be every unlabelled conversation at once.
+    """
+    groups: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        key = marker(row)
+        usable = len(key) >= MIN_MARKER_CHARS
+        bucket_key = key if usable else "unidentified:" + str(row.get("fingerprint", ""))
+        bucket = groups.setdefault(bucket_key, {
+            "conversation": row.get(CONVERSATION_FIELD, "") if usable else "",
+            "identified": usable, "surfaces": [], "fingerprints": []})
+        bucket["surfaces"].append({field: row.get(field, "") for field in SURFACE_FIELDS})
+        bucket["fingerprints"].append(row.get("fingerprint", ""))
+    return sorted(groups.values(), key=lambda item: (not item["identified"], item["conversation"]))
