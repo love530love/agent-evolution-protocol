@@ -183,6 +183,25 @@ def publish(coord_root: Path, *, agent: str, text: str, source: str = "uia",
 
 def read_events(coord_root: Path, *, after: str = "", agent: str = "",
                 limit: int = 100) -> list[dict]:
+    """Read transcript events from the bus.
+
+    Two semantics, decided by ``after``:
+
+    * **No ``after``** (the default): return the *newest* ``limit`` events.
+      This is the "what is the current state" query.  Before v0.6.16 this
+      returned the *oldest* ``limit`` events, which is the only place in
+      this API where the name and the behaviour pointed in opposite
+      directions -- every caller that said ``limit=500`` wanted the latest
+      events, and five of six callers never saw the ones they needed.
+
+    * **With ``after``**: return the oldest ``limit`` events *after* the
+      cursor.  This is the "forward pagination" query: give me the next
+      page starting from where I left off.  This semantic is unchanged.
+
+    ``limit`` is capped at 500.  For callers that only need a few recent
+    events without parsing every event file, use :func:`read_newest`; it still
+    enumerates filenames to preserve the event-ID ordering.
+    """
     if after and not SAFE_EVENT.fullmatch(after):
         raise ValueError("invalid cursor")
     if not 1 <= limit <= 500:
@@ -201,8 +220,40 @@ def read_events(coord_root: Path, *, after: str = "", agent: str = "",
         if agent and item.get("agent") != agent:
             continue
         rows.append(item)
+    # Without a cursor, the caller wants "current state": return the newest.
+    # With a cursor, the caller wants "next page from here": return the oldest
+    # after the cursor (forward pagination, unchanged).
+    if not after:
+        return rows[-limit:]
+    return rows[:limit]
+
+
+def read_newest(coord_root: Path, *, agent: str = "", limit: int = 10) -> list[dict]:
+    """Return the newest ``limit`` events without scanning the full folder.
+
+    Convenience for callers that want "the last few things that happened"
+    without paying the cost of :func:`read_events`'s full scan when ``limit``
+    is small.  If there are fewer events than ``limit``, returns all of them.
+    """
+    if not 1 <= limit <= 500:
+        raise ValueError("limit must be 1..500")
+    folder = bus_root(coord_root) / "events"
+    if not folder.exists():
+        return []
+    paths = sorted((p for p in folder.glob("*.json") if SAFE_EVENT.fullmatch(p.stem)),
+                   key=lambda p: p.stem, reverse=True)
+    rows = []
+    for path in paths:
+        try:
+            item = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if agent and item.get("agent") != agent:
+            continue
+        rows.append(item)
         if len(rows) >= limit:
             break
+    rows.reverse()
     return rows
 
 

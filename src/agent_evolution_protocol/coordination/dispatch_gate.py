@@ -43,8 +43,45 @@ SCHEMA = "aep-dispatch-gate-v1"
 #: acknowledgement instruction is in the message, so it has to look for the same
 #: token the sender appended.
 ACK_TOKEN = "AEP-ACK"
-EVENT = re.compile(r"\bEVT-[A-Za-z0-9][A-Za-z0-9_-]{5,}\b")
+
+#: Two id vocabularies are canonical here, and the gate has to know both or it
+#: refuses orders that are correct.
+#:
+#: ``EVT_ID_PATTERN`` -- minted by ``commander.submit_order`` when the caller
+#: supplies no id.
+#:
+#: ``STAMP_ID_PATTERN`` -- the mailbox form ``wake_id()`` mints, that
+#: ``cli.coord_delivery_status`` / ``cli.coord_ack_message`` already validate as
+#: a message ID, and that ``coordination.bridge`` also writes.
+#: ``coord-send --dispatch`` passes its mailbox id straight through as
+#: ``event_id``, so this is the format the gate actually receives in production.
+#:
+#: Recognising only ``EVT-`` made every ``coord-send --dispatch`` order refuse
+#: itself at ``one_event_id``: measured on order
+#: ``2026-11-02T0738010285190000-f95f6aa7`` the receipt read
+#: ``DISPATCH_REFUSED:one_event_id: found none`` for a body that carried its own
+#: id.  That check runs before any desktop input, so it proved nothing about the
+#: UI and everything about this regex.
+#:
+#: Both patterns stay tight so a prose word cannot pass for an id, and the safety
+#: property is unchanged: exactly one *distinct* id, and it must equal the
+#: order's.  Widening the vocabulary is not the same as relaxing the check.
+EVT_ID_PATTERN = r"EVT-[A-Za-z0-9][A-Za-z0-9_-]{5,}"
+STAMP_ID_PATTERN = r"[0-9]{8}T[0-9]{12}Z-[0-9a-f]{8}"
+EVENT = re.compile(rf"\b(?:{EVT_ID_PATTERN}|{STAMP_ID_PATTERN})\b")
+_STAMP_ID = re.compile(rf"^{STAMP_ID_PATTERN}$")
+
 TASK_MARKER = re.compile(r"\[AEP:([^\]\s]+)\]")
+
+
+def is_stamp_id(value: Any) -> bool:
+    """Whether ``value`` is the mailbox/timestamp id form rather than ``EVT-``.
+
+    Exposed so ``cli`` stops keeping its own copies of this pattern: three
+    copies of one id contract is how the sender and the gate drifted apart in
+    the first place.
+    """
+    return isinstance(value, str) and _STAMP_ID.match(value) is not None
 #: Identity strengths, weakest last.  ``exe`` is the only one a title cannot
 #: forge; the other two are guesses that happen to be right most of the time.
 IDENTITY_ORDER = ("exe", "title", "process-substring")

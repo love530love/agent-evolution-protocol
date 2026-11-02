@@ -199,13 +199,19 @@ def _result_blocks(task_id, report, coord_root, task):
     from agent_evolution_protocol.coordination import commander, result_readback, transcript_bus
 
     session_id = ""
-    for order in commander._orders(coord_root):
-        if str(order.get("task") or "") == task_id:
-            session_id = str(order.get("session_id") or "")
-            break
+    own_text = ""
+    task_orders = [order for order in commander._orders(coord_root)
+                   if str(order.get("task") or "") == task_id]
+    if task_orders:
+        # _orders() is sorted by order filename/ID; use the latest delivery so
+        # the session and own-text guard describe the message actually sent on
+        # the current route, not a predecessor's older request.
+        order = task_orders[-1]
+        session_id = str(order.get("session_id") or "")
+        own_text = str(order.get("text") or "")
     events = transcript_bus.read_events(coord_root, agent=task.get("owner") or "", limit=500)
     claim = result_readback.claim({**report, "task": task_id})
-    observed = result_readback.observe(events, session_id=session_id)
+    observed = result_readback.observe(events, session_id=session_id, own_text=own_text)
     value = result_readback.judge(claim, observed)
     if value.get("match") is not False:
         return None, value

@@ -56,6 +56,33 @@ READBACK_SCHEMA = "aep-readback-v1"
 #: import-free of the federation layer; the test suite asserts they agree.
 DONE_PHASES = frozenset({"done", "completed", "complete"})
 
+#: The ACK token, mirrored from ack_protocol so this module's own_text check
+#: does not import the ACK module (which would create a circular dependency
+#: when ack_protocol imports nothing from here).
+_ACK_TOKEN = "AEP-ACK"
+
+
+def _is_own_text_readback(line: str, own_text: str) -> bool:
+    """True when the captured line is the order's own body echoed back.
+
+    Mirrors :func:`ack_protocol._is_own_text` without importing it, so the
+    readback module stays import-free of the ACK layer.  The token is stripped
+    from both sides for the same reason: it is in the order body by design.
+    """
+    if not own_text:
+        return False
+    clean_line = " ".join(line.split())
+    clean_body = " ".join(own_text.split())
+    if not clean_line or not clean_body:
+        return False
+    body_without_token = clean_body.replace(_ACK_TOKEN, "")
+    line_without_token = clean_line.replace(_ACK_TOKEN, "")
+    if body_without_token and body_without_token in line_without_token:
+        return True
+    if line_without_token and line_without_token in body_without_token:
+        return True
+    return False
+
 #: Why a verdict is what it is.  Every one of these is a different situation and
 #: a supervisor acts differently on each, so they are never collapsed into a
 #: bare boolean.  ``foreign_session`` and ``session_unknown`` both end in ``None``
@@ -69,6 +96,11 @@ REASONS = {
     "different_artifact": "the transcript names an artifact that is not the one claimed",
     "no_result_in_transcript": "the transcript carries nothing comparable to the claim",
     "session_unknown": "a conversation was named but the comparable lines carry none, so nothing can be attributed to it",
+    "own_text": "the event matches the task's own outgoing text, not an agent result",
+    "own_text_unavailable": "speaker attribution is missing and the order body is unavailable, so self-echo cannot be ruled out",
+    "own_text_outgoing": "the outgoing event matches the task's own text, not an agent result",
+    "not_agent_role": "the event is explicitly attributed to the user or system, not the agent",
+    "not_incoming": "the event is explicitly outgoing, not an agent result",
 }
 
 #: A path-shaped token inside a conversation line.  Requires at least one
@@ -176,28 +208,23 @@ def claim(task_state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def observe(events: list[dict[str, Any]], *, session_id: str = "") -> dict[str, Any]:
+def observe(events: list[dict[str, Any]], *, session_id: str = "",
+            own_text: str = "") -> dict[str, Any]:
     """What the transcript shows the agent said, line group by line group.
 
-    ``role == "assistant"`` is required, ``direction == "outgoing"`` is refused,
-    and the conversation guard is three-valued because its inputs are.  Three
-    separate facts are returned so a caller can tell them apart:
+    The ``role`` guard mirrors :func:`ack_protocol.classify`: ``assistant``
+    passes; ``user``/``system`` is refused as ``not_agent_role``; ``unknown``
+    requires ``own_text`` (the order body), is refused as ``own_text`` if it
+    matches, and is refused as ``own_text_unavailable`` if the body is missing.
+    Otherwise it is accepted with a ``role_source`` marker.  Explicit outgoing
+    direction is refused as ``own_text_outgoing`` or ``not_incoming``.  This is
+    the same three-valued guard, for the same reason: the production capture
+    points do not attribute lines, and reading every unattributed line as "not
+    the agent" makes the readback a decoration.
 
-    * ``session_checked`` -- a ``session_id`` was given *and* at least one line
-      was actually compared against it.  ``False`` means the guard never ran;
-      it never means the guard passed.
-    * ``session_unknown`` -- a ``session_id`` was given but some comparable line
-      carried none.  That line is refused as unattributable: a capture gap is
-      not evidence of a foreign conversation, but it is not evidence about this
-      one either, so it is not compared.  Reading it as agreement is the same
-      mistake as reading an empty capture as agreement.
-    * ``session_reason`` -- which of those situations this is, spelled out
-      (``not_requested`` / ``not_compared`` / ``applied`` / ``partial`` /
-      ``session_unknown``), because a supervisor reading a receipt should not
-      have to infer the guard state from two booleans.  ``not_compared`` is the
-      case where a conversation was named but no line ever reached the guard --
-      an empty capture, or only lines refused for their role or direction -- and
-      it is spelled out so it cannot be read as ``applied``.
+    ``own_text`` is the order body (``order["text"]``).  When provided, a line
+    that matches it is refused as ``own_text`` -- the readback must not
+    confirm a result by reading our own send.
 
     Without a ``session_id`` the whole transcript is compared, which is what
     this module did before the guard existed; the ``not_requested`` note keeps
@@ -223,12 +250,25 @@ def observe(events: list[dict[str, Any]], *, session_id: str = "") -> dict[str, 
             "reason": "",
             "artifacts": [],
         }
-        if row["role"] != "assistant":
-            row["reason"] = "not_assistant"
-        elif row["direction"] == "outgoing":
-            row["reason"] = "not_incoming"
+        role = event.get("role", "unknown")
+        direction = event.get("direction", "unknown")
+        # --- Role guard (three-valued, mirrors ack_protocol.classify) ---
+        lines_joined = " ".join(str(l) for l in lines)
+        own_match = bool(own_text and _is_own_text_readback(lines_joined, own_text))
+        if role in ("user", "system"):
+            row["reason"] = "not_agent_role"
+        elif direction == "outgoing":
+            row["reason"] = "own_text_outgoing" if own_match else "not_incoming"
+        elif role != "assistant" and not own_text:
+            # With no speaker attribution and no original body, there is no
+            # evidence that this artifact mention came from the agent.
+            row["reason"] = "own_text_unavailable"
+        elif role != "assistant" and own_match:
+            row["reason"] = "own_text"
         elif not session_id:
             row["attributable"] = True
+            if role != "assistant":
+                row["role_source"] = "inferred_absent_own_text"
         elif not row["session_id"]:
             row["reason"] = "session_unknown"
             unattributed += 1
@@ -237,6 +277,8 @@ def observe(events: list[dict[str, Any]], *, session_id: str = "") -> dict[str, 
             guarded += 1
         else:
             row["attributable"] = True
+            if role != "assistant":
+                row["role_source"] = "inferred_absent_own_text"
             guarded += 1
         if row["attributable"]:
             found_here: list[str] = []

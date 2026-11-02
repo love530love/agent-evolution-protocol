@@ -18,7 +18,8 @@ SENT_AT = (NOW - timedelta(minutes=5)).isoformat()
 def _order(**extra):
     payload = {"id": "order-1", "target": "qoder", "task": "AEP-TASK-1",
                "event_id": "EVT-AAAABBBBCCCC", "session_id": "4242",
-               "created_at": SENT_AT, "state": "MESSAGE_VISIBLE", "attempts": []}
+               "created_at": SENT_AT, "state": "MESSAGE_VISIBLE", "attempts": [],
+               "text": f"Please work on AEP-TASK-1. Reply with {TOKEN}."}
     payload.update(extra)
     return payload
 
@@ -44,12 +45,15 @@ class AckVerdictTests(unittest.TestCase):
 
     def test_our_own_request_is_not_an_answer(self):
         # The outgoing message contains the token because it *asks* for it.
+        # role="unknown" is the production default; the own_text guard catches
+        # the self-echo that role=="assistant" used to prevent.
         value = ack_protocol.verdict(
-            _order(), events=[_event(f"please reply {TOKEN}", role="unknown", direction="unknown")],
+            _order(), events=[_event(f"Please work on AEP-TASK-1. Reply with {TOKEN}.",
+                                     role="unknown", direction="unknown")],
             now=NOW)
         self.assertFalse(value["accepted"])
         self.assertEqual(value["state"], "sent_unacked")
-        self.assertEqual(value["reason"], "not_assistant")
+        self.assertEqual(value["reason"], "own_text")
 
     def test_a_line_captured_as_outgoing_is_not_an_answer(self):
         value = ack_protocol.verdict(
@@ -64,7 +68,7 @@ class AckVerdictTests(unittest.TestCase):
             _order(), events=[_event(f"draft {TOKEN}", role="user", direction="outgoing")],
             now=NOW)
         self.assertFalse(value["accepted"])
-        self.assertEqual(value["reason"], "not_assistant")
+        self.assertEqual(value["reason"], "not_agent_role")
 
     def test_another_conversation_answering_is_not_this_task(self):
         value = ack_protocol.verdict(
@@ -123,11 +127,12 @@ class AckVerdictTests(unittest.TestCase):
     def test_every_rejection_is_kept_so_the_cause_is_visible(self):
         value = ack_protocol.verdict(
             _order(),
-            events=[_event(f"ours {TOKEN}", role="unknown"),
+            events=[_event(f"Please work on AEP-TASK-1. Reply with {TOKEN}.",
+                           role="unknown"),
                     _event(TOKEN, session_id="9999", event_id="evt-2")],
             now=NOW)
         self.assertEqual([row["reason"] for row in value["rejected"]],
-                         ["not_assistant", "foreign_session"])
+                         ["own_text", "foreign_session"])
         self.assertEqual(value["candidates"], 2)
 
     def test_an_event_without_the_token_is_ignored_entirely(self):

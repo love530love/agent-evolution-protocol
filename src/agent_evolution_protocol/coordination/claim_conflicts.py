@@ -23,6 +23,14 @@ from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path, PurePosixPath
 import re
+import sys
+
+# Import the workspace lock from the federation layer so the claim operation
+# is atomic across processes.  This is the same lock used by engine.update(),
+# and the lesson is the same: gate-then-mkdir without a lock lets two
+# processes both see ALLOWED and both succeed, producing duplicate owners
+# that analyze() only discovers after the damage is done.
+from agent_evolution_protocol.federation.locking import workspace_lock
 
 
 SEVERITY_ORDER = {"blocking": 0, "warning": 1, "info": 2}
@@ -313,10 +321,17 @@ def _normalize_claim_all(coord_root, ttl_hours=DEFAULT_CLAIM_TTL_HOURS):
 def claim(coord_root, *, agent, task, paths, ttl_hours=DEFAULT_CLAIM_TTL_HOURS, now=None):
     """Gate first, then create the claim atomically with a lease deadline.
 
-    This is the write-side counterpart of :func:`gate`: it refuses to create a
-    claim whose scope already belongs to a live lease, and it stamps
-    ``expires_at`` so the claim cannot block the workspace forever. It never
-    takes over an existing task ID and never overwrites another owner.
+    The entire check-then-create sequence is wrapped in a cross-process file
+    lock (``coordination/claims/.lock``) so two processes cannot both pass
+    ``gate()``, both call ``mkdir()``, and both believe they own the task.
+    Before v0.6.16 the gate and the mkdir were separate steps with no lock,
+    and a race condition allowed 9/10 concurrent processes to both succeed.
+
+    The lock is re-entrant within one process (so ``save()`` can be called
+    while the caller already holds the workspace lock) and released by the
+    kernel if the process dies.
+
+    It never takes over an existing task ID and never overwrites another owner.
     """
     if not isinstance(agent, str) or not _AGENT.fullmatch(agent.strip()):
         raise ValueError("agent must be a stable agent ID")
@@ -329,37 +344,51 @@ def claim(coord_root, *, agent, task, paths, ttl_hours=DEFAULT_CLAIM_TTL_HOURS, 
     if not wanted:
         raise ValueError("at least one scope path is required")
     moment = _now(now)
-    verdict = gate(coord_root, agent=agent, task=task, paths=wanted, now=moment, ttl_hours=ttl_hours)
-    if not verdict["allowed"]:
-        return {"schema": "agent-evolution-claim-result-v1", "claimed": False,
-                "reason": "scope_conflict", "task": task, "agent": agent,
-                "blocking": verdict["blocking"], "claim_created": False}
 
-    folder = Path(coord_root) / "claims" / task
+    # The lock file lives at the claims root so it protects all task claims.
+    # Using workspace_lock from federation/locking.py: same implementation
+    # engine.update() uses, same cross-process semantics.
+    lock_path = Path(coord_root) / "claims" / ".lock"
     try:
-        folder.mkdir(parents=True, exist_ok=False)
-    except FileExistsError:
-        owner = folder / "owner.json"
-        return {"schema": "agent-evolution-claim-result-v1", "claimed": False,
-                "reason": "task_already_claimed", "task": task, "agent": agent,
-                "owner": json.loads(owner.read_text(encoding="utf-8")) if owner.is_file() else None,
-                "claim_created": False}
-    payload = {"task": task, "agent": agent, "at": moment.isoformat(), "paths": wanted,
-               "expires_at": (moment + timedelta(hours=ttl_hours)).isoformat(),
-               "gate": {"status": verdict["status"],
-                        "ignored_expired": [row["task"] for row in verdict["ignored_expired"]]}}
-    try:
-        temporary = folder / "owner.json.partial"
-        temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-        temporary.replace(folder / "owner.json")
-    except BaseException:
-        for leftover in (folder / "owner.json.partial", folder / "owner.json"):
-            if leftover.exists():
-                leftover.unlink()
-        folder.rmdir()
+        with workspace_lock(lock_path, timeout=30.0):
+            # Re-run gate *inside* the lock: the verdict we got outside may
+            # have expired while we waited.  This mirrors engine.update()'s
+            # "re-read state inside the lock" pattern.
+            verdict = gate(coord_root, agent=agent, task=task, paths=wanted,
+                          now=moment, ttl_hours=ttl_hours)
+            if not verdict["allowed"]:
+                return {"schema": "agent-evolution-claim-result-v1", "claimed": False,
+                        "reason": "scope_conflict", "task": task, "agent": agent,
+                        "blocking": verdict["blocking"], "claim_created": False}
+
+            folder = Path(coord_root) / "claims" / task
+            try:
+                folder.mkdir(parents=True, exist_ok=False)
+            except FileExistsError:
+                owner = folder / "owner.json"
+                return {"schema": "agent-evolution-claim-result-v1", "claimed": False,
+                        "reason": "task_already_claimed", "task": task, "agent": agent,
+                        "owner": json.loads(owner.read_text(encoding="utf-8")) if owner.is_file() else None,
+                        "claim_created": False}
+            payload = {"task": task, "agent": agent, "at": moment.isoformat(), "paths": wanted,
+                       "expires_at": (moment + timedelta(hours=ttl_hours)).isoformat(),
+                       "gate": {"status": verdict["status"],
+                                "ignored_expired": [row["task"] for row in verdict["ignored_expired"]]}}
+            try:
+                temporary = folder / "owner.json.partial"
+                temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+                temporary.replace(folder / "owner.json")
+            except BaseException:
+                for leftover in (folder / "owner.json.partial", folder / "owner.json"):
+                    if leftover.exists():
+                        leftover.unlink()
+                folder.rmdir()
+                raise
+            return {"schema": "agent-evolution-claim-result-v1", "claimed": True, **payload,
+                    "claim_created": True}
+    except Exception:
+        # workspace_lock raises LockTimeout on timeout; propagate as-is.
         raise
-    return {"schema": "agent-evolution-claim-result-v1", "claimed": True, **payload,
-            "claim_created": True}
 
 
 def renew(coord_root, *, agent, task, ttl_hours=DEFAULT_CLAIM_TTL_HOURS, now=None):

@@ -9,12 +9,17 @@ desktop.
 
 from pathlib import Path
 from tempfile import TemporaryDirectory
+import json
 import unittest
 
 from agent_evolution_protocol.coordination import commander, dispatch_gate
 
 
 PROFILE = {"agent": "qoder", "exe": r"D:\Programs\Qoder\Qoder.exe"}
+
+#: The id ``wake_id()`` mints and that ``coord-send`` hands to ``submit_order``
+#: as the order's event id.  Taken verbatim from the order that exposed the bug.
+MAILBOX_ID = "20261102T073800053004Z-4971a758"
 
 
 def _order(root, **kwargs):
@@ -284,6 +289,136 @@ class FingerprintGateTests(unittest.TestCase):
         found = next(attempt for attempt in result["attempts"]
                      if attempt["state"] == "WINDOW_FOUND")
         self.assertIsNone(found["receipt"]["session_fingerprint"]["match"])
+
+
+class WakeIdContractTests(unittest.TestCase):
+    """``coord-send --dispatch`` reuses the mailbox id as the order's event id.
+
+    The gate only knew ``EVT-`` ids, so every such order refused itself at
+    ``one_event_id`` before a single character was typed.  Measured on order
+    ``2026-11-02T0738010285190000-f95f6aa7``: ``DISPATCH_REFUSED:one_event_id:
+    found none`` for a body that carried its own id.  That check runs before any
+    desktop input, so it said nothing about the UI and everything about the id
+    vocabulary.  These tests hold the seam -- ``submit_order`` through
+    ``dispatch`` -- because a regex unit test alone would have passed while the
+    send path stayed broken.
+    """
+
+    def setUp(self):
+        self.temp = TemporaryDirectory()
+        self.root = Path(self.temp.name)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def _stamp_order(self):
+        return commander.submit_order(
+            self.root, target="qoder", task="AEP-TASK-1", text="please ack",
+            sender="kernel", event_id=MAILBOX_ID)
+
+    def test_the_mailbox_id_becomes_the_event_id_and_the_ack_token(self):
+        order = self._stamp_order()
+        self.assertEqual(order["event_id"], MAILBOX_ID)
+        self.assertIn(f"AEP-ACK:{MAILBOX_ID}", order["text"])
+
+    def test_a_mailbox_timestamp_id_is_one_event_id_not_none(self):
+        verdict = dispatch_gate.check(self._stamp_order(), profile=PROFILE)
+        self.assertEqual(verdict["verdict"], "send", verdict["detail"])
+        self.assertEqual(verdict["reason"], "")
+
+    def test_an_evt_id_is_still_accepted(self):
+        verdict = dispatch_gate.check(_order(self.root), profile=PROFILE)
+        self.assertEqual(verdict["verdict"], "send")
+
+    def test_two_distinct_mailbox_ids_are_refused(self):
+        order = self._stamp_order()
+        order["text"] += "\nstale AEP-ACK:20261102T073800053005Z-4971a759"
+        order["content_sha256"] = dispatch_gate.content_sha256(order["text"])
+        verdict = dispatch_gate.check(order, profile=PROFILE)
+        self.assertEqual(verdict["reason"], "one_event_id")
+
+    def test_a_mailbox_id_that_is_not_this_orders_is_refused(self):
+        order = self._stamp_order()
+        order["event_id"] = "20261102T073800053005Z-4971a759"
+        verdict = dispatch_gate.check(order, profile=PROFILE)
+        self.assertEqual(verdict["reason"], "one_event_id")
+
+    def test_one_evt_and_one_mailbox_id_is_two_ids(self):
+        order = self._stamp_order()
+        order["text"] += "\nAEP-ACK:EVT-AAAABBBBCCCC"
+        order["content_sha256"] = dispatch_gate.content_sha256(order["text"])
+        verdict = dispatch_gate.check(order, profile=PROFILE)
+        self.assertEqual(verdict["reason"], "one_event_id")
+
+    def test_is_stamp_id_separates_the_two_vocabularies(self):
+        self.assertTrue(dispatch_gate.is_stamp_id(MAILBOX_ID))
+        self.assertFalse(dispatch_gate.is_stamp_id("EVT-AAAABBBBCCCC"))
+        # Uppercase hex is not this form; the pattern stays exact so a near-miss
+        # cannot be accepted as an id.
+        self.assertFalse(dispatch_gate.is_stamp_id("20261102T073800053004Z-4971A758"))
+        self.assertFalse(dispatch_gate.is_stamp_id(""))
+        self.assertFalse(dispatch_gate.is_stamp_id(None))
+
+    def test_dispatch_no_longer_refuses_a_mailbox_id_order(self):
+        """The reported failure, end to end through the real send path."""
+        order = self._stamp_order()
+        profile = self.root / "ui_profiles" / "qoder.json"
+        profile.parent.mkdir(parents=True, exist_ok=True)
+        profile.write_text('{"agent": "qoder"}', encoding="utf-8")
+        client = {"agent": "qoder", "windows": [{"pid": 7, "title": "Qoder",
+                                                 "identity": "exe"}],
+                  "unique": True, "anchored": False}
+        from unittest.mock import patch
+        with (patch.object(commander.registry, "discover", return_value={"clients": [client]}),
+              patch.object(commander, "_pick_transport", return_value=("uia", {})),
+              patch.object(commander, "_uia_deliver", return_value={"status": "NO_RECEIPT"})):
+            result = commander.dispatch(self.root, order=order)
+        notes = [str(attempt.get("note", "")) for attempt in result.get("attempts", [])]
+        self.assertFalse(any("DISPATCH_REFUSED" in note for note in notes),
+                         f"gate refused a mailbox id order: {notes}")
+
+
+class CoordSendMappingTests(unittest.TestCase):
+    """``coord-send --dispatch`` must leave a durable link to the order it made.
+
+    The mailbox message and the order live in two roots.  Printing the mapping
+    only to stdout meant a reader of the message could not find the order, which
+    is how the FlagGems and AEP roots stayed unreconciled.
+    """
+
+    def setUp(self):
+        self.temp = TemporaryDirectory()
+        self.root = Path(self.temp.name)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_the_stored_message_names_the_order_and_the_id_it_was_asked_to_echo(self):
+        from argparse import Namespace
+        from unittest.mock import patch
+        from agent_evolution_protocol import cli
+
+        coord = self.root / "coordination"
+        args = Namespace(sender="kernel", to="qoder", text="please ack",
+                         text_file=None, topic="AEP-TASK-1", kind="notice",
+                         dispatch=True, mailbox_only=False, allow_launch=False,
+                         coord_root=str(coord))
+        with patch.object(cli.commander, "dispatch", return_value={"state": "DEFERRED"}):
+            cli.coord_send(args)
+        stored = json.loads(next((coord / "messages" / "qoder").glob("*.json"))
+                            .read_text(encoding="utf-8"))
+        delivery = stored["desktop_delivery"]
+        self.assertEqual(delivery["state"], "DEFERRED")
+        # The mailbox id is reused as the order's event id, so this one value is
+        # both the join key between the two roots and the token the target must
+        # echo in its ACK.
+        self.assertEqual(delivery["event_id"], stored["id"])
+        # Resolved through ``commander._root`` rather than hardcoding the
+        # directory: the point of the mapping is that the two roots differ.
+        order = json.loads((commander._root(coord) / "inbox" / f"{delivery['order_id']}.json")
+                           .read_text(encoding="utf-8"))
+        self.assertEqual(order["event_id"], stored["id"])
+        self.assertEqual(dispatch_gate.check(order, profile=PROFILE)["verdict"], "send")
 
 
 if __name__ == "__main__":

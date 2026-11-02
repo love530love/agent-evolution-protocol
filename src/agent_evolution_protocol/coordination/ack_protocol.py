@@ -1,18 +1,15 @@
 """One answer to "did the target agent actually accept this task".
 
-The token we ask the agent to reply with is written into the message we send.
-That single fact makes every naive detector wrong: search the conversation for
-``AEP-ACK:<event>`` and the first hit is our own request, echoed back.  So an ACK
-is not a string occurrence, it is a *role-attributed event in the right
-conversation, recorded after we sent*.  Four guards, and dropping any one of them
-produces a detector that reports success while nothing has been accepted:
+The token we ask the agent to reply with is written into the message we send,
+so it also appears in our own request. Production captures do not reliably
+attribute speaker or direction; ``unknown`` is therefore a capture fact, not
+evidence against a reply. An unknown line may pass only if the original order
+body is available and the captured event can be shown not to be that body.
+Missing comparison data is not proof of a reply. Explicit ``user``/``system``
+roles and ``outgoing`` direction remain refusals. The remaining guards are:
 
-* ``role == "assistant"`` -- otherwise it is our own line, or the user's.
-* ``direction == "incoming"`` -- the same line can be captured twice.
-* ``session_id`` equals the order's -- an agent in another conversation answering
-  the same question is not this task's answer.  An order that recorded *no*
-  session id is a separate case (``session_unknown``): no reply can be attributed
-  to it at all, and 6 of the 24 orders on disk here are in that state.
+* the order's ``session_id`` -- another conversation answering the same question
+  is not this task's answer; an order with no session id is ``session_unknown``.
 * ``recorded_at > created_at`` -- event ids are stable per task, so a re-delivery
   reuses the id and an old reply would otherwise satisfy the new order.
 
@@ -66,8 +63,31 @@ ABANDONED_STATE = "ABANDONED"
 #: Why a token-bearing event was not accepted.  Each one is a real failure mode,
 #: and keeping them apart is the difference between "no answer yet" and "the
 #: wrong conversation answered".
+#:
+#: ``own_text`` -- the line is the order's own body echoed back.  The order
+#: stores ``"text"`` (the message we typed), so without this guard every order
+#: would ACK itself at deposit time.  This is the original purpose of the
+#: ``role != "assistant"`` guard: our own request reads the same as a reply.
+#:
+#: ``not_agent_role`` -- the line is explicitly attributed to ``user`` or
+#: ``system``, not the agent.  This is the strong rejection: we know it is not
+#: the agent's line.
+#:
+#: ``not_assistant`` -- kept for backward compatibility with existing verdicts
+#: on disk; new verdicts use the more precise reasons above.
+#:
+#: ``not_incoming`` and ``own_text_outgoing`` -- direction guards.  An
+#: ``outgoing`` line that is not our own text is still refused, but the reason
+#: distinguishes "we sent this" from "this is our order body bounced back".
 REJECTIONS = {
+    "own_text": ("the line matches the order's own body; our request reads the same as a reply, "
+                 "so a self-echo must not satisfy the token check"),
+    "own_text_unavailable": ("the capture has no speaker attribution and the order body is unavailable, "
+                              "so this line cannot safely be distinguished from our own send"),
+    "not_agent_role": "the line is explicitly attributed to user or system, not the agent",
     "not_assistant": "the line is not attributed to the agent; our own request reads the same",
+    "own_text_outgoing": ("the line was captured as outgoing and matches the order's own body; "
+                          "this is our send, not a reply"),
     "not_incoming": "the line was captured as outgoing, so it is something we sent",
     "foreign_session": "the reply came from a different conversation than the order's",
     "session_unknown": ("the order recorded no session id, so no reply can be attributed to "
@@ -154,9 +174,68 @@ def abandoned(order: dict[str, Any]) -> dict[str, Any] | None:
 
 
 
+def _strip_token(text: str, token: str) -> str:
+    """Remove the ACK token from text for body-comparison purposes."""
+    return text.replace(token, "")
+
+
+def _is_own_text(line: str, own_text: str, token: str) -> bool:
+    """True when the captured line is the order's own body echoed back.
+
+    The order stores ``"text"`` (the message we typed into the client), and a
+    UIA/OCR capture of the same window will include that text.  Without this
+    guard, every order would satisfy its own token check at deposit time.
+
+    Comparison is whitespace-insensitive: OCR inserts spaces between CJK
+    glyphs, and the capture pipeline cleans some but not all of them.  The
+    token itself is stripped from both sides before comparing, because the
+    token is in the order body by design and its presence in the captured
+    line is what triggered the candidate search.
+    """
+    if not own_text:
+        return False
+    clean_line = " ".join(line.split())
+    clean_body = " ".join(own_text.split())
+    if not clean_line or not clean_body:
+        return False
+    body_without_token = _strip_token(clean_body, token)
+    line_without_token = _strip_token(clean_line, token)
+    # The captured line may contain surrounding context (timestamp prefix,
+    # reply chain) while still being our own body.  Substring check on the
+    # body without token catches that; the reverse catches a bare echo.
+    if body_without_token and body_without_token in line_without_token:
+        return True
+    if line_without_token and line_without_token in body_without_token:
+        return True
+    return False
+
+
 def classify(event: dict[str, Any], *, token: str, session_id: str,
-             created_at: Any) -> dict[str, Any]:
-    """Judge one candidate event.  Returns ``accepted`` plus the reason it was not."""
+             created_at: Any, own_text: str = "",
+             line: str = "") -> dict[str, Any]:
+    """Judge one candidate event.  Returns ``accepted`` plus the reason it was not.
+
+    The ``role`` guard is three-valued, not binary:
+
+    * ``assistant`` -- passes (the capture layer attributed this line to the
+      agent).
+    * ``user`` / ``system`` -- rejected as ``not_agent_role`` (explicitly not
+      the agent).
+    * ``unknown`` -- the capture layer did not attribute the line.  This is the
+      default for all three production capture points
+      (``transcript_patrol``, ``commander``, ``cli``), because a UIA/OCR scan
+      of a window returns the whole screen and cannot tell whose line it is.
+      It passes only when the order body is available and the captured event
+      does not match it.  A missing body is ``own_text_unavailable``: absence
+      of the data needed to distinguish our own send is not proof of an ACK.
+      Otherwise the event passes this guard with ``role_source`` recorded, and
+      the remaining checks (session, timestamp) decide.
+
+    ``direction`` follows the same pattern: ``incoming`` passes; ``outgoing``
+    is checked against ``own_text`` and rejected as ``own_text_outgoing`` if it
+    matches, or ``not_incoming`` if it does not; ``unknown`` is treated like
+    ``incoming`` for the purpose of this guard.
+    """
     row = {
         "event": str(event.get("id", "")),
         "role": str(event.get("role", "")),
@@ -166,12 +245,37 @@ def classify(event: dict[str, Any], *, token: str, session_id: str,
         "accepted": False,
         "reason": "",
     }
-    if event.get("role") != "assistant":
-        row["reason"] = "not_assistant"
+    role = event.get("role", "unknown")
+    direction = event.get("direction", "unknown")
+
+    # --- Role guard (three-valued) ---
+    if role in ("user", "system"):
+        row["reason"] = "not_agent_role"
         return row
-    if event.get("direction") != "incoming":
+    if role == "assistant":
+        pass  # explicit attribution, proceed to direction guard
+    else:
+        # role == "unknown" (or any unrecognised value): the body is required
+        # to distinguish an incoming reply from our own echoed request.
+        if not own_text:
+            row["reason"] = "own_text_unavailable"
+            return row
+        if _is_own_text(line or "", own_text, token):
+            row["reason"] = "own_text"
+            return row
+        # Not own text: accept the attribution gap and proceed.
+        # Record that we inferred this from absence rather than presence.
+        row["role_source"] = "inferred_absent_own_text"
+
+    # --- Direction guard (same three-valued pattern) ---
+    if direction == "outgoing":
+        if own_text and _is_own_text(line or "", own_text, token):
+            row["reason"] = "own_text_outgoing"
+            return row
         row["reason"] = "not_incoming"
         return row
+    # direction == "incoming" or "unknown": proceed
+
     if not session_id:
         # Measured on the real inbox: 6 of 24 orders carry no session id, so this
         # branch decides their verdict forever.  Calling it ``foreign_session``
@@ -213,16 +317,24 @@ def verdict(order: dict[str, Any], *, events: list[dict[str, Any]],
     token = token_for(event_id)
     session_id = str(order.get("session_id", ""))
     created_at = order.get("created_at", "")
+    own_text = str(order.get("text", ""))
 
     candidates = []
     for event in events or []:
         if not isinstance(event, dict):
             continue
-        lines = "\n".join(str(line) for line in (event.get("added_lines") or []))
-        if token not in lines:
+        lines_list = event.get("added_lines") or []
+        if isinstance(lines_list, str):
+            lines_list = [lines_list]
+        joined = "\n".join(str(line) for line in lines_list)
+        if token not in joined:
             continue
+        # Compare the full event delta, not only the token-bearing line: UIA/OCR
+        # may split our multi-line prompt into several captured lines while the
+        # ACK token appears on only one of them.
         candidates.append(classify(event, token=token, session_id=session_id,
-                                   created_at=created_at))
+                                   created_at=created_at, own_text=own_text,
+                                   line=joined))
     accepted = [row for row in candidates if row["accepted"]]
     reached = delivery(order)
     signoff = abandoned(order)

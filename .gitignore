@@ -55,3 +55,7 @@ src/agent_evolution_protocol/coordination/messages/
 # Desktop driver scratch: screenshots and one-line runtime logs from UI probes.
 /tmp/
 /overlay_audit.jsonl
+
+# Local workspace config: contains machine-specific absolute paths.
+# The example template (.aep/workspace.example.json) is versioned instead.
+/.aep/workspace.json

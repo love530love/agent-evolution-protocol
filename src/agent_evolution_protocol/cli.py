@@ -182,9 +182,52 @@ def discover_workspace_config(start: Path | None = None) -> dict:
 
 
 def workspace_root(args: argparse.Namespace) -> Path:
-    start = Path(getattr(args, "workspace", None) or Path.cwd()).resolve()
-    config = discover_workspace_config(start)
-    return Path(config.get("workspace", start)).resolve()
+    explicit = getattr(args, "workspace", None)
+    if explicit is not None:
+        return Path(explicit).resolve()
+    start = Path.cwd().resolve()
+    for folder in (start, *start.parents):
+        if (folder / WORKSPACE_CONFIG).is_file():
+            # The repository containing this config is the current workspace.
+            # Never let the config itself redefine that trust boundary with a
+            # stale absolute "workspace" value copied from another clone.
+            return folder
+    return start
+
+
+def workspace_config_portability(workspace: Path) -> dict:
+    """Check whether the local workspace config resolves only inside workspace."""
+    base = Path(workspace).resolve()
+    config_path = base / WORKSPACE_CONFIG
+    if not config_path.is_file():
+        return {"ok": True, "detail": {"config": str(config_path), "present": False,
+                                         "outside_workspace": []}}
+    try:
+        config = read_json(config_path)
+    except ProtocolError as exc:
+        return {"ok": False, "detail": {"config": str(config_path), "error": str(exc),
+                                          "outside_workspace": []}}
+    if not isinstance(config, dict):
+        return {"ok": False, "detail": {"config": str(config_path),
+                                          "error": "workspace config must be an object",
+                                          "outside_workspace": []}}
+    outside = []
+    for key in ("workspace", "coord_root", "kernel_root"):
+        raw = config.get(key)
+        if raw in (None, ""):
+            continue
+        if not isinstance(raw, str):
+            outside.append({"key": key, "value": repr(raw), "reason": "path must be a string"})
+            continue
+        path = Path(raw)
+        resolved = (path if path.is_absolute() else base / path).resolve()
+        try:
+            resolved.relative_to(base)
+        except ValueError:
+            outside.append({"key": key, "value": str(resolved),
+                            "reason": "resolves outside the current workspace"})
+    return {"ok": not outside, "detail": {"config": str(config_path), "present": True,
+                                            "outside_workspace": outside}}
 
 
 def configured_root(args: argparse.Namespace, key: str, env: str, default: str) -> Path:
@@ -196,7 +239,25 @@ def configured_root(args: argparse.Namespace, key: str, env: str, default: str) 
     workspace = workspace_root(args)
     config = discover_workspace_config(workspace)
     path = Path(config.get(key, default))
-    return path if path.is_absolute() else workspace / path
+    if path.is_absolute():
+        # Before v0.6.16, an absolute path in workspace.json was trusted
+        # unconditionally.  That meant a cloned repo with a leftover
+        # workspace.json would silently write into the original author's
+        # coordination directory.  Now we refuse: an absolute path must
+        # point inside the current workspace, or the caller must give an
+        # explicit --coord-root.
+        resolved = path.resolve()
+        try:
+            resolved.relative_to(workspace)
+        except ValueError:
+            raise ProtocolError(
+                f"Configured {key} points outside the current workspace: "
+                f"{resolved} is not under {workspace}. "
+                f"Use --{key.replace('_', '-')} to specify the intended path, "
+                f"or change .aep/workspace.json to use a relative path."
+            )
+        return resolved
+    return (workspace / path).resolve()
 
 
 def coord_root(args: argparse.Namespace) -> Path:
@@ -587,10 +648,19 @@ def coord_send(args: argparse.Namespace) -> None:
         # Dispatch only this order. A generic tick could accidentally replay
         # unrelated, older orders while trying to deliver one urgent notice.
         receipt = commander.dispatch(root, order=order)
+        # Persist the link, not just print it.  The mailbox message and the order
+        # live in two different roots (``messages/<agent>/`` here, ``inbox/``
+        # under commander), so a reader holding one had no way to find the other
+        # -- which is how the FlagGems and AEP roots stayed unreconciled.
+        # ``event_id`` is the join key: ``coord-send`` reuses the mailbox id as
+        # the order's canonical event id, so this is also what the target is
+        # asked to echo in its ACK.
         msg["desktop_delivery"] = {
-            "order_id": order["id"], "state": receipt["state"],
+            "order_id": order["id"], "event_id": order["event_id"],
+            "state": receipt["state"],
             "note": "AGENT_ACK still requires a reply from the target in the anchored session",
         }
+        atomic_write_json(coord_file(root, "messages", receiver, f"{mid}.json"), msg)
     print(json.dumps(msg, ensure_ascii=False, indent=2))
 
 
@@ -613,7 +683,7 @@ def coord_delivery_status(args: argparse.Namespace) -> None:
     """Report observed mailbox state; never infer model receipt from file presence."""
     root = coord_root(args)
     who = valid_agent(args.to)
-    if not re.fullmatch(r"[0-9]{8}T[0-9]{12}Z-[0-9a-f]{8}", args.id):
+    if not dispatch_gate.is_stamp_id(args.id):
         raise ProtocolError("invalid message ID")
     message_path = coord_file(root, "messages", who, f"{args.id}.json")
     if not message_path.is_file():
@@ -640,7 +710,7 @@ def coord_delivery_audit(args: argparse.Namespace) -> None:
 def coord_ack_message(args: argparse.Namespace) -> None:
     root = coord_root(args)
     who = valid_agent(args.agent)
-    if not re.fullmatch(r"[0-9]{8}T[0-9]{12}Z-[0-9a-f]{8}", args.id):
+    if not dispatch_gate.is_stamp_id(args.id):
         raise ProtocolError("invalid message ID")
     message_path = coord_file(root, "messages", who, f"{args.id}.json")
     if not message_path.is_file():
