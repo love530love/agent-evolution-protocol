@@ -89,5 +89,61 @@ class FingerprintTests(unittest.TestCase):
                          session_fingerprint.compute(shuffled))
 
 
+class MarkerSourceTests(unittest.TestCase):
+    """The markers live in ui_profiles; the client record does not carry them.
+
+    Both callers -- ``coord-client fingerprint`` and ``commander.dispatch`` --
+    used to hand the client record straight to ``observe``.  Measured
+    2026-11-02 on ``workbuddy3``: the recorded fingerprint had
+    ``session_marker: ""`` while its ui profile declared one, so the digest
+    covered agent+exe+title and two conversations in the same window produced
+    the same fingerprint.  Every unit test above passed, because they build the
+    profile by hand with the markers already in it.
+    """
+
+    def setUp(self):
+        self.temp = TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.addCleanup(self.temp.cleanup)
+        (self.root / "ui_profiles").mkdir(parents=True)
+        (self.root / "ui_profiles" / "wb.json").write_text(
+            '{"session_marker": "修复或对齐昆仑容器的triton包",'
+            ' "model_marker": "DeepSeek-V4.1-Flash"}', encoding="utf-8")
+
+    def test_markers_are_taken_from_the_ui_profile(self):
+        client = {"agent": "wb", "exe": r"D:\Programs\WorkBuddy\WorkBuddy.exe",
+                  "window_titles": ["WorkBuddy"]}
+        row = session_fingerprint.merged_profile(
+            client, session_fingerprint.ui_profile(self.root, "wb"))
+        self.assertEqual(row["session_marker"], "修复或对齐昆仑容器的triton包")
+        self.assertEqual(row["model_marker"], "DeepSeek-V4.1-Flash")
+        # The client record's own fields survive the merge.
+        self.assertEqual(row["window_titles"], ["WorkBuddy"])
+
+    def test_a_switched_conversation_changes_the_digest(self):
+        window = {"pid": 1, "title": "WorkBuddy",
+                  "exe": r"D:\Programs\WorkBuddy\WorkBuddy.exe"}
+        base = session_fingerprint.merged_profile(
+            {"agent": "wb"}, session_fingerprint.ui_profile(self.root, "wb"))
+        first = session_fingerprint.observe(agent="wb", window=window, profile=base)
+        switched = {**base, "session_marker": "另一个会话"}
+        second = session_fingerprint.observe(agent="wb", window=window, profile=switched)
+        self.assertNotEqual(first["fingerprint"], second["fingerprint"])
+        result = session_fingerprint.compare(first, second)
+        self.assertFalse(result["match"])
+        self.assertEqual(result["diff"], ["session_marker"])
+
+    def test_a_client_marker_wins_over_the_ui_profile(self):
+        client = {"agent": "wb", "session_marker": "显式指定"}
+        row = session_fingerprint.merged_profile(
+            client, session_fingerprint.ui_profile(self.root, "wb"))
+        self.assertEqual(row["session_marker"], "显式指定")
+
+    def test_a_missing_ui_profile_is_not_an_error(self):
+        self.assertEqual(session_fingerprint.ui_profile(self.root, "absent"), {})
+        row = session_fingerprint.merged_profile({"agent": "absent"}, {})
+        self.assertEqual(row["session_marker"], "")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -2784,6 +2784,11 @@ def coord_client(args: argparse.Namespace) -> None:
             profile_row = client_registry.profile(root, agent)
         except ValueError as exc:
             raise ProtocolError(str(exc)) from exc
+        # The session and model markers live in ui_profiles, not in the client
+        # record; without them the digest covers the window and not the
+        # conversation inside it.
+        profile_row = session_fingerprint.merged_profile(
+            profile_row, session_fingerprint.ui_profile(root, agent))
         discovered = client_registry.discover(root, agent)
         row = next((item for item in discovered["clients"] if item["agent"] == agent), None)
         hits = (row or {}).get("windows") or []

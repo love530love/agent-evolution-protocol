@@ -242,6 +242,11 @@ def profile_args(profile: dict) -> list[str]:
     # adapter's own message says "only with human supervision".
     if profile.get("allow_clipboard_paste"):
         args.append("-AllowClipboardPaste")
+    # How long to wait for the page to stop reflowing before looking for the
+    # composer.  Bounded per profile because a client whose placeholder never
+    # appears pays the whole budget on every dispatch.
+    if profile.get("settle_timeout_seconds"):
+        args += ["-SettleTimeoutSeconds", str(int(profile["settle_timeout_seconds"]))]
     return args
 
 
@@ -391,11 +396,44 @@ def _desktop_lock(lock_path: Path):
                 fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
 
 
-def _challenge() -> tuple[str, str]:
-    nonce = secrets.token_hex(7).upper()
+def _challenge(ocr_safe: bool = False) -> tuple[str, str]:
+    """Return the challenge nonce and the exact string the target must echo.
+
+    ``ocr_safe`` switches the nonce to digits.  The challenge is read off a
+    screenshot by a client that is then asked to reverse it, and a fourteen
+    character hex string is never reproduced correctly by the recogniser -- so
+    the target could answer perfectly and the reply would still be
+    unverifiable, which is why an OCR-only client could never reach
+    ``AGENT_REPLY_VERIFIED``.  Ten digits survive OCR intact; thirty-three bits
+    is far more than a delivery-attribution token needs.
+    """
+    if ocr_safe:
+        alphabet = "0123456789"
+        length = 10
+    else:
+        alphabet = "0123456789ABCDEF"
+        length = 14
+    nonce = "".join(secrets.choice(alphabet) for _ in range(length))
     while nonce == nonce[::-1]:
-        nonce = secrets.token_hex(7).upper()
+        nonce = "".join(secrets.choice(alphabet) for _ in range(length))
     return nonce, "AEP-ACK:" + nonce[::-1]
+
+
+def _ack_seen(text: str, expected_ack: str, reversed_nonce: str, before: str) -> str:
+    """Return how the reply proved itself, or an empty string.
+
+    ``exact`` is the original rule and stays first.  ``reversed-nonce`` exists
+    because an OCR transport cannot read the ``AEP-ACK:`` prefix reliably while
+    it does read the reversed digits; requiring those digits to be absent from
+    the pre-send capture is what keeps "the target echoed the challenge" from
+    being confused with "those digits happened to be on screen already".
+    """
+    if expected_ack and expected_ack in (text or ""):
+        return "exact"
+    if (reversed_nonce and reversed_nonce in (text or "")
+            and reversed_nonce not in (before or "")):
+        return "reversed-nonce"
+    return ""
 
 
 def _preinput_receipt_retryable(existing: dict) -> bool:
@@ -408,6 +446,7 @@ def _preinput_receipt_retryable(existing: dict) -> bool:
         "WINDOW_OR_INPUT_AMBIGUOUS", "NO_SAFE_COMPOSER",
         "SESSION_NOT_VERIFIED", "MODEL_NOT_VERIFIED",
         "EXECUTOR_TOO_LOW", "ROUTE_REGION_UNUSABLE", "ROUTE_UNSUPPORTED_BY_DRIVER",
+        "COMPOSER_NOT_CONFIRMED",
     }:
         return True
     if existing.get("state") != "SEND_UNCERTAIN":
@@ -630,10 +669,22 @@ def run(profile: dict, message: str, *, event_id: str, receipt_path: Path,
             return state
         if not _evidence_present(before, profile["model_marker"],
                                  profile.get("model_evidence_markers", [])):
-            state.update(state="MODEL_NOT_VERIFIED")
+            # Record what was looked for, for the same reason the session branch
+            # does: "the label is not on screen" and "the capture came back
+            # empty because it read another window" are different faults, and
+            # without the numbers the receipt cannot tell them apart.  Measured
+            # 2026-11-02: a dispatch deferred here while the model selector was
+            # plainly visible, and the receipt carried no evidence at all.
+            state.update(state="MODEL_NOT_VERIFIED",
+                         model_marker=profile["model_marker"],
+                         model_evidence_markers=list(profile.get("model_evidence_markers", [])),
+                         model_marker_present=bool(profile["model_marker"] in before),
+                         evidence_present={marker: (marker in before)
+                                           for marker in profile.get("model_evidence_markers", [])},
+                         captured_chars=len(before))
             _atomic(receipt_path, state)
             return state
-        nonce, expected_ack = _challenge()
+        nonce, expected_ack = _challenge(ocr_safe=profile.get("transport") == "ocr")
         if event_id in before or expected_ack in before:
             state.update(state="NONCE_OR_EVENT_ALREADY_VISIBLE")
             _atomic(receipt_path, state)
@@ -673,6 +724,17 @@ def run(profile: dict, message: str, *, event_id: str, receipt_path: Path,
             _atomic(receipt_path, state)
             return state
         state["send_report"] = sent
+        if sent.get("status") == "composer-not-confirmed":
+            # The adapter refuses to press Enter when it cannot see the message
+            # in the window, so this is a *proven* pre-input failure: nothing
+            # was submitted and the same event id can be retried.  It used to
+            # fall through to SEND_UNCERTAIN, whose name says the opposite, and
+            # the order then ceased and waited for a human who was not there.
+            state.update(state="COMPOSER_NOT_CONFIRMED",
+                         reason="the message never appeared in the window; nothing was submitted",
+                         send_report=sent)
+            _atomic(receipt_path, state)
+            return state
         if sent.get("status") == "composer-region-unsupported":
             # The router located the composer and the driver cannot use it.
             # Nothing was typed, so this is a retryable deferral rather than an
@@ -719,9 +781,12 @@ def run(profile: dict, message: str, *, event_id: str, receipt_path: Path,
                                      profile.get("model_evidence_markers", [])):
                 state.update(state="MODEL_CHANGED")
                 break
-            if expected_ack in text:
+            evidence = _ack_seen(text, expected_ack, nonce[::-1], before)
+            if evidence:
+                anchor = expected_ack if evidence == "exact" else nonce[::-1]
                 state.update(state="AGENT_REPLY_VERIFIED", task_delivered=True,
-                             agent_accepted=True, reply_excerpt=text[text.index(expected_ack):][-4000:],
+                             agent_accepted=True, ack_evidence=evidence,
+                             reply_excerpt=text[text.index(anchor):][-4000:],
                              replied_at=_utc())
                 break
         else:
@@ -766,8 +831,10 @@ def main() -> int:
             if len(parts) != 4:
                 raise ValueError("--route-reference needs x,y,width,height")
             reference = dict(zip(("x", "y", "width", "height"), parts))
+        from agent_evolution_protocol.coordination import uia3
         output = run(profile, message, event_id=args.event_id, receipt_path=args.receipt,
-                     lock_path=args.lock, driver=PowerShellUiaDriver(), allow_launch=args.allow_launch,
+                     lock_path=args.lock, driver=uia3.driver_for(profile),
+                     allow_launch=args.allow_launch,
                      urgent=args.urgent_interject, grounder=grounder,
                      reference_region=reference,
                      min_confidence=args.route_min_confidence)

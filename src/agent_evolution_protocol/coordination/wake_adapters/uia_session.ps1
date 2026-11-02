@@ -24,6 +24,8 @@ param(
   [string[]]$ComposerHints = @(),
   [string]$SessionLabel = '',
   [ValidateRange(1, 300)][int]$ReadBackTimeoutSeconds = 20,
+  [ValidateRange(1, 60)][int]$SettleTimeoutSeconds = 10,
+  [ValidateRange(1, 60)][int]$PasteConfirmTimeoutSeconds = 8,
   [string]$SendKey = '{ENTER}',
   [double]$SendButtonXRatio = 0,
   [double]$SendButtonYRatio = 0,
@@ -373,7 +375,7 @@ function Get-WindowOcrText {
     }
     if ($shot -and (Test-Path -LiteralPath $shot)) { Remove-Item -LiteralPath $shot -Force -ErrorAction SilentlyContinue }
   }
-  return [pscustomobject]@{ Text = [string]$text; Error = [string]$ocrError; Lines = , $lines; Language = [string]$ocrLanguage }
+  return [pscustomobject]@{ Text = [string]$text; Error = [string]$ocrError; Lines = @($lines | Where-Object { $_ }); Language = [string]$ocrLanguage }
 }
 
 $ActivationEvidence = [ordered]@{ show_window = $false; foreground = $false; window_alive = $false }
@@ -398,6 +400,163 @@ function Write-Report {
   $stream = [Console]::OpenStandardOutput()
   $stream.Write($bytes, 0, $bytes.Length)
   $stream.Flush()
+}
+
+function Get-AepWindowRectSignature {
+  param([IntPtr]$Hwnd)
+  $rect = New-Object AepUiWindow+RECT
+  if (-not [AepUiWindow]::GetWindowRect($Hwnd, [ref]$rect)) { return '' }
+  return "$($rect.Left),$($rect.Top),$($rect.Right),$($rect.Bottom)"
+}
+
+function Wait-AepLayoutSettled {
+  <#
+    Wait for the page to finish re-laying-out after activation.
+
+    Maximising or restoring an Electron window reflows the whole page, and the
+    OCR that runs before the reflow finishes reads the previous frame.  A fixed
+    sleep is a guess about how long that takes; measured here it was long enough
+    to see a stale frame and short enough to miss the composer, so the adapter
+    reported "no composer hint" on a window that plainly showed one.  Two
+    conditions replace the guess: a hint is visible, and the window rectangle
+    stopped moving between two consecutive samples.
+  #>
+  param([IntPtr]$Hwnd, [string[]]$Hints, [int]$TimeoutSeconds = 10)
+  $deadline = [DateTime]::UtcNow.AddSeconds([Math]::Max(1, $TimeoutSeconds))
+  $previousRect = ''
+  $stablePolls = 0
+  $polls = 0
+  $scan = $null
+  while ($true) {
+    $polls++
+    $scan = Get-WindowOcrText -Hwnd $Hwnd
+    $rect = Get-AepWindowRectSignature -Hwnd $Hwnd
+    if ($rect -and $rect -eq $previousRect) { $stablePolls++ } else { $stablePolls = 0 }
+    $previousRect = $rect
+    $hintVisible = $false
+    foreach ($hint in $Hints) {
+      if ($hint -and $scan.Text -and $scan.Text.Contains($hint)) { $hintVisible = $true; break }
+    }
+    if ($hintVisible -and $stablePolls -ge 1) { break }
+    if ([DateTime]::UtcNow -ge $deadline) { break }
+    Start-Sleep -Milliseconds 350
+  }
+  return [pscustomobject]@{ Scan = $scan; Polls = $polls; Rect = $previousRect
+    Stable = ($stablePolls -ge 1); HintVisible = $hintVisible }
+}
+
+function New-AepPasteProbe {
+  <#
+    Choose a substring that can prove a paste landed without reading the id.
+
+    The event id is a thirty-character ASCII stamp, and the recogniser never
+    reproduces it; searching the screen for it therefore answers "no" even when
+    the paste worked, which is how a successful paste was reported as
+    ``composer-not-confirmed``.  A short run of Chinese characters from the same
+    message is a much better probe: CJK is read reliably, and the run is chosen
+    to be absent from the window beforehand, so seeing it afterwards is new
+    evidence rather than a coincidence from an older message.
+
+    Candidates are drawn from the tail of the text first, because that is what a
+    long message shows in the composer and in the newest reply bubble.
+  #>
+  param([string]$Text, [string]$Before)
+  if (-not $Text) { return '' }
+  $regions = @()
+  if ($Text.Length -gt 240) { $regions += $Text.Substring($Text.Length - 240) }
+  $regions += $Text
+  $seen = @{}
+  $candidates = @()
+  foreach ($region in $regions) {
+    foreach ($match in [regex]::Matches($region, '[\u4e00-\u9fff]{4,8}')) {
+      $value = $match.Value
+      if (-not $seen.ContainsKey($value)) { $seen[$value] = $true; $candidates += $value }
+    }
+  }
+  foreach ($candidate in @($candidates | Sort-Object -Property Length -Descending)) {
+    if (-not $Before -or -not $Before.Contains($candidate)) { return $candidate }
+  }
+  return ''
+}
+
+function Get-AepOcrLines {
+  <#
+    Normalize the OCR line array.
+
+    The producer used to wrap its lines with the comma operator, which left the
+    property as a one-element array whose element was the line array.  Piping
+    flattened that; iterating did not, and ``[int]$line.Y`` on the outer array
+    threw "cannot convert System.Object[] to System.Int32".  The producer is
+    flat now and this still accepts both shapes, because an adapter that reads
+    a receipt written by an older version should not crash on it.
+  #>
+  param($Scan)
+  if (-not $Scan -or -not $Scan.Lines) { return @() }
+  return @($Scan.Lines | ForEach-Object { $_ } | Where-Object { $_ })
+}
+
+function Get-AepProbeMatch {
+  <#
+    Find the longest surviving fragment of a probe in the window text.
+
+    The recogniser substitutes characters -- measured here: 键 read as 鍵, 0
+    read as O.  A long exact probe therefore reports "not visible" for a paste
+    that plainly happened, which is the same false negative that made the
+    event-id check useless.  Matching the longest fragment that is absent from
+    the pre-paste frame answers the question that was actually asked.
+  #>
+  param([string]$Probe, [string]$Text, [string]$Before)
+  if (-not $Probe -or -not $Text) { return [pscustomobject]@{ fragment = ''; kind = '' } }
+  if ($Text.Contains($Probe)) { return [pscustomobject]@{ fragment = $Probe; kind = 'exact' } }
+  $length = $Probe.Length
+  for ($size = $length - 1; $size -ge 4; $size--) {
+    for ($start = 0; $start + $size -le $length; $start++) {
+      $fragment = $Probe.Substring($start, $size)
+      if ($Text.Contains($fragment) -and (-not $Before -or -not $Before.Contains($fragment))) {
+        return [pscustomobject]@{ fragment = $fragment; kind = 'partial' }
+      }
+    }
+  }
+  return [pscustomobject]@{ fragment = ''; kind = '' }
+}
+
+function Test-AepTextInBand {
+  <#
+    Is a probe present below (or above) a fraction of the window height?
+
+    "The text is somewhere on screen" cannot distinguish "typed into the
+    composer" from "already sent and shown in the transcript".  The band turns
+    that into two different questions with two different answers.
+  #>
+  param($Scan, [IntPtr]$Hwnd, [string]$Probe, [double]$From = 0, [double]$To = 1)
+  if (-not $Scan -or -not $Scan.Text -or -not $Probe) { return $false }
+  $rect = New-Object AepUiWindow+RECT
+  if (-not [AepUiWindow]::GetWindowRect($Hwnd, [ref]$rect)) { return $false }
+  $height = $rect.Bottom - $rect.Top
+  if ($height -le 0) { return $false }
+  $low = [int]($height * $From)
+  $high = [int]($height * $To)
+  foreach ($line in (Get-AepOcrLines -Scan $Scan)) {
+    if (-not $line.Text) { continue }
+    if (-not $line.Text.Contains($Probe)) { continue }
+    $y = [int]$line.Y
+    if ($y -ge $low -and $y -lt $high) { return $true }
+  }
+  return $false
+}
+
+function Get-AepLowerBandText {
+  param($Scan, [IntPtr]$Hwnd, [double]$From = 0.72)
+  $rect = New-Object AepUiWindow+RECT
+  if (-not [AepUiWindow]::GetWindowRect($Hwnd, [ref]$rect)) { return '' }
+  $height = $rect.Bottom - $rect.Top
+  if ($height -le 0) { return '' }
+  $low = [int]($height * $From)
+  $parts = @()
+  foreach ($line in (Get-AepOcrLines -Scan $Scan)) {
+    if ($line.Text -and [int]$line.Y -ge $low) { $parts += $line.Text }
+  }
+  return ($parts -join "`n")
 }
 
 function Get-TargetWindows {
@@ -924,7 +1083,7 @@ if ($Mode -eq 'observe') {
     $ocrScan = Get-WindowOcrText -Hwnd $window.Hwnd
     if ($ocrScan.Text) {
       $transcript = [pscustomobject]@{ Text = [string]$ocrScan.Text; ElementCount = 0
-        LineCount = @($ocrScan.Lines).Count }
+        LineCount = (Get-AepOcrLines -Scan $ocrScan).Count }
       $transcriptSource = 'ocr'
     }
   }
@@ -991,9 +1150,19 @@ if ($Mode -eq 'capture') {
   # Capture must be tied to the selected HWND.  Without re-activation a
   # background Electron window can yield a screenshot of whichever app is
   # currently foreground, creating a false transcript.
-  [void][AepUiWindow]::ShowWindowAsync($window.Hwnd, 9)
-  if (-not (Set-AepForegroundWindow -Hwnd $window.Hwnd -ShowMode 9)) { throw 'WINDOW_FOCUS_DENIED: capture target was not foreground' }
-  Start-Sleep -Milliseconds 250
+  #
+  # SW_RESTORE (9) un-maximises a maximised window, and that is not cosmetic:
+  # measured on the domestic WorkBuddy, a restored window reports 1983 OCR
+  # characters and hides the model label inside a collapsed selector, so the
+  # caller's MODEL_NOT_VERIFIED fires on a label that is only absent because
+  # this line shrank the window.  Honour the profile's maximise request here
+  # too, so every mode reads the layout the profile was calibrated against.
+  $captureShowMode = if ($env:AEP_MAXIMIZE_WINDOW -eq '1') { 3 } else { 9 }
+  [void][AepUiWindow]::ShowWindowAsync($window.Hwnd, $captureShowMode)
+  if (-not (Set-AepForegroundWindow -Hwnd $window.Hwnd -ShowMode $captureShowMode)) { throw 'WINDOW_FOCUS_DENIED: capture target was not foreground' }
+  # A maximised Electron window needs a frame or two to relayout before the
+  # screenshot; 250 ms was enough for a restore and not for a maximise.
+  Start-Sleep -Milliseconds 600
   if ($env:AEP_SCROLL_COMPOSER -eq '1') { [void](Invoke-AepScrollComposer -Hwnd $window.Hwnd) }
   $source = 'uia-tree'
   $body = $transcript.Text
@@ -1034,7 +1203,7 @@ if ($Mode -eq 'compose') {
   $ActivationEvidence.foreground = Set-AepForegroundWindow -Hwnd $window.Hwnd -ShowMode $showMode
   $ActivationEvidence.window_alive = [AepUiWindow]::IsWindow($window.Hwnd)
   if (-not $ActivationEvidence.foreground) { throw 'WINDOW_FOCUS_DENIED: Windows rejected foreground activation' }
-  Start-Sleep -Milliseconds 400
+  Start-Sleep -Milliseconds 250
 
   $interjectAction = ''
   if ($UrgentInterject) {
@@ -1058,12 +1227,6 @@ if ($Mode -eq 'compose') {
     $selection = Select-InputElement -Root $root -Soft
   }
 
-  $scan = Get-WindowOcrText -Hwnd $window.Hwnd
-  if ($env:AEP_SCROLL_COMPOSER -eq '1') {
-    [void](Invoke-AepScrollComposer -Hwnd $window.Hwnd)
-    $scan = Get-WindowOcrText -Hwnd $window.Hwnd
-  }
-  $hit = $null
   # If the editor already contains a human draft, its placeholder is hidden.
   # An explicit marker can therefore identify the same composer without
   # falling back to a blind coordinate click.
@@ -1072,6 +1235,17 @@ if ($Mode -eq 'compose') {
   if ($ComposerHints) { $allHints += @($ComposerHints) }
   $allHints += @($DefaultComposerHints)
   $hintsToUse = if ($RequireComposerHint) { @($ComposerHint) } else { @($allHints | Select-Object -Unique) }
+
+  # Activation reflows the page; wait for the layout to stop moving instead of
+  # guessing how long that takes, then search the settled frame for the hint.
+  $settle = Wait-AepLayoutSettled -Hwnd $window.Hwnd -Hints $hintsToUse -TimeoutSeconds $SettleTimeoutSeconds
+  $scan = $settle.Scan
+  if ($env:AEP_SCROLL_COMPOSER -eq '1') {
+    [void](Invoke-AepScrollComposer -Hwnd $window.Hwnd)
+    $settle = Wait-AepLayoutSettled -Hwnd $window.Hwnd -Hints $hintsToUse -TimeoutSeconds $SettleTimeoutSeconds
+    $scan = $settle.Scan
+  }
+  $hit = $null
   foreach ($hint in $hintsToUse) {
     $candidate = @($scan.Lines | Where-Object { $_.Text -and $_.Text.Contains($hint) } | Sort-Object -Property Y -Descending | Select-Object -First 1)
     if ($candidate.Count -ge 1) { $hit = $candidate[0]; $hintUsed = $hint; break }
@@ -1115,12 +1289,19 @@ if ($Mode -eq 'compose') {
   }
 
   $clickX = 0; $clickY = 0; $confidence = 'low'
+  $clickGeometry = @{ rect = @(); width = 0; height = 0
+    x_ratio = $ComposerXRatio; y_ratio = $ComposerYRatio }
   if ($hit) {
     $rectForClick = New-Object AepUiWindow+RECT
     if (-not [AepUiWindow]::GetWindowRect($window.Hwnd, [ref]$rectForClick)) { throw 'WINDOW_RECT_UNAVAILABLE' }
     $clickX = [int]($rectForClick.Left + $hit.X + ($hit.W / 2))
     $clickY = [int]($rectForClick.Top + $hit.Y + ($hit.H / 2))
     $confidence = 'ocr-hint'
+    $clickGeometry = @{ rect = @($rectForClick.Left, $rectForClick.Top, $rectForClick.Right, $rectForClick.Bottom)
+      width = ($rectForClick.Right - $rectForClick.Left)
+      height = ($rectForClick.Bottom - $rectForClick.Top)
+      hint_x = $hit.X; hint_y = $hit.Y; hint_w = $hit.W; hint_h = $hit.H
+      x_ratio = 0; y_ratio = 0 }
   } else {
     if ($RequireComposerHint -and -not $AllowComposerGeometryFallback) {
       throw 'COMPOSER_HINT_MISSING: refusing geometry guess'
@@ -1129,6 +1310,9 @@ if ($Mode -eq 'compose') {
     if ([AepUiWindow]::GetWindowRect($window.Hwnd, [ref]$rect)) {
       $width = $rect.Right - $rect.Left
       $height = $rect.Bottom - $rect.Top
+      $clickGeometry = @{ rect = @($rect.Left, $rect.Top, $rect.Right, $rect.Bottom)
+        width = $width; height = $height
+        x_ratio = $ComposerXRatio; y_ratio = $ComposerYRatio }
       if ($ComposerXRatio -gt 0 -and $ComposerYRatio -gt 0 -and
           $ComposerXRatio -lt 1 -and $ComposerYRatio -lt 1) {
         $clickX = [int]($rect.Left + ($width * $ComposerXRatio))
@@ -1142,35 +1326,117 @@ if ($Mode -eq 'compose') {
     } else { throw 'WINDOW_RECT_UNAVAILABLE: cannot locate the composer' }
   }
 
+  # A click is delivered to whatever window is at that screen point, so a
+  # stolen foreground silently turns a dispatch into a click into another
+  # application.  Re-check right before the click instead of trusting the
+  # activation that happened several seconds and several OCR passes ago.
+  $foregroundNow = [AepUiWindow]::GetForegroundWindow()
+  if ($foregroundNow -ne $window.Hwnd) {
+    [void](Set-AepForegroundWindow -Hwnd $window.Hwnd -ShowMode $showMode)
+    Start-Sleep -Milliseconds 300
+    $foregroundNow = [AepUiWindow]::GetForegroundWindow()
+  }
+  if ($foregroundNow -ne $window.Hwnd) {
+    throw 'WINDOW_FOCUS_DENIED: foreground was stolen before the click; nothing was typed'
+  }
+
   Invoke-AepClick -X $clickX -Y $clickY
 
   # Replace any stale draft instead of appending the new dispatch.  Use the
   # native key chord first; SendKeys is silently ignored by some Electron
   # renderers when a debugger or IME owns the foreground input queue.
   Invoke-AepKeyChord -Modifier 0x11 -Key 0x41
-  Start-Sleep -Milliseconds 100
+  Start-Sleep -Milliseconds 120
+  # Actually clear the selection.  Selecting is not clearing: a draft left over
+  # from a previous attempt that contains the same words makes the "did my
+  # paste land" measurement read zero change, and the adapter then refuses to
+  # send a message that is sitting right there.  Measured on this client: the
+  # probe matched nothing because every fragment was already on screen from the
+  # previous dry run.
+  [void][AepUiWindow]::SendVirtualKey(0x2E)
+  Start-Sleep -Milliseconds 450
+  $clearedScan = Get-WindowOcrText -Hwnd $window.Hwnd
+  $clearedBand = Get-AepLowerBandText -Scan $clearedScan -Hwnd $window.Hwnd
+  # The probe has to be chosen against the frame from *before* the paste.  It
+  # was chosen against the post-paste frame once, which made every candidate
+  # look "already present" and produced an empty probe while the paste had in
+  # fact landed.
+  $probe = New-AepPasteProbe -Text $Text -Before $clearedScan.Text
   [void](Invoke-AepUnicodeText -Value $Text)
-  Start-Sleep -Milliseconds 1200
+  Start-Sleep -Milliseconds 600
 
-  $afterPaste = Get-WindowOcrText -Hwnd $window.Hwnd
-  $inComposer = [bool]($afterPaste.Text -and $afterPaste.Text.Contains($EventId))
+  $beforeBand = $clearedBand
+  $inComposer = $false
+  $probeVisible = $false
+  $probeKind = ''
+  $probeFragment = ''
+  $eventInComposer = $false
+  $placeholderGone = $false
+  $bandGrowth = 0
+  $afterPaste = $null
+  # One sample is a race, not a check: the renderer can still be painting the
+  # paste when the first screenshot is taken.
+  $pasteDeadline = [DateTime]::UtcNow.AddSeconds($PasteConfirmTimeoutSeconds)
+  $pastePolls = 0
+  while ($true) {
+    $pastePolls++
+    $afterPaste = Get-WindowOcrText -Hwnd $window.Hwnd
+    $afterBand = Get-AepLowerBandText -Scan $afterPaste -Hwnd $window.Hwnd
+    $eventInComposer = [bool]($afterPaste.Text -and $afterPaste.Text.Contains($EventId))
+    $probeMatch = Get-AepProbeMatch -Probe $probe -Text $afterPaste.Text -Before $clearedScan.Text
+    $probeKind = $probeMatch.kind
+    $probeFragment = $probeMatch.fragment
+    $probeVisible = [bool]$probeFragment
+    # The placeholder disappearing is the cheapest signal that the editor is no
+    # longer empty, but it says nothing when a human draft was already there.
+    # Growth of the lower band is independent of both, so the three stay
+    # separate in the receipt instead of collapsing into one boolean.
+    $placeholderGone = $false
+    foreach ($hint in $hintsToUse) {
+      if ($hint -and $beforeBand.Contains($hint) -and -not $afterBand.Contains($hint)) { $placeholderGone = $true; break }
+    }
+    $bandGrowth = $afterBand.Length - $beforeBand.Length
+    $inComposer = [bool]($eventInComposer -or $probeVisible -or $placeholderGone -or $bandGrowth -ge 24)
+    if ($inComposer) { break }
+    if ([DateTime]::UtcNow -ge $pasteDeadline) { break }
+    Start-Sleep -Milliseconds 700
+  }
+  $probeInComposerBeforeSend = Test-AepTextInBand -Scan $afterPaste -Hwnd $window.Hwnd -Probe $probeFragment -From 0.72 -To 1.01
   if (-not $inComposer) {
+    if ($OutFile -and $afterPaste.Text) {
+      $dir = Split-Path -Parent $OutFile
+      if ($dir) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+      [IO.File]::WriteAllText($OutFile, $afterPaste.Text, [System.Text.UTF8Encoding]::new($false))
+    }
     Write-Report @{
       status          = 'composer-not-confirmed'
       pid             = $window.Pid
       title           = $window.Title
       click           = @{ x = $clickX; y = $clickY; confidence = $confidence; hint = $(if ($hit) { $hintUsed } else { '' }) }
+      click_geometry  = $clickGeometry
       ocr_chars       = $afterPaste.Text.Length
+      paste_probe     = $probe
+      probe_visible   = $probeVisible
+      probe_kind      = $probeKind
+      probe_fragment  = $probeFragment
+      event_in_composer = $eventInComposer
+      placeholder_gone = $placeholderGone
+      composer_band_growth = $bandGrowth
+      paste_polls     = $pastePolls
+      settle_polls    = $settle.Polls
+      settle_stable   = $settle.Stable
+      capture_path    = $(if ($OutFile -and $afterPaste.Text) { [IO.Path]::GetFullPath($OutFile) } else { '' })
       task_delivered  = $false
       method          = 'uia-compose'
-      note            = 'clipboard content never appeared in the window; refusing to press Enter'
+      note            = 'the message never appeared in the window; refusing to press Enter'
     }
     return
   }
   if ($NoSend) {
     Write-Report @{ status = 'composer-confirmed-no-send'; pid = $window.Pid; title = $window.Title;
       click = @{ x = $clickX; y = $clickY; confidence = $confidence; hint = $(if ($hit) { $hintUsed } else { '' }) };
-      composer_verified = $true; task_delivered = $false; method = 'uia-compose' }
+      click_geometry = $clickGeometry;
+      paste_probe = $probe; composer_verified = $true; task_delivered = $false; method = 'uia-compose' }
     return
   }
 
@@ -1212,7 +1478,9 @@ if ($Mode -eq 'compose') {
     Start-Sleep -Milliseconds 1000
     $polls++
     $body = (Get-WindowOcrText -Hwnd $window.Hwnd).Text
-    if ($body -and $body.Contains($EventId)) { $visible = $true; break }
+    # The event id is unreadable to the recogniser; the probe is the readable
+    # half of the same message.  Either one counts as "it is on screen now".
+    if ($body -and (($probeFragment -and $body.Contains($probeFragment)) -or $body.Contains($EventId))) { $visible = $true; break }
   }
   if ($OutFile -and $body) {
     $dir = Split-Path -Parent $OutFile
@@ -1220,41 +1488,46 @@ if ($Mode -eq 'compose') {
     [IO.File]::WriteAllText($OutFile, $body, [System.Text.UTF8Encoding]::new($false))
   }
 
-  # OCR can see the pasted event before the click as well as after it.  A
-  # transcript hit alone therefore does not prove that the send control was
-  # activated.  Require the composer placeholder to reappear, or at least
-  # prove that the event is not in the lower composer band.  This prevents the
-  # old false-positive "message-visible" result when a geometry click missed.
-  $composerCleared = $false
-  $eventInComposer = $false
+  # Seeing the text somewhere is not proof that the send control fired: the
+  # same pixels were on screen before the click too.  The proof is a
+  # *movement*: the probe that was in the composer band is now in the
+  # transcript band, and the composer is empty again.
   $verifyScan = Get-WindowOcrText -Hwnd $window.Hwnd
-  if ($ComposerHint -and @($verifyScan.Lines | Where-Object {
-        $_.Text -and $_.Text.Contains($ComposerHint)
-      }).Count -gt 0) {
+  $composerCleared = $false
+  $verifyBand = Get-AepLowerBandText -Scan $verifyScan -Hwnd $window.Hwnd
+  foreach ($hint in $hintsToUse) {
+    if ($hint -and $verifyBand.Contains($hint)) { $composerCleared = $true; break }
+  }
+  $probeInComposerAfter = Test-AepTextInBand -Scan $verifyScan -Hwnd $window.Hwnd -Probe $probeFragment -From 0.72 -To 1.01
+  if (-not $composerCleared -and $probeInComposerBeforeSend -and -not $probeInComposerAfter) {
     $composerCleared = $true
   }
-  $verifyRect = New-Object AepUiWindow+RECT
-  if ([AepUiWindow]::GetWindowRect($window.Hwnd, [ref]$verifyRect)) {
-    $verifyHeight = $verifyRect.Bottom - $verifyRect.Top
-    $lowerBand = [int]($verifyHeight * 0.72)
-    foreach ($line in @($verifyScan.Lines)) {
-      if ($line.Text -and $line.Text.Contains($EventId) -and [int]$line.Y -ge $lowerBand) {
-        $eventInComposer = $true
-        break
-      }
-    }
-  }
-  $delivered = [bool]($visible -and $composerCleared -and -not $eventInComposer)
+  $probeInTranscript = Test-AepTextInBand -Scan $verifyScan -Hwnd $window.Hwnd -Probe $probeFragment -From 0 -To 0.72
+  $eventInComposer = Test-AepTextInBand -Scan $verifyScan -Hwnd $window.Hwnd -Probe $EventId -From 0.72 -To 1.01
+  $delivered = [bool](($probeInTranscript -or $visible) -and $composerCleared -and
+                      -not $probeInComposerAfter -and -not $eventInComposer)
 
   Write-Report @{
-    status            = $(if ($RequireComposerHint) { 'submitted-unconfirmed' } elseif ($delivered) { 'message-visible' } else { 'submitted-unconfirmed' })
+    status            = $(if ($delivered) { 'message-visible' } else { 'submitted-unconfirmed' })
     pid               = $window.Pid
     title             = $window.Title
     path              = $window.Path
     click             = @{ x = $clickX; y = $clickY; confidence = $confidence; hint = $(if ($hit) { $hintUsed } else { '' }) }
+    click_geometry    = $clickGeometry
     composer_verified = $inComposer
     composer_cleared  = $composerCleared
     event_in_composer = $eventInComposer
+    paste_probe       = $probe
+    probe_visible     = $probeVisible
+    probe_kind        = $probeKind
+    probe_fragment    = $probeFragment
+    probe_in_composer_before_send = $probeInComposerBeforeSend
+    probe_in_transcript = $probeInTranscript
+    probe_in_composer_after = $probeInComposerAfter
+    placeholder_gone  = $placeholderGone
+    composer_band_growth = $bandGrowth
+    settle_polls      = $settle.Polls
+    settle_stable     = $settle.Stable
     readback_polls    = $polls
     capture_path      = $(if ($OutFile -and $body) { [IO.Path]::GetFullPath($OutFile) } else { '' })
     send_button_method = $sendButtonMethod
@@ -1263,7 +1536,7 @@ if ($Mode -eq 'compose') {
     interruption      = $false
     interject_action  = $interjectAction
     interject_evidence = $activity.interject_evidence
-    task_delivered    = $(if ($RequireComposerHint) { $false } else { $delivered })
+    task_delivered    = $delivered
     method            = 'uia-compose'
   }
   return

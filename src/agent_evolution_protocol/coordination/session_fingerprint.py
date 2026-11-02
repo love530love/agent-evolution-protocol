@@ -63,6 +63,53 @@ def compute(row: dict[str, Any]) -> str:
     return sha256(payload.encode("utf-8")).hexdigest()
 
 
+def merged_profile(client_row: dict[str, Any],
+                   ui_row: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The client record plus the two markers that live in the ui profile.
+
+    They are split across two files on purpose -- ``clients/`` names the
+    *client*, ``ui_profiles/`` names the *session inside it* -- but a
+    fingerprint needs both.  Measured 2026-11-02: ``coord-client fingerprint``
+    recorded ``session_marker: ""`` and ``model_marker: ""`` for an agent whose
+    ui profile declared both, because it handed the client record straight to
+    :func:`observe`.  The digest then covered agent+exe+title only, so it could
+    not tell two conversations in the same window apart -- the exact collision
+    this module exists to catch, and the unit tests did not catch it because
+    they build the profile by hand with the markers already in place.
+
+    The client record wins when it carries a marker: a caller that put one
+    there meant it.
+    """
+    row = dict(client_row or {})
+    for field in IDENTITY_FIELDS[3:]:
+        value = str(row.get(field) or "").strip()
+        if not value and ui_row:
+            value = str(ui_row.get(field) or "")
+        # Always present, even when empty: a caller that indexes the key should
+        # get "no marker" rather than KeyError.
+        row[field] = value
+    return row
+
+
+def ui_profile(coord_root, agent: str) -> dict[str, Any]:
+    """Read ``ui_profiles/<agent>.json`` without making its absence an error.
+
+    An agent may be registered as a client and still have no ui profile -- that
+    is a client the legion can find but not type into, and it is not this
+    module's job to refuse it.  A malformed file returns ``{}`` for the same
+    reason a missing one does: the fingerprint is a guard, and a guard that
+    raises turns every dispatch into an outage.
+    """
+    path = Path(coord_root) / "ui_profiles" / f"{agent}.json"
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def observe(*, agent: str, window: dict[str, Any], profile: dict[str, Any],
             moment: datetime | None = None) -> dict[str, Any]:
     """Build the fingerprint for a live window plus the profile it was bound to."""

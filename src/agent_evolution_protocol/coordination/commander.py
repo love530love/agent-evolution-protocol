@@ -44,6 +44,11 @@ SAFE_AGENT = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 ACK_TOKEN = "AEP-ACK"
 CEASE_AFTER_FAILURES = 3
 REINFORCE_AFTER_MINUTES = 20  # 主订单停火或久未ACK后，允许候选agent补位
+# A deferral that proves nothing was typed is a "not yet", not a failure.  The
+# scheduler retries those on its own, but only within a bounded budget and only
+# after a backoff, so an automatic retry can never turn into a blind replay.
+AUTO_RESUME_LIMIT = 6
+AUTO_RESUME_BACKOFF_SECONDS = 20
 
 # DEPOSITED -> WINDOW_FOUND -> INPUT_SUBMITTED -> MESSAGE_VISIBLE -> AGENT_ACK
 ORDER_STATES = ("DEPOSITED", "DEFERRED", "DISPATCHING", "WINDOW_FOUND", "INPUT_SUBMITTED", "MESSAGE_VISIBLE", "AGENT_ACK", "CEASED", "FAILED", "RETIRED")
@@ -243,6 +248,48 @@ def _ceased(root: Path, order: dict) -> bool:
     return False
 
 
+def _deferred_count(order: dict) -> int:
+    """How many deferrals this order has accumulated in total.
+
+    Counting the tail would reset on every automatic retry -- the retry writes
+    a DEPOSITED attempt first -- and the budget would never be reached, which
+    turns a bounded retry into an unbounded loop.
+    """
+    return sum(1 for attempt in order.get("attempts", [])
+               if attempt.get("state") == "DEFERRED")
+
+
+def _auto_resume_due(order: dict) -> bool:
+    """Should the scheduler retry this deferred order without being asked?
+
+    Only ``wait_for_ready`` deferrals used to be re-examined, so every other
+    pre-input deferral parked the order until a person typed ``resume``.  That
+    is a queue, not a loop: measured on this workspace, a client that was busy
+    for ninety seconds left the order at DEFERRED forever even though the
+    target had gone idle.
+
+    Three conditions keep the automatic retry from becoming a blind replay:
+    the durable history must prove nothing was typed (``_preinput_retryable``),
+    the deferral count must stay under ``AUTO_RESUME_LIMIT``, and
+    ``AUTO_RESUME_BACKOFF_SECONDS`` must have elapsed since the last attempt.
+    """
+    if order.get("state") != "DEFERRED":
+        return False
+    if _deferred_count(order) >= AUTO_RESUME_LIMIT:
+        return False
+    if not _preinput_retryable(order):
+        return False
+    last = (order.get("attempts") or [{}])[-1]
+    try:
+        at = datetime.fromisoformat(str(last.get("at", "")))
+        elapsed = (datetime.now(timezone.utc) - at).total_seconds()
+    except (TypeError, ValueError):
+        # An unreadable timestamp is not evidence of a recent attempt; the
+        # pre-input proof above is what actually authorises the retry.
+        return True
+    return elapsed >= AUTO_RESUME_BACKOFF_SECONDS
+
+
 def _pwsh() -> str:
     executable = shutil.which("pwsh.exe")
     if not executable:
@@ -350,10 +397,11 @@ def _profiled_deliver(root: Path, agent: str, text: str, event_id: str, *,
         if profile["agent"] != agent:
             raise ValueError("UI_PROFILE_AGENT_MISMATCH")
         receipt_path = _root(root) / "receipts" / f"{event_id}-{agent}-profile.json"
+        from . import uia3
         result = ui_fallback.run(
             profile, text, event_id=event_id, receipt_path=receipt_path,
             lock_path=Path(root) / "desktop-input.lock",
-            driver=ui_fallback.PowerShellUiaDriver(), allow_launch=allow_launch,
+            driver=uia3.driver_for(profile), allow_launch=allow_launch,
             urgent=urgent_interject,
         )
         receipt = {
@@ -388,7 +436,8 @@ def _profiled_readiness(root: Path, agent: str) -> dict:
         return {"status": "NO_PROFILE", "activity_state": "unknown"}
     try:
         profile = ui_fallback.load_profile(profile_path)
-        return ui_fallback.PowerShellUiaDriver().observe(profile)
+        from . import uia3
+        return uia3.driver_for(profile).observe(profile)
     except Exception as exc:  # noqa: BLE001 - readiness is advisory and read-only
         return {"status": "READINESS_PROBE_FAILED", "activity_state": "unknown",
                 "error": str(exc)[:800]}
@@ -571,7 +620,7 @@ def _preinput_retryable(order: dict) -> bool:
                     "AGENT_BUSY", "URGENT_INTERJECT_UNAVAILABLE", "ACTIVITY_UNCONFIRMED", "NO_WINDOW",
                     "LAUNCH_UNVERIFIED", "WINDOW_OR_INPUT_AMBIGUOUS",
                     "NO_SAFE_COMPOSER", "SESSION_NOT_VERIFIED", "MODEL_NOT_VERIFIED",
-                    "EXECUTOR_TOO_LOW",
+                    "EXECUTOR_TOO_LOW", "COMPOSER_NOT_CONFIRMED",
                     }
                     or _receipt_proves_preinput(row.get("receipt", {}))
                     or (
@@ -717,6 +766,13 @@ def _dispatch(root: Path, *, order: dict) -> dict:
     except ValueError:
         return _record_attempt(root, order, state="DEFERRED",
                                note="UNREGISTERED_CLIENT: register a verified client profile before delivery")
+    # ``clients/<agent>.json`` names the client; ``ui_profiles/<agent>.json``
+    # names the session inside it.  The fingerprint below is supposed to answer
+    # "same conversation as last time", which needs both -- reading only the
+    # client record hashed two empty marker strings and could not tell a
+    # switched conversation from the original one.
+    profile_row = session_fingerprint.merged_profile(
+        profile_row, session_fingerprint.ui_profile(root, target))
     client = None
     try:
         discovered = registry.discover(root, target)
@@ -803,7 +859,8 @@ def _dispatch(root: Path, *, order: dict) -> dict:
     if receipt.get("status") in ("AGENT_BUSY", "URGENT_INTERJECT_UNAVAILABLE", "ACTIVITY_UNCONFIRMED", "NO_WINDOW",
                                   "LAUNCH_UNVERIFIED", "WINDOW_OR_INPUT_AMBIGUOUS",
                                   "NO_SAFE_COMPOSER", "SESSION_NOT_VERIFIED", "MODEL_NOT_VERIFIED",
-                                  "EXECUTOR_TOO_LOW"):
+                                  "EXECUTOR_TOO_LOW", "COMPOSER_NOT_CONFIRMED",
+                                  "composer-not-confirmed"):
         note = "PREINPUT_NOT_READY: observe again after the target becomes ready"
         if receipt.get("status") == "EXECUTOR_TOO_LOW":
             # UIPI is not a race and not a slow client: the receipt proves no
@@ -1084,6 +1141,14 @@ def tick(root: Path, *, perceive_first: bool = True) -> dict:
                         fresh = _persisted_order(root, order["id"])
                         dispatched.append({"order": fresh["id"], "target": fresh["target"],
                                            "state": dispatch(root, order=fresh)["state"]})
+                elif _auto_resume_due(order):
+                    count = _deferred_count(order)
+                    _record_attempt(root, order, state="DEPOSITED",
+                                    note=f"AUTO_PREINPUT_RESUME: deferral {count} of "
+                                         f"{AUTO_RESUME_LIMIT} with nothing typed; retrying the same event id")
+                    fresh = _persisted_order(root, order["id"])
+                    dispatched.append({"order": fresh["id"], "target": fresh["target"],
+                                       "state": dispatch(root, order=fresh)["state"]})
             continue
         dispatched.append({"order": order["id"], "target": order["target"], "state": dispatch(root, order=order)["state"]})
     reinforced = []

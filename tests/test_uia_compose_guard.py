@@ -55,13 +55,104 @@ def test_ocr_compose_does_not_promote_paste_to_delivery_without_clearance():
         / "wake_adapters"
         / "uia_session.ps1"
     ).read_text(encoding="utf-8")
+    # A paste is not a delivery.  The message has to leave the composer band,
+    # the composer has to look empty again, and the readable half of the
+    # message has to be in the transcript band -- all three, or the receipt
+    # stays unconfirmed.  The event id alone cannot carry that proof because
+    # the recogniser never reproduces it.
     assert "$composerCleared = $false" in source
-    assert "$eventInComposer = $false" in source
+    assert "$probeInComposerAfter = Test-AepTextInBand" in source
+    assert "$probeInTranscript = Test-AepTextInBand" in source
+    assert "$eventInComposer = Test-AepTextInBand" in source
+    assert "($probeInTranscript -or $visible) -and $composerCleared" in source
+    assert "-not $probeInComposerAfter -and -not $eventInComposer" in source
     assert "Find-AepPurpleControl" in source
     assert "send_button_method = $sendButtonMethod" in source
-    assert "$delivered = [bool]($visible -and $composerCleared -and -not $eventInComposer)" in source
     assert "composer_cleared  = $composerCleared" in source
     assert "event_in_composer = $eventInComposer" in source
+
+
+def test_the_paste_probe_is_chosen_to_be_new_evidence():
+    # A probe that was already on screen proves nothing when it appears again,
+    # so the selection has to reject every candidate the pre-paste frame
+    # already contains.
+    source = (
+        ROOT
+        / "src"
+        / "agent_evolution_protocol"
+        / "coordination"
+        / "wake_adapters"
+        / "uia_session.ps1"
+    ).read_text(encoding="utf-8")
+    assert "if (-not $Before -or -not $Before.Contains($candidate)) { return $candidate }" in source
+    assert "[regex]::Matches($region, '[\\u4e00-\\u9fff]{4,8}')" in source
+    assert "($probeFragment -and $body.Contains($probeFragment)) -or $body.Contains($EventId)" in source
+
+
+def test_a_stale_draft_is_cleared_before_the_paste_is_measured():
+    # Selecting is not clearing.  A draft left by a previous attempt that holds
+    # the same words makes the "did my paste land" measurement read zero
+    # change, and the adapter then refuses to send a message that is sitting
+    # right there -- measured live on the domestic WorkBuddy client.
+    source = (
+        ROOT
+        / "src"
+        / "agent_evolution_protocol"
+        / "coordination"
+        / "wake_adapters"
+        / "uia_session.ps1"
+    ).read_text(encoding="utf-8")
+    assert "[void][AepUiWindow]::SendVirtualKey(0x2E)" in source
+    assert "$clearedScan = Get-WindowOcrText -Hwnd $window.Hwnd" in source
+    assert "$beforeBand = $clearedBand" in source
+
+
+def test_the_probe_tolerates_character_substitution():
+    # The recogniser substitutes characters (键 read as 鍵, 0 read as O), so an
+    # exact-only probe reports "not visible" for a paste that plainly happened.
+    source = (
+        ROOT
+        / "src"
+        / "agent_evolution_protocol"
+        / "coordination"
+        / "wake_adapters"
+        / "uia_session.ps1"
+    ).read_text(encoding="utf-8")
+    assert "function Get-AepProbeMatch" in source
+    assert "for ($size = $length - 1; $size -ge 4; $size--)" in source
+    assert "$probeMatch = Get-AepProbeMatch -Probe $probe -Text $afterPaste.Text -Before $clearedScan.Text" in source
+
+
+def test_the_foreground_is_rechecked_before_the_click():
+    # A click is delivered to whatever window is at that screen point, so a
+    # stolen foreground turns a dispatch into a click into another app.
+    source = (
+        ROOT
+        / "src"
+        / "agent_evolution_protocol"
+        / "coordination"
+        / "wake_adapters"
+        / "uia_session.ps1"
+    ).read_text(encoding="utf-8")
+    assert "$foregroundNow = [AepUiWindow]::GetForegroundWindow()" in source
+    assert "WINDOW_FOCUS_DENIED: foreground was stolen before the click" in source
+
+
+def test_the_composer_is_located_after_the_layout_settles():
+    # A fixed sleep after activation reads the previous frame: maximising an
+    # Electron window reflows the page, and the composer hint was reported
+    # missing on a window that plainly showed it.
+    source = (
+        ROOT
+        / "src"
+        / "agent_evolution_protocol"
+        / "coordination"
+        / "wake_adapters"
+        / "uia_session.ps1"
+    ).read_text(encoding="utf-8")
+    assert "function Wait-AepLayoutSettled" in source
+    assert "$settle = Wait-AepLayoutSettled -Hwnd $window.Hwnd -Hints $hintsToUse" in source
+    assert "$hintVisible -and $stablePolls -ge 1" in source
 
 
 def test_qoder_profile_uses_sticky_composer_and_activity_gate():
