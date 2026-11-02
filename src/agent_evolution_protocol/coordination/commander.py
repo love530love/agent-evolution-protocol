@@ -1188,11 +1188,35 @@ def status(root: Path, *, tail: int = 20) -> dict:
             "note": "MESSAGE_VISIBLE is proof we were read, not proof of acceptance. AGENT_ACK needs the target's own token."}
 
 
-def watch(root: Path, *, interval: float = 30.0, max_ticks: int = 0) -> int:
+def watch(root: Path, *, interval: float = 30.0, max_ticks: int = 0,
+          perceive_first: bool = True, stream: Any = None) -> int:
+    """Tick forever, and say so once per tick.
+
+    Two defects were measured here on 2026-11-02, both of which made the daemon
+    look healthy while doing nothing:
+
+    ``perceive_first`` was dropped.  ``watch`` called ``tick(root)`` and the
+    CLI's ``--no-perceive`` never reached it, so a process asked to skip
+    perception ran it anyway -- and perception blocks for minutes once the
+    process is elevated and can reach windows a normal one cannot.  Measured: the
+    watcher sat inside its first tick for ten minutes, touched no order and wrote
+    nothing, while a manual ``tick --no-perceive`` dispatched in under a second.
+
+    The loop printed nothing at all, so an empty log meant both "healthy and
+    quiet" and "stuck".  ``stream`` fixes that: one line per tick naming the
+    count, the moment and what was dispatched.  A resident process whose health
+    cannot be read from its own log is not unattended, it is unobserved.
+    """
     count = 0
     while True:
-        tick(root)
+        result = tick(root, perceive_first=perceive_first)
         count += 1
+        if stream is not None:
+            print(json.dumps({"tick": count, "at": result.get("at"),
+                              "dispatched": result.get("dispatched") or [],
+                              "perceived": bool(result.get("perceived")
+                                                and not result["perceived"].get("skipped"))},
+                             ensure_ascii=False), file=stream, flush=True)
         if max_ticks and count >= max_ticks:
             return 0
         time.sleep(max(1.0, interval))

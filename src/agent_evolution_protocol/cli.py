@@ -2991,7 +2991,13 @@ def coord_commander(args: argparse.Namespace) -> None:
 
         return
     if action == "watch":
-        raise SystemExit(commander.watch(root, interval=args.interval, max_ticks=args.max_ticks))
+        # ``--no-perceive`` has to reach the loop.  It used to stop here, so a
+        # daemon asked to skip perception ran it anyway and blocked inside the
+        # first tick for minutes while looking perfectly alive.
+        raise SystemExit(commander.watch(root, interval=args.interval,
+                                         max_ticks=args.max_ticks,
+                                         perceive_first=not args.no_perceive,
+                                         stream=sys.stdout))
     print(json.dumps(commander.status(root, tail=args.limit), ensure_ascii=False, indent=2))
 
 
