@@ -55,7 +55,12 @@ class TestConfiguredRootPathValidation(unittest.TestCase):
                                       kernel_root=None)
             root = cli.configured_root(args, "coord_root", "AEP_COORD_ROOT",
                                        "coordination")
-            self.assertEqual(root, coord)
+            # configured_root returns a resolved path on purpose.  tempfile can
+            # hand back the 8.3 short form of the same directory
+            # (C:/Users/RUNNER~1/... vs C:/Users/runneradmin/...), so comparing
+            # an unresolved expectation fails on the GitHub runner while passing
+            # everywhere else.  Resolve the expectation, not the answer.
+            self.assertEqual(root, coord.resolve())
 
     def test_env_var_absolute_path_works(self):
         """An absolute path via env var should work."""
@@ -72,7 +77,7 @@ class TestConfiguredRootPathValidation(unittest.TestCase):
                                           kernel_root=None)
                 root = cli.configured_root(args, "coord_root", "AEP_COORD_ROOT",
                                            "coordination")
-                self.assertEqual(root, coord)
+                self.assertEqual(root, coord.resolve())
             finally:
                 if old_val is not None:
                     os.environ["AEP_COORD_ROOT"] = old_val

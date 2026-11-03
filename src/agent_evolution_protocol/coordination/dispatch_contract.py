@@ -9,6 +9,8 @@ from __future__ import annotations
 from datetime import datetime
 import json
 import re
+
+from agent_evolution_protocol.isotime import parse_iso
 from typing import Any
 
 
@@ -48,7 +50,7 @@ def validate(envelope: dict[str, Any], *, strict: bool = False) -> dict[str, Any
     for field in ("created_at", "expires_at"):
         value = _text(envelope.get(field), field)
         try:
-            datetime.fromisoformat(value.replace("Z", "+00:00"))
+            parse_iso(value)
         except ValueError as exc:
             raise ValueError(f"invalid {field}") from exc
     if envelope["event_id"] not in envelope["instruction"]:

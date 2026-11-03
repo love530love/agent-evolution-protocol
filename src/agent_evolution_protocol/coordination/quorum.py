@@ -15,6 +15,8 @@ import hashlib
 import json
 import re
 
+from agent_evolution_protocol.isotime import parse_iso_or_none, to_utc
+
 
 DECISIONS = ("approve", "reject", "abstain")
 IRREVERSIBLE_OPERATIONS = frozenset({
@@ -55,11 +57,8 @@ def _hex_digest(value):
 def _moment(value):
     if not isinstance(value, str) or not value.strip():
         return None
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    parsed = parse_iso_or_none(value)
+    return to_utc(parsed) if parsed else None
 
 
 def _now(now):

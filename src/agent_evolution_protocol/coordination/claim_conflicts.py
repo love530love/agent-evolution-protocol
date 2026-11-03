@@ -31,6 +31,7 @@ import sys
 # processes both see ALLOWED and both succeed, producing duplicate owners
 # that analyze() only discovers after the damage is done.
 from agent_evolution_protocol.federation.locking import workspace_lock
+from agent_evolution_protocol.isotime import parse_iso, parse_iso_or_none, to_utc
 
 
 SEVERITY_ORDER = {"blocking": 0, "warning": 1, "info": 2}
@@ -47,19 +48,15 @@ def _now(now):
     if isinstance(now, datetime):
         return now if now.tzinfo else now.replace(tzinfo=timezone.utc)
     if isinstance(now, str):
-        parsed = datetime.fromisoformat(now.replace("Z", "+00:00"))
-        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        return to_utc(parse_iso(now))
     raise TypeError("now must be a datetime, ISO string or None")
 
 
 def _stamp(value):
     if not isinstance(value, str) or not value.strip():
         return None
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    parsed = parse_iso_or_none(value)
+    return to_utc(parsed) if parsed else None
 
 
 def normalize(path):

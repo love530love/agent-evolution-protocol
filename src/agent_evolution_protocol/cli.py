@@ -22,6 +22,7 @@ from typing import Any
 from uuid import uuid4
 
 from agent_evolution_protocol.coordination.cluster_kernel import ClusterKernel
+from agent_evolution_protocol.isotime import parse_iso, parse_iso_or_none
 from agent_evolution_protocol.coordination.conversation_journal import append_event as append_chat_event, read_events as read_chat_events, cursor_for as chat_cursor_for, acknowledge as acknowledge_chat
 from agent_evolution_protocol.coordination.joint_attack import open_case as open_joint_case, review_case as review_joint_case, case_status as joint_case_status, submit_adversarial_review, adversarial_status
 from agent_evolution_protocol.coordination.capability_roster import declare as declare_capabilities, match as match_capabilities
@@ -1371,8 +1372,7 @@ def coord_claim(args: argparse.Namespace) -> dict:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return result
     now = utc_now()
-    expiry = (datetime.fromisoformat(now.replace("Z", "+00:00")) +
-              timedelta(hours=ttl_hours)).isoformat()
+    expiry = (parse_iso(now) + timedelta(hours=ttl_hours)).isoformat()
     data = {"task": task_name, "agent": who, "at": now, "paths": [],
             "expires_at": expiry,
             "gate": {"status": "TASK_ONLY", "allowed": True}}
@@ -1430,7 +1430,7 @@ def coord_archive_stale(args: argparse.Namespace) -> None:
         if not args.all:
             at = event.get("at", "")
             try:
-                age_hours = (datetime.now(timezone.utc) - datetime.fromisoformat(at.replace("Z", "+00:00"))).total_seconds() / 3600
+                age_hours = (datetime.now(timezone.utc) - parse_iso(at)).total_seconds() / 3600
             except ValueError:
                 age_hours = args.older_than_hours + 1
             if age_hours < args.older_than_hours:
@@ -1557,10 +1557,7 @@ def coord_guided_retry(args: argparse.Namespace) -> None:
 
 
 def parse_time(value: str) -> datetime | None:
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except (ValueError, AttributeError):
-        return None
+    return parse_iso_or_none(value)
 
 
 def inspect_system(args: argparse.Namespace) -> None:
