@@ -5221,6 +5221,26 @@
           "kind": "flag",
           "nargs": 0,
           "required": false
+        },
+        {
+          "default": false,
+          "dest": "propose",
+          "flags": [
+            "--propose"
+          ],
+          "help": "consult a local model only when no rule matched (never widens a read-only verdict)",
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "default": "",
+          "dest": "propose_model",
+          "flags": [
+            "--propose-model"
+          ],
+          "kind": "option",
+          "required": false
         }
       ],
       "documented": false,
@@ -5324,7 +5344,7 @@
     }
   ],
   "count": 89,
-  "digest": "sha256:ef23851d7a24a570d892f15925cff3a647485ac31de7c68155cc3c736932d4c3",
+  "digest": "sha256:40bf758552f93f51f6bf193901bd091f29c058fc6d0b805fcf35dc1b551c12e1",
   "documented": 25,
   "generated_from": "agent_evolution_protocol.cli:build_parser",
   "global_arguments": [

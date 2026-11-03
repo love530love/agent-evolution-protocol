@@ -1968,11 +1968,22 @@ def route_intent(args: argparse.Namespace) -> None:
     workspace = str(workspace_root(args))
     workspace_config = discover_workspace_config(Path(workspace))
     task_name = valid_task(args.task) if getattr(args, "task", None) else infer_task(intent)
+    # Only a task the request actually evidences may reach the classifier. A workspace
+    # default is a convenience for the route profile, not evidence: feeding it in turned
+    # "shipping improvement" into `task-join` with high confidence.
+    evidenced_task = task_name
     if not task_name and workspace_config.get("default_task"):
         task_name = valid_task(workspace_config["default_task"])
     target_agent = valid_agent(args.target_agent) if getattr(args, "target_agent", None) else infer_target_agent(intent, who, known_agents(croot))
     try:
-        classification = classify_intent(intent, task=task_name, config=load_route_config(Path(workspace)))
+        if getattr(args, "propose", False):
+            from .routing import classify_intent_with_proposal
+            from .routing_proposer import ollama_proposer
+            classification = classify_intent_with_proposal(
+                intent, task=evidenced_task, config=load_route_config(Path(workspace)),
+                propose=ollama_proposer(model=getattr(args, "propose_model", "")))
+        else:
+            classification = classify_intent(intent, task=evidenced_task, config=load_route_config(Path(workspace)))
     except ValueError as exc:
         raise ProtocolError(str(exc)) from exc
     scenario = classification["scenario"]
@@ -2051,6 +2062,9 @@ def route_intent(args: argparse.Namespace) -> None:
         "scenario": scenario,
         "confidence": classification["confidence"],
         "ambiguity": classification["ambiguity"],
+        "unknown": classification["unknown"],
+        "read_only_explicit": classification["read_only_explicit"],
+        "proposal": classification.get("proposal"),
         "requires_clarification": classification["requires_clarification"],
         "matched_rules": classification["matched_rules"],
         "decision_trace": classification["decision_trace"],
@@ -3316,7 +3330,7 @@ def build_parser() -> argparse.ArgumentParser:
     workspace = commands.add_parser("workspace-init"); workspace.add_argument("--workspace"); workspace.add_argument("--coord-dir"); workspace.add_argument("--kernel-dir"); workspace.add_argument("--default-task"); workspace.add_argument("--agents-md", action="store_true"); workspace.set_defaults(func=workspace_init)
     inspect = commands.add_parser("inspect"); inspect.add_argument("--stale-wake-hours", type=float, default=24); inspect.add_argument("--checkpoint-limit", type=int, default=5); inspect.add_argument("--markdown", action="store_true"); inspect.set_defaults(func=inspect_system)
     join = commands.add_parser("join"); join.add_argument("--agent", required=True); join.add_argument("--task"); join.add_argument("--workspace"); join.add_argument("--requested-session-id"); join.add_argument("--allow-new-session", action="store_true"); join.add_argument("--markdown", action="store_true"); join.set_defaults(func=join_agent)
-    route = commands.add_parser("route"); route.add_argument("--agent", required=True); route.add_argument("--intent", required=True); route.add_argument("--task"); route.add_argument("--target-agent"); route.add_argument("--workspace"); route.add_argument("--markdown", action="store_true"); route.set_defaults(func=route_intent)
+    route = commands.add_parser("route"); route.add_argument("--agent", required=True); route.add_argument("--intent", required=True); route.add_argument("--task"); route.add_argument("--target-agent"); route.add_argument("--workspace"); route.add_argument("--markdown", action="store_true"); route.add_argument("--propose", action="store_true", help="consult a local model only when no rule matched (never widens a read-only verdict)"); route.add_argument("--propose-model", default=""); route.set_defaults(func=route_intent)
     commands.add_parser("coord-bootstrap").set_defaults(func=coord_bootstrap)
     commands.add_parser("coord-status").set_defaults(func=coord_status)
     digest = commands.add_parser("coord-digest"); digest.add_argument("--agent", required=True); digest.add_argument("--limit", type=int, default=20); digest.add_argument("--samples", type=int, default=2); digest.add_argument("--preview-chars", type=int, default=240); digest.set_defaults(func=coord_digest)

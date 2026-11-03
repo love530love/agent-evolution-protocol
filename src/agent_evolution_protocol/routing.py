@@ -1,4 +1,10 @@
-"""Deterministic, model-free intent routing. Classification is not authorization."""
+"""Deterministic, model-free intent routing. Classification is not authorization.
+
+The default path never touches a network or a model, and that is enforced by a test rather
+than promised by this sentence. `classify_intent_with_proposal` accepts an *injected* proposal
+callable and lets it fill exactly one gap — "no rule matched anything" — while the protection,
+ambiguity and scenario-name checks keep the final word.
+"""
 
 from __future__ import annotations
 
@@ -22,6 +28,12 @@ KEYWORDS = {
 }
 READ_ONLY = ["只审查", "只看", "只读", "不要执行", "不执行", "不要上传", "不要提交", "不要唤醒", "无需执行", "review only", "read only", "read-only", "do not execute", "don't execute", "do not upload", "do not submit", "do not wake"]
 PRIORITY = ("cli-less-fallback", "review-only", "wake-agent", "takeover", "stalled-recovery", "status-report", "shared-resource-lock", "isolated-exploration", "task-join", "project-orientation")
+# Scenarios whose execution mutates something outside the agent's own context. Two of these
+# joined by a sequencing marker means the order and the lock scope are both undetermined.
+WRITE_INTENTS = frozenset({"shared-resource-lock", "wake-agent", "takeover", "stalled-recovery"})
+# Scenarios that never write; a proposal may not move a read-only verdict into their complement.
+READ_ONLY_SCENARIOS = frozenset({"review-only", "status-report", "project-orientation", "cli-less-fallback"})
+COMPOUND_SEQUENCE = re.compile(r"(?:\bthen\b|然后|之后|再(?:上传|提交|发布|删除|支付))")
 
 
 def normalized(text: str) -> str:
@@ -97,7 +109,11 @@ def classify_intent(intent: str, *, task: str = "", config: dict | None = None) 
     if protected:
         independent = {"review-only"}
     ambiguous = len(independent) > 1
-    if "status-report" in hits and "shared-resource-lock" in hits and re.search(r"然后|之后|再(?:上传|提交|发布|删除|支付)|\bthen\b", text):
+    if "status-report" in hits and "shared-resource-lock" in hits and COMPOUND_SEQUENCE.search(text):
+        ambiguous = True
+    # Two mutating intents joined by a sequencing marker: order and lock scope are both
+    # undetermined, so the shared-resource write would run without a decision on its lock.
+    if "shared-resource-lock" in hits and len(hits.keys() & WRITE_INTENTS) > 1 and COMPOUND_SEQUENCE.search(text):
         ambiguous = True
     if "cli-less-fallback" in hits:
         scenario = "cli-less-fallback"
@@ -109,9 +125,81 @@ def classify_intent(intent: str, *, task: str = "", config: dict | None = None) 
         "scenario": scenario,
         "confidence": "low" if ambiguous or not hits else "high",
         "ambiguity": ambiguous,
+        # "unknown" is a verdict, not a fallback. Without it a caller reading only `scenario`
+        # cannot tell "this is an orientation request" from "no rule matched anything".
+        "unknown": not hits,
         "requires_clarification": ambiguous or not hits,
         "matched_rules": hits,
         "decision_trace": reasons,
-        "read_only": bool(protected) or scenario in {"review-only", "status-report", "project-orientation", "cli-less-fallback"},
+        "read_only": bool(protected) or scenario in READ_ONLY_SCENARIOS,
+        # Distinct from `read_only`: that one is also true for the fallback scenario, so it
+        # cannot answer "did the user explicitly forbid execution?". Only this one may veto.
+        "read_only_explicit": bool(protected),
         "config_applied": config is not None,
     }
+
+
+def classify_intent_with_proposal(intent: str, *, task: str = "", config: dict | None = None,
+                                  propose=None) -> dict:
+    """Deterministic verdict first; a proposal may only fill a gap, never widen the answer.
+
+    `propose` is injected — this module imports no model and opens no socket, so the default
+    path stays deterministic and testable. It is consulted on exactly one branch: when the
+    rule engine matched nothing. That is the only place it has information the rules lack.
+
+    Four vetoes survive, because a generator has no channel for them:
+      1. `read_only_explicit` — the user wrote "do not upload". A model reading the noun
+         misses the negation (measured: 4 of 8 such phrases misread), so we do not ask it.
+      2. `ambiguity` — conflicting intents need a human, not a guess.
+      3. unknown scenario names — a proposal outside KEYWORDS is discarded, not mapped.
+      4. write proposals keep `requires_clarification` — a guessed write is confirmed once.
+         Read-only proposals clear it, because getting those wrong costs a no-op.
+    """
+    verdict = classify_intent(intent, task=task, config=config)
+    proposal = {"applied": False, "scenario": None, "reason": "not-consulted", "source": None}
+    verdict["proposal"] = proposal
+    if propose is None:
+        return verdict
+    # Ordered most-specific first: an audit trail that says "rules matched" when the real
+    # reason was "the user wrote 不要" hides the mechanism we actually rely on.
+    if verdict["read_only_explicit"]:
+        proposal["reason"] = "vetoed-explicit-read-only"
+        return verdict
+    if not verdict["unknown"]:
+        proposal["reason"] = "rules-matched"
+        return verdict
+    if verdict["ambiguity"]:
+        proposal["reason"] = "vetoed-ambiguity"
+        return verdict
+    try:
+        suggested = propose(intent)
+    except Exception as exc:  # a broken proposer must not take routing down with it
+        proposal["reason"] = f"proposer-failed:{exc.__class__.__name__}"
+        return verdict
+    if isinstance(suggested, dict):
+        proposal["source"] = suggested.get("source")
+        suggested = suggested.get("scenario")
+    proposal["scenario"] = suggested
+    if suggested is None:
+        # Abstention is a real answer and the caller keeps the deterministic fallback.
+        proposal["reason"] = "proposer-abstained"
+        return verdict
+    if not isinstance(suggested, str) or suggested not in KEYWORDS:
+        proposal["reason"] = "unknown-scenario"
+        return verdict
+    proposal["applied"] = True
+    proposal["reason"] = "filled-unknown"
+    verdict["scenario"] = suggested
+    # The gap is filled, so it is no longer unknown. Leaving this True made every applied
+    # proposal still report "I don't know", which is the bug the eval caught.
+    verdict["unknown"] = False
+    verdict["read_only"] = suggested in READ_ONLY_SCENARIOS
+    verdict["confidence"] = "low"
+    verdict["decision_trace"] = list(verdict["decision_trace"]) + [
+        f"no rule matched; proposal supplied {suggested}"]
+    if suggested in WRITE_INTENTS:
+        verdict["requires_clarification"] = True
+        proposal["reason"] = "filled-unknown-write-needs-confirmation"
+    else:
+        verdict["requires_clarification"] = False
+    return verdict
