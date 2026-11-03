@@ -83,6 +83,17 @@ BUILTIN: dict[str, dict] = {
         "window_titles": ["Chrome"],
         "electron": True,
         "transports": ["cdp", "uia", "ocr-paste"],
+        # A browser tab is not a collaboration surface.  The window this
+        # profile matches on this machine is a live web Feishu chat, and both
+        # directions are wrong: perceiving it copies an unrelated human
+        # conversation into the shared transcript bus, and delivering to it
+        # would type into a chat with real people in it.  The rule lives here,
+        # in the roster, rather than in a chat message, because a rule that
+        # only exists in a conversation is a rule the next session will not
+        # know about.
+        "out_of_scope": ("web Feishu / browser tabs are outside the collaboration "
+                         "surface: reading one pulls an unrelated conversation into "
+                         "the bus, and typing into one messages real people"),
     },
 }
 
@@ -205,6 +216,14 @@ def profile(root: Path, agent: str) -> dict:
     if path.is_file():
         data = json.loads(path.read_text(encoding="utf-8"))
         data["source"] = "registered"
+        # A registered profile says how to *reach* a client; it does not say
+        # whether the client is in scope.  This branch returns the file
+        # verbatim, so without the line below, registering a chrome.json would
+        # quietly put the browser tab back into service -- the refusal would
+        # live only in the catalogue that the registration just shadowed.
+        builtin = BUILTIN.get(agent) or {}
+        if builtin.get("out_of_scope"):
+            data["out_of_scope"] = builtin["out_of_scope"]
         return data
     if agent in BUILTIN:
         data = dict(BUILTIN[agent])
@@ -348,6 +367,7 @@ def discover(root: Path, agent: str = "") -> dict:
             "windows": hits,
             "unique": len(hits) == 1,
             "anchored": any(item["is_anchor"] for item in hits),
+            "out_of_scope": row.get("out_of_scope", ""),
         })
     rejected = _settle_by_executable(found, _executable_owners(root, known(root)))
     for row in found:

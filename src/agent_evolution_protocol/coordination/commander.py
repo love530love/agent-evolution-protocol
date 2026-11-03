@@ -50,6 +50,16 @@ REINFORCE_AFTER_MINUTES = 20  # 主订单停火或久未ACK后，允许候选age
 AUTO_RESUME_LIMIT = 6
 AUTO_RESUME_BACKOFF_SECONDS = 20
 
+# Deferrals caused by the *executor's environment* rather than the target's
+# readiness.  These prove nothing was typed, so retrying them cannot duplicate a
+# message, and they do not consume the retry budget: the condition clears when
+# the environment changes, not when we stop trying.
+ENVIRONMENTAL_DEFERRALS = frozenset({"EXECUTOR_TOO_LOW"})
+
+# One switch per order.  A second would mean the continuation surface failed for
+# the same reason, and bouncing between two surfaces forever is not retrying.
+SURFACE_SWITCH_LIMIT = 1
+
 # DEPOSITED -> WINDOW_FOUND -> INPUT_SUBMITTED -> MESSAGE_VISIBLE -> AGENT_ACK
 ORDER_STATES = ("DEPOSITED", "DEFERRED", "DISPATCHING", "WINDOW_FOUND", "INPUT_SUBMITTED", "MESSAGE_VISIBLE", "AGENT_ACK", "CEASED", "FAILED", "RETIRED")
 
@@ -254,9 +264,25 @@ def _deferred_count(order: dict) -> int:
     Counting the tail would reset on every automatic retry -- the retry writes
     a DEPOSITED attempt first -- and the budget would never be reached, which
     turns a bounded retry into an unbounded loop.
+
+    Environmental deferrals are excluded.  ``EXECUTOR_TOO_LOW`` proves that
+    nothing was typed: UIPI refused the input before it reached the window.  It
+    is a fact about the executor's integrity level, not about the target's
+    readiness, so retrying it cannot duplicate a message and waiting on a person
+    is the wrong response -- a scheduler that gives up after six attempts at
+    60-second intervals declares failure eleven minutes into an outage that a
+    single elevation would have ended.  The order's ``expires_at`` is the real
+    bound, and it is the right one: it bounds "the environment might change",
+    which is what this is.
     """
-    return sum(1 for attempt in order.get("attempts", [])
-               if attempt.get("state") == "DEFERRED")
+    total = 0
+    for attempt in order.get("attempts", []):
+        if attempt.get("state") != "DEFERRED":
+            continue
+        if (attempt.get("receipt") or {}).get("status") in ENVIRONMENTAL_DEFERRALS:
+            continue
+        total += 1
+    return total
 
 
 def _auto_resume_due(order: dict) -> bool:
@@ -476,6 +502,13 @@ def perceive(root: Path, *, agents: list[str] | None = None) -> dict:
         name = client["agent"]
         if agents and name not in agents:
             continue
+        if client.get("out_of_scope"):
+            # Perception is read-only, but it is not harmless: publishing a
+            # browser tab into the shared bus copies an unrelated human
+            # conversation into every agent's context.  Refuse at the source.
+            results.append({"agent": name, "status": "OUT_OF_SCOPE",
+                            "published": False, "reason": client["out_of_scope"]})
+            continue
         if not client["windows"]:
             results.append({"agent": name, "status": "NO_WINDOW", "published": False})
             continue
@@ -533,6 +566,89 @@ def _cdp_port_owned_by_anchor(port: int, anchor_pid: int) -> bool:
     except Exception:  # noqa: BLE001 - unavailable process attribution must fail closed
         return False
     return False
+
+
+def _continuation_surfaces(root: Path, order: dict, *, blocked_target: str) -> list[dict]:
+    """Other clients where this same conversation is open and can be driven.
+
+    The question ``continuity`` answers is "same conversation, different
+    surface", and it is the only question that makes an automatic switch safe:
+    the digest covers agent/exe/title, so the same conversation in another
+    client hashes differently and looks like a stranger.  ``continues is True``
+    means the conversation marker matches; ``None`` means there is nothing to
+    compare and is treated as a refusal, because two unlabelled threads are
+    indistinguishable and guessing is how a message lands in the wrong one.
+
+    Out-of-scope surfaces are never candidates, and neither is the blocked
+    target itself.
+    """
+    recorded = session_fingerprint.read(root, order.get("target", ""))
+    if not recorded:
+        return []
+    try:
+        discovery = registry.discover(root)
+    except Exception:  # noqa: BLE001 - a degraded enumeration is not a candidate list
+        return []
+    candidates = []
+    for row in discovery.get("clients", []):
+        name = row.get("agent")
+        if not name or name == blocked_target or row.get("out_of_scope"):
+            continue
+        windows = row.get("windows") or []
+        if not windows:
+            continue
+        if not row.get("unique") and not row.get("anchored"):
+            continue
+        window = next((item for item in windows if item.get("is_anchor")), windows[0])
+        try:
+            profile_row = session_fingerprint.merged_profile(
+                registry.profile(root, name), session_fingerprint.ui_profile(root, name))
+            observed = session_fingerprint.observe(agent=name, window=window,
+                                                   profile=profile_row)
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        verdict = session_fingerprint.continuity(recorded, observed)
+        if verdict.get("continues") is True:
+            candidates.append({"agent": name, "pid": window.get("pid"),
+                               "window_title": window.get("title", ""),
+                               "continuity": verdict, "observed": observed})
+    return candidates
+
+
+def _switch_surface(root: Path, order: dict, *, blocked_target: str,
+                    transport: str, receipt: dict) -> dict | None:
+    """Deliver on a continuation surface instead of waiting for a person.
+
+    Only ever called after a receipt that *proves nothing was typed* -- UIPI
+    refused the input before it reached the window -- so choosing another
+    surface here cannot send the message twice.  That proof is the whole reason
+    the switch is allowed without asking: a switch after an uncertain send would
+    be a duplicate, and a switch after a proven non-send is a retry.
+
+    Returns the re-dispatched result, or ``None`` when there is nowhere to go.
+    """
+    if int(order.get("surface_switches") or 0) >= SURFACE_SWITCH_LIMIT:
+        return None
+    candidates = _continuation_surfaces(root, order, blocked_target=blocked_target)
+    if not candidates:
+        return None
+    chosen = candidates[0]
+    order["surface_switches"] = int(order.get("surface_switches") or 0) + 1
+    order["target"] = chosen["agent"]
+    _record_attempt(
+        root, order, state="DEPOSITED", transport=transport,
+        receipt={"surface_switch": {"from": blocked_target, "to": chosen["agent"],
+                                    "pid": chosen["pid"],
+                                    "window_title": chosen["window_title"],
+                                    "continuity": chosen["continuity"],
+                                    "observed": chosen["observed"],
+                                    "blocked_receipt_status": receipt.get("status", "")},
+                 "alternatives": [{key: item[key] for key in ("agent", "pid", "window_title")}
+                                  for item in candidates]},
+        note=(f"SURFACE_SWITCHED: {blocked_target} cannot be driven from this integrity "
+              f"level and nothing was typed; continuing the same conversation on "
+              f"{chosen['agent']} without asking again"))
+    return _dispatch(root, order=_persisted_order(root, order["id"]))
 
 
 def _dispatch_lock(root: Path, order_id: str):
@@ -766,6 +882,13 @@ def _dispatch(root: Path, *, order: dict) -> dict:
     except ValueError:
         return _record_attempt(root, order, state="DEFERRED",
                                note="UNREGISTERED_CLIENT: register a verified client profile before delivery")
+    if profile_row.get("out_of_scope"):
+        # Refuse before discovery, not after: an out-of-scope surface is not a
+        # window that happens to be closed, it is one that must never be typed
+        # into.  Naming it here means a future caller cannot register it back
+        # into service by accident.
+        return _record_attempt(root, order, state="FAILED", note=(
+            "OUT_OF_SCOPE_TARGET: " + str(profile_row["out_of_scope"])))
     # ``clients/<agent>.json`` names the client; ``ui_profiles/<agent>.json``
     # names the session inside it.  The fingerprint below is supposed to answer
     # "same conversation as last time", which needs both -- reading only the
@@ -863,12 +986,18 @@ def _dispatch(root: Path, *, order: dict) -> dict:
                                   "composer-not-confirmed"):
         note = "PREINPUT_NOT_READY: observe again after the target becomes ready"
         if receipt.get("status") == "EXECUTOR_TOO_LOW":
-            # UIPI is not a race and not a slow client: the receipt proves no
-            # input happened, so this is a deferral an operator can clear by
-            # elevating the executor -- not a CEASED order whose note says a
-            # send may have happened.
+            # UIPI proves no input reached the window, which makes this the one
+            # point in the whole delivery path where another surface can be
+            # chosen with no risk of sending twice.  Asking a person here would
+            # be a prompt in the middle of an unattended run, so we look for the
+            # same conversation elsewhere and continue there instead.
+            switched = _switch_surface(root, order, blocked_target=target,
+                                       transport=transport, receipt=receipt)
+            if switched is not None:
+                return switched
             note = ("EXECUTOR_TOO_LOW: UIPI refuses input from a lower integrity level; "
-                    "nothing was typed -- start the executor elevated, then resume")
+                    "nothing was typed -- no other surface carries this conversation, "
+                    "so it is retried until the executor or the target changes")
         return _record_attempt(root, order, state="DEFERRED", transport=transport, receipt=receipt,
                                note=note)
     if receipt.get("status") in ("NO_RECEIPT", "ADAPTER_ERROR", "ADAPTER_MISSING", "PROFILE_DELIVERY_FAILED", "SEND_CONTROL_NOT_FOUND", "send-control-not-found", "input-not-confirmed") or receipt.get("returncode", 0) != 0:
