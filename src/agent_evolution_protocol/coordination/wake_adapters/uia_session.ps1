@@ -1154,12 +1154,65 @@ function Invoke-SendControl {
   return ''
 }
 
+function Test-AepStopLabel {
+  # A label is a stop control when it *contains* a stop word, not when it
+  # equals one.
+  #
+  # Measured on Qoder 0.5.3 while a run was live (pid 75180, 2026-11-05): the
+  # only action control in the composer was a Button named "停止生成" at
+  # 1904,1968.  Exact matching against @('停止', ...) did not recognise it, so
+  # a profile that listed "停止生成" as an interject hint would have clicked
+  # Stop and killed the run -- while the receipt said it had interjected.
+  # Containment closes that; the word list only has to name the verb.
+  param([string]$Name, [string[]]$Words)
+  if (-not $Name) { return $false }
+  foreach ($word in $Words) {
+    if (-not $word) { continue }
+    if ($Name.IndexOf($word, [StringComparison]::OrdinalIgnoreCase) -ge 0) { return $true }
+  }
+  return $false
+}
+
+function Get-AepActionLabels {
+  # Short, on-screen, enabled button labels -- what the client is offering to
+  # do right now.  A refusal that only says "the hint did not match" leaves the
+  # operator guessing; this says "it offered 停止生成 instead", which is a
+  # statement you can act on.
+  param($Root, [int]$MaxLength = 16)
+  $labels = @()
+  if (-not $Root) { return , $labels }
+  $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+  $queue = New-Object System.Collections.Queue
+  $queue.Enqueue($Root)
+  $visited = 0
+  while ($queue.Count -gt 0 -and $visited -lt 4000) {
+    $visited++
+    $element = $queue.Dequeue()
+    try {
+      if ($element.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button) {
+        $name = ([string]$element.Current.Name).Trim()
+        if ($name -and $name.Length -le $MaxLength -and
+            $element.Current.IsEnabled -and -not $element.Current.IsOffscreen) {
+          $labels += $name
+        }
+      }
+      $child = $walker.GetFirstChild($element)
+      while ($child) { $queue.Enqueue($child); $child = $walker.GetNextSibling($child) }
+    } catch { }
+  }
+  return , @($labels | Select-Object -Unique)
+}
+
 function Invoke-InterjectControl {
-  param($Root, [IntPtr]$Hwnd, [string[]]$Hints = @())
+  # Fires only on an exact profiled label.  $Seen collects the short, on-screen,
+  # enabled button labels it walked past, so a refusal can say what the client
+  # actually offers instead of only that the hint did not match.
+  param($Root, [IntPtr]$Hwnd, [string[]]$Hints = @(), [ref]$Seen)
   $safeHints = @($Hints | ForEach-Object { [string]$_ -split ',' } |
     Where-Object { $_ -and $_.Trim() } | ForEach-Object { $_.Trim() } | Select-Object -Unique)
   if ($safeHints.Count -eq 0) { return '' }
   $stopWords = @('停止', '取消', '中止', 'Stop', 'Cancel', 'Abort')
+  $seenLabels = @()
   $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
   $queue = New-Object System.Collections.Queue
   if ($Root) { $queue.Enqueue($Root) }
@@ -1167,22 +1220,28 @@ function Invoke-InterjectControl {
     $element = $queue.Dequeue()
     try {
       $type = $element.Current.ControlType
-      $name = [string]$element.Current.Name
+      $name = ([string]$element.Current.Name).Trim()
+      if ($type -eq [System.Windows.Automation.ControlType]::Button -and $name -and
+          $name.Length -le 16 -and $element.Current.IsEnabled -and -not $element.Current.IsOffscreen) {
+        $seenLabels += $name
+      }
       if ($type -eq [System.Windows.Automation.ControlType]::Button -and
-          $safeHints -contains $name.Trim() -and
-          -not ($stopWords -contains $name.Trim()) -and
+          $safeHints -contains $name -and
+          -not (Test-AepStopLabel -Name $name -Words $stopWords) -and
           $element.Current.IsEnabled -and -not $element.Current.IsOffscreen) {
         try {
           $pattern = $element.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
           $pattern.Invoke(); Start-Sleep -Milliseconds 250
-          return $name.Trim()
+          if ($Seen) { $Seen.Value = @($seenLabels | Select-Object -Unique) }
+          return $name
         } catch {
           try {
             if ($element.Current.IsEnabled -and -not $element.Current.IsOffscreen) {
               $box = $element.Current.BoundingRectangle
               if ($box.Width -gt 0 -and $box.Height -gt 0) {
                 Invoke-AepClick -X ([int]($box.Left + $box.Width / 2)) -Y ([int]($box.Top + $box.Height / 2))
-                return $name.Trim()
+                if ($Seen) { $Seen.Value = @($seenLabels | Select-Object -Unique) }
+                return $name
               }
             }
           } catch { }
@@ -1199,14 +1258,17 @@ function Invoke-InterjectControl {
   if ([AepUiWindow]::GetWindowRect($Hwnd, [ref]$rect)) {
     $hits = @($scan.Lines | Where-Object {
       $_.Text -and ($safeHints -contains $_.Text.Trim()) -and
-      -not ($stopWords -contains $_.Text.Trim()) -and $_.Y -lt (($rect.Bottom - $rect.Top) * 0.85)
+      -not (Test-AepStopLabel -Name $_.Text.Trim() -Words $stopWords) -and
+      $_.Y -lt (($rect.Bottom - $rect.Top) * 0.85)
     })
     if ($hits.Count -eq 1) {
       $hit = $hits[0]
       Invoke-AepClick -X ([int]($rect.Left + $hit.X + $hit.W / 2)) -Y ([int]($rect.Top + $hit.Y + $hit.H / 2))
+      if ($Seen) { $Seen.Value = @($seenLabels | Select-Object -Unique) }
       return $hit.Text.Trim()
     }
   }
+  if ($Seen) { $Seen.Value = @($seenLabels | Select-Object -Unique) }
   return ''
 }
 
@@ -1454,14 +1516,17 @@ if ($Mode -eq 'compose') {
     if ($activity.state -ne 'busy' -or -not $activity.interject_evidence.ready) {
       Write-Report @{ status = 'urgent-interject-unavailable'; pid = $window.Pid; title = $window.Title;
         interruption = $false; interject_action = ''; interject_evidence = $activity.interject_evidence;
+        action_labels = Get-AepActionLabels -Root $root;
         input_found = [bool]$selection; input_candidate_count = $(if ($selection) { $selection.CandidateCount } else { 0 })
         task_delivered = $false; method = 'uia-compose' }
       return
     }
-    $interjectAction = Invoke-InterjectControl -Root $root -Hwnd $window.Hwnd -Hints $InterjectHints
+    $seenLabels = @()
+    $interjectAction = Invoke-InterjectControl -Root $root -Hwnd $window.Hwnd -Hints $InterjectHints -Seen ([ref]$seenLabels)
     if (-not $interjectAction) {
       Write-Report @{ status = 'urgent-interject-unavailable'; pid = $window.Pid; title = $window.Title;
         interruption = $false; interject_action = ''; interject_evidence = $activity.interject_evidence;
+        action_labels = $seenLabels;
         input_found = [bool]$selection; input_candidate_count = $(if ($selection) { $selection.CandidateCount } else { 0 })
         task_delivered = $false; method = 'uia-compose' }
       return
@@ -1801,14 +1866,17 @@ if ($UrgentInterject) {
   if ($activity.state -ne 'busy' -or -not $activity.interject_evidence.ready) {
     Write-Report @{ status = 'urgent-interject-unavailable'; pid = $window.Pid; title = $window.Title;
       interruption = $false; interject_action = ''; interject_evidence = $activity.interject_evidence;
+      action_labels = Get-AepActionLabels -Root $root;
       input_found = [bool]$selection; input_candidate_count = $(if ($selection) { $selection.CandidateCount } else { 0 })
       task_delivered = $false; method = 'uia-deliver' }
     return
   }
-  $interjectAction = Invoke-InterjectControl -Root $root -Hwnd $window.Hwnd -Hints $InterjectHints
+  $seenLabels = @()
+  $interjectAction = Invoke-InterjectControl -Root $root -Hwnd $window.Hwnd -Hints $InterjectHints -Seen ([ref]$seenLabels)
   if (-not $interjectAction) {
     Write-Report @{ status = 'urgent-interject-unavailable'; pid = $window.Pid; title = $window.Title;
       interruption = $false; interject_action = ''; interject_evidence = $activity.interject_evidence;
+      action_labels = $seenLabels;
       input_found = [bool]$selection; input_candidate_count = $(if ($selection) { $selection.CandidateCount } else { 0 })
       task_delivered = $false; method = 'uia-deliver' }
     return
@@ -1895,6 +1963,32 @@ if ($selection -and -not $inputVerified) {
     activation       = $ActivationEvidence
     task_delivered   = $false
     method           = 'uia-deliver'
+  }
+  return
+}
+
+if ($NoSend) {
+  # Stage the text and stop.  The point is the second half of the receipt: what
+  # the client offers to do *now that the composer has content*.  While a run is
+  # live the send control is replaced by Stop, and whether a second affordance
+  # appears is a fact about the client that no amount of configuration can
+  # answer.  Nothing here presses Enter or clicks a button.
+  Write-Report @{
+    status            = 'composer-confirmed-no-send'
+    pid               = $window.Pid
+    title             = $window.Title
+    write_method      = $writeMethod
+    input_focused     = $focused
+    input_verified    = $inputVerified
+    typed_preview     = $(if ($typedValue.Length -gt 200) { $typedValue.Substring(0, 200) } else { $typedValue })
+    action_labels     = Get-AepActionLabels -Root $root
+    activity_state    = $activity.state
+    interject_evidence = $activity.interject_evidence
+    input_selected_reason = $(if ($selection) { $selection.SelectedReason } else { '' })
+    activation        = $ActivationEvidence
+    task_delivered    = $false
+    method            = 'uia-deliver-no-send'
+    note              = 'the text is in the composer and has not been sent; press Enter yourself, or clear it'
   }
   return
 }

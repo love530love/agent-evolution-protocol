@@ -3895,6 +3895,28 @@
         },
         {
           "default": false,
+          "dest": "urgent_interject",
+          "flags": [
+            "--urgent-interject"
+          ],
+          "help": "reach the client through an exact profiled interject action while it is busy; refuses rather than clicking Stop",
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "no_send",
+          "flags": [
+            "--no-send"
+          ],
+          "help": "write the text and stop; the receipt reports what the client offers to do next",
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "default": false,
           "dest": "ocr",
           "flags": [
             "--ocr"
@@ -5344,7 +5366,7 @@
     }
   ],
   "count": 89,
-  "digest": "sha256:40bf758552f93f51f6bf193901bd091f29c058fc6d0b805fcf35dc1b551c12e1",
+  "digest": "sha256:09a984be67a82c1c421d337fd55474bcb992e5911c004d91ceb16647e9a68c55",
   "documented": 25,
   "generated_from": "agent_evolution_protocol.cli:build_parser",
   "global_arguments": [

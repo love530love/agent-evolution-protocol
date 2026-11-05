@@ -11,9 +11,12 @@ import contextlib
 import io
 import json
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from agent_evolution_protocol import cli
@@ -316,6 +319,64 @@ class ProfileArgTests(unittest.TestCase):
         argv = ["pwsh", "-File", "a.ps1"]
         ui_fallback.merge_profile_args(argv, {"send_mode": "enter"})
         self.assertEqual(argv, ["pwsh", "-File", "a.ps1"])
+
+
+class InterjectSafetyTests(unittest.TestCase):
+    """The interject action must never be able to reach a Stop control.
+
+    Measured on Qoder 0.5.3 while a run was live (pid 75180, 2026-11-05): the
+    only action control in the composer was a Button named 停止生成 at
+    1904,1968 -- no send, queue or interject button existed at all.  The old
+    guard compared each label to @('停止') with ``-contains``, which is exact
+    equality, so it did not recognise 停止生成; a profile that listed that label
+    as an interject hint would have clicked Stop and killed the run while the
+    receipt said it had interjected.  Containment is what closes it.
+    """
+
+    SOURCE = (Path(__file__).resolve().parents[1] / "src" / "agent_evolution_protocol"
+              / "coordination" / "wake_adapters" / "uia_session.ps1").read_text(encoding="utf-8")
+
+    @classmethod
+    def _function(cls, name: str) -> str:
+        start = cls.SOURCE.index(f"function {name} {{")
+        depth = 0
+        for index in range(start, len(cls.SOURCE)):
+            char = cls.SOURCE[index]
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return cls.SOURCE[start:index + 1]
+        raise AssertionError(f"unbalanced braces after function {name}")
+
+    def _label_is_stop(self, label: str) -> bool:
+        pwsh = shutil.which("pwsh.exe") or shutil.which("pwsh")
+        if not pwsh:
+            self.skipTest("pwsh is required to evaluate the adapter's own predicate")
+        script = self._function("Test-AepStopLabel") + \
+            f"\nTest-AepStopLabel -Name '{label}' -Words @('停止','取消','中止','Stop','Cancel','Abort')"
+        completed = subprocess.run([pwsh, "-NoProfile", "-Command", script],
+                                   capture_output=True, text=True, timeout=60, check=False)
+        return completed.stdout.strip() == "True"
+
+    def test_a_label_that_merely_contains_a_stop_word_is_a_stop(self):
+        self.assertTrue(self._label_is_stop("停止生成"))
+
+    def test_an_ordinary_label_is_not_a_stop(self):
+        self.assertFalse(self._label_is_stop("插话"))
+
+    def test_the_english_verb_matches_inside_a_phrase(self):
+        self.assertTrue(self._label_is_stop("Stop generating"))
+
+    def test_a_refusal_says_what_the_client_offers_instead(self):
+        # "the hint did not match" leaves the operator guessing.  The refusal
+        # now lists the short on-screen button labels, which is how the absence
+        # of any interject control on Qoder was established in the first place.
+        for status in ("urgent-interject-unavailable",):
+            start = self.SOURCE.index(f"'{status}'")
+            window = self.SOURCE[start:start + 900]
+            self.assertIn("action_labels", window, f"{status} does not report action_labels")
 
 
 if __name__ == "__main__":

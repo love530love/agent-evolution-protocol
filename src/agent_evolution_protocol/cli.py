@@ -2508,6 +2508,13 @@ def coord_uia(args: argparse.Namespace) -> None:
         command += ["-Text", text]
     if args.ocr:
         command += ["-OcrVerify"]
+    # The interject path existed in the adapter and in the scheduler, but the
+    # operator's own command could not reach it: an urgent note to a busy
+    # client had no CLI entry at all.
+    if getattr(args, "urgent_interject", False):
+        command += ["-UrgentInterject"]
+    if getattr(args, "no_send", False):
+        command += ["-NoSend"]
     command += ["-ReadBackTimeoutSeconds", str(max(1, min(args.timeout, 300)))]
     try:
         # Same runner the driver uses, for the same two reasons: a non-ASCII
@@ -3472,7 +3479,7 @@ def build_parser() -> argparse.ArgumentParser:
     checkpoint = commands.add_parser("kernel-checkpoint"); checkpoint.add_argument("--task-id", required=True); checkpoint.add_argument("--executor", required=True); checkpoint_body = checkpoint.add_mutually_exclusive_group(required=True); checkpoint_body.add_argument("--payload-json"); checkpoint_body.add_argument("--payload-file"); checkpoint.set_defaults(func=kernel_checkpoint)
     legion = commands.add_parser("coord-legion"); legion.add_argument("action", choices=("record", "scoreboard", "slacking", "challenge", "chase", "adjudicate", "incentive-board")); legion.add_argument("--agent"); legion.add_argument("--kind"); legion.add_argument("--reporter"); legion.add_argument("--reviewer"); legion.add_argument("--verdict", choices=("accepted", "rejected")); legion.add_argument("--event-id"); legion.add_argument("--task"); legion.add_argument("--signature"); legion.add_argument("--evidence", nargs="*", default=[]); legion.add_argument("--note"); legion.add_argument("--reason"); legion.add_argument("--alternative"); legion.add_argument("--predicted-signature"); legion.add_argument("--cheapest-test"); legion.add_argument("--stop-condition"); legion.add_argument("--expected", nargs="*", default=[]); legion.add_argument("--window-hours", type=float, default=24); legion.add_argument("--min-productive", type=int, default=1); legion.set_defaults(func=coord_legion)
     digest = commands.add_parser("coord-chat-digest"); digest.add_argument("--agent", required=True); digest.add_argument("--since-hours", type=float, default=24); digest.add_argument("--per-actor", type=int, default=4); digest.add_argument("--chars", type=int, default=240); digest.add_argument("--markdown", action="store_true"); digest.set_defaults(func=coord_chat_digest)
-    uia = commands.add_parser("coord-uia"); uia.add_argument("action", choices=("observe", "capture", "deliver")); uia.add_argument("--agent", required=True); uia.add_argument("--process"); uia.add_argument("--exe"); uia.add_argument("--title"); uia.add_argument("--event-id"); uia.add_argument("--text"); uia.add_argument("--text-file", type=Path); uia.add_argument("--out-file"); uia.add_argument("--allow-unknown-path", action="store_true"); uia.add_argument("--allow-clipboard-paste", action="store_true"); uia.add_argument("--ocr", action="store_true"); uia.add_argument("--timeout", type=int, default=20); uia.set_defaults(func=coord_uia)
+    uia = commands.add_parser("coord-uia"); uia.add_argument("action", choices=("observe", "capture", "deliver")); uia.add_argument("--agent", required=True); uia.add_argument("--process"); uia.add_argument("--exe"); uia.add_argument("--title"); uia.add_argument("--event-id"); uia.add_argument("--text"); uia.add_argument("--text-file", type=Path); uia.add_argument("--out-file"); uia.add_argument("--allow-unknown-path", action="store_true"); uia.add_argument("--allow-clipboard-paste", action="store_true"); uia.add_argument("--urgent-interject", action="store_true", help="reach the client through an exact profiled interject action while it is busy; refuses rather than clicking Stop"); uia.add_argument("--no-send", action="store_true", help="write the text and stop; the receipt reports what the client offers to do next"); uia.add_argument("--ocr", action="store_true"); uia.add_argument("--timeout", type=int, default=20); uia.set_defaults(func=coord_uia)
 
     vision = commands.add_parser("coord-vision", help="ask a grounder where a control is, and compare it with a known answer")
     vision.add_argument("action", choices=("ground", "providers"))
