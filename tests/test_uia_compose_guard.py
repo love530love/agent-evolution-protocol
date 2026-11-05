@@ -200,6 +200,22 @@ def test_the_adapter_still_refuses_blind_paste_by_default():
     assert "NO_INPUT_CONTROL: no enabled editable control found" in source
 
 
+def test_the_deliver_branch_honours_the_profiles_maximize_request():
+    # capture and compose read AEP_MAXIMIZE_WINDOW; deliver did not, and the
+    # difference is not cosmetic.  Measured on the international Qoder
+    # (2026-11-05): its window had been left at 237x39, so SW_RESTORE restored
+    # it to 237x39 and the composer band was 39 pixels tall.  A profile that
+    # says "read this client maximised" means every mode, not two of three.
+    source = (ROOT / "src" / "agent_evolution_protocol" / "coordination"
+              / "wake_adapters" / "uia_session.ps1").read_text(encoding="utf-8")
+    deliver = source[source.index("if (-not $selection -and -not $AllowClipboardPaste) {"):]
+    assert ("$deliverShowMode = if ($env:AEP_MAXIMIZE_WINDOW -eq '1') { 3 } else { 9 }"
+            in deliver)
+    assert "ShowWindowAsync($window.Hwnd, $deliverShowMode)" in deliver
+    assert "Set-AepForegroundWindow -Hwnd $window.Hwnd -ShowMode $deliverShowMode" in deliver
+    assert "ShowWindowAsync($window.Hwnd, 9)" not in deliver
+
+
 def test_every_deliver_early_return_says_whether_an_input_was_found():
     # The evidence ladder is only machine-checkable if the failing branches
     # answer the same question as the succeeding one.  These two used to

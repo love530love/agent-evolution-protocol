@@ -1965,8 +1965,15 @@ if (-not $selection -and -not $AllowClipboardPaste) {
 if (-not $EventId -or -not $Text.Trim()) { throw 'DELIVER_PAYLOAD_MISSING: deliver mode needs -EventId and -Text' }
 if (-not $Text.Contains($EventId)) { throw 'EVENT_ID_NOT_IN_TEXT: the message must carry its own event id so read-back can be verified' }
 
-$ActivationEvidence.show_window = [AepUiWindow]::ShowWindowAsync($window.Hwnd, 9)
-$ActivationEvidence.foreground = Set-AepForegroundWindow -Hwnd $window.Hwnd -ShowMode 9
+# Honour the profile's maximise request here too.  capture and compose already
+# did; this branch did not, and the difference is not cosmetic -- measured on
+# the international Qoder 2026-11-05, its window had been left at 237x39, so
+# SW_RESTORE restored it to 237x39 and the composer band was 39 pixels tall.
+# A profile that says "read this client maximised" means every mode, not two of
+# three.
+$deliverShowMode = if ($env:AEP_MAXIMIZE_WINDOW -eq '1') { 3 } else { 9 }
+$ActivationEvidence.show_window = [AepUiWindow]::ShowWindowAsync($window.Hwnd, $deliverShowMode)
+$ActivationEvidence.foreground = Set-AepForegroundWindow -Hwnd $window.Hwnd -ShowMode $deliverShowMode
 $ActivationEvidence.window_alive = [AepUiWindow]::IsWindow($window.Hwnd)
 if (-not $ActivationEvidence.foreground) {
   throw 'WINDOW_FOCUS_DENIED: Windows rejected foreground activation; nothing was typed'
