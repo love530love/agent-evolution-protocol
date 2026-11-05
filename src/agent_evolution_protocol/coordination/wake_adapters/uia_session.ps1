@@ -23,6 +23,7 @@ param(
   [string]$ComposerHint = '',
   [string[]]$ComposerHints = @(),
   [string]$SessionLabel = '',
+  [string]$SessionMarker = '',
   [ValidateRange(1, 300)][int]$ReadBackTimeoutSeconds = 20,
   [ValidateRange(1, 60)][int]$SettleTimeoutSeconds = 10,
   [ValidateRange(1, 60)][int]$PasteConfirmTimeoutSeconds = 8,
@@ -202,13 +203,13 @@ function Wait-ComposerCleared {
   # the send action" is what turned a delivered message into
   # submitted-unconfirmed: the app had not processed the send yet.
   param([IntPtr]$Hwnd, [string]$EventId, [double]$TimeoutSeconds = 4,
-        [ref]$Polls)
+        [ref]$Polls, [string[]]$Hints = @())
   $deadline = [DateTime]::UtcNow.AddSeconds([Math]::Max(4, $TimeoutSeconds))
   while ([DateTime]::UtcNow -lt $deadline) {
     if ($Polls) { $Polls.Value++ }
     $root = [System.Windows.Automation.AutomationElement]::FromHandle($Hwnd)
     if (-not $root) { return $false }
-    $selection = Select-InputElement -Root $root -Soft
+    $selection = Select-InputElement -Root $root -Soft -Hints $Hints
     if (-not $selection) { return $true }
     try { $remaining = [string]$selection.Element.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value } catch { $remaining = '' }
     if (-not $remaining) { $remaining = Get-ElementText -Element $selection.Element }
@@ -678,8 +679,51 @@ function Get-TextElements {
   return , $found
 }
 
+function Find-AepEventWitness {
+  # The smallest element whose text carries the event id, above a cut.
+  #
+  # "The id is somewhere on screen" is answered by any container that happens
+  # to span the window, so the answer is a *witness*: the tightest element
+  # that holds the id, with its geometry.  A message bubble is small; a
+  # container that holds the whole conversation is not, and the caller can
+  # reject the second by size.  Returning the witness rather than a boolean is
+  # what makes the verdict auditable after the fact.
+  param($Root, [string]$EventId, [double]$AboveTop = 0, [double]$MaxHeight = 0)
+  $best = $null
+  foreach ($element in (Get-TextElements -Root $Root)) {
+    $text = Get-ElementText -Element $element
+    if (-not $text -or -not $text.Contains($EventId)) { continue }
+    try {
+      $rect = $element.Current.BoundingRectangle
+      $control = $element.Current.ControlType.ProgrammaticName
+    } catch { continue }
+    if ($AboveTop -gt 0 -and $rect.Top -ge $AboveTop) { continue }
+    $area = [double]($rect.Width * $rect.Height)
+    if ($best -and $area -ge $best.area) { continue }
+    $best = [pscustomobject]@{
+      area         = $area
+      top          = [int]$rect.Top
+      bottom       = [int]$rect.Bottom
+      width        = [int]$rect.Width
+      height       = [int]$rect.Height
+      control      = $control
+      name         = ([string]$element.Current.Name)
+      too_tall     = [bool]($MaxHeight -gt 0 -and $rect.Height -gt $MaxHeight)
+    }
+  }
+  return $best
+}
+
 function Get-VisibleTranscript {
-  param($Root, [int]$CapChars)
+  # AboveTop drops everything at or below a horizontal cut, in screen pixels.
+  #
+  # Get-TextElements includes Edit controls, so the composer is part of the
+  # transcript it produces.  A read-back that only asked "does the event id
+  # appear anywhere" was therefore answered by the composer itself: the text
+  # had been typed and never sent, and the receipt still said message-visible.
+  # Passing the composer's own top edge as the cut makes "the message is in
+  # the conversation" a claim about the conversation only.
+  param($Root, [int]$CapChars, [double]$AboveTop = 0)
   $elements = Get-TextElements -Root $Root
   $rows = @()
   foreach ($element in $elements) {
@@ -687,6 +731,7 @@ function Get-VisibleTranscript {
     if (-not $text) { continue }
     $top = 0; $left = 0
     try { $rect = $element.Current.BoundingRectangle; $top = [int]$rect.Top; $left = [int]$rect.Left } catch { }
+    if ($AboveTop -gt 0 -and $top -ge $AboveTop) { continue }
     $rows += [pscustomobject]@{ Top = $top; Left = $left; Text = $text }
   }
   $ordered = @($rows | Sort-Object -Property Top, Left)
@@ -706,6 +751,21 @@ function Get-VisibleTranscript {
 }
 
 function Get-InputCandidates {
+  # Which editable control is the composer is decided by geometry, not by
+  # position in the tree.
+  #
+  # Measured on ChatGPT 26.1029.7803 (pid 34244, 2026-11-05): the tree held
+  # three enabled editable controls -- a Markdown file editor at y=212 with
+  # height 7241 inside a 1230-pixel-tall window, the chat composer near the
+  # bottom, and a file filter box near the top.  The old ranking preferred the
+  # largest bottom edge, so it chose the editor, whose rect ends 6223 pixels
+  # below the window.  A delivery then replaced 112 lines of a tracked file
+  # while the receipt reported message-visible / task_delivered=true.
+  #
+  # Two rejections, both geometric and both reported in the receipt so a
+  # reader can falsify the choice instead of trusting it:
+  #   * OUTSIDE_WINDOW      -- the rect is not inside the window (tolerance 8px)
+  #   * SCROLLED_CONTAINER  -- the rect is taller than the window can show
   param($Root)
   $condition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Edit)
   $edits = @()
@@ -714,6 +774,10 @@ function Get-InputCandidates {
     $condition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Document)
     try { $edits = @($Root.FindAll([System.Windows.Automation.TreeScope]::Subtree, $condition)) } catch { }
   }
+  $window = $null
+  try { $window = $Root.Current.BoundingRectangle } catch { }
+  $hasWindow = [bool]($window -and $window.Width -gt 0 -and $window.Height -gt 0)
+  $tolerance = 8
   $candidates = @()
   foreach ($element in $edits) {
     try {
@@ -725,12 +789,30 @@ function Get-InputCandidates {
       try { $readOnly = $element.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.IsReadOnly } catch { }
     } catch { continue }
     if (-not $enabled -or $offscreen -or $readOnly) { continue }
+    $reject = ''
+    if ($hasWindow) {
+      $overflow = [ordered]@{
+        top    = [int][Math]::Ceiling($window.Top - $rect.Top)
+        bottom = [int][Math]::Ceiling($rect.Bottom - $window.Bottom)
+        left   = [int][Math]::Ceiling($window.Left - $rect.Left)
+        right  = [int][Math]::Ceiling($rect.Right - $window.Right)
+      }
+      $worst = ($overflow.Values | Measure-Object -Maximum).Maximum
+      if ($worst -gt $tolerance) {
+        $reject = "OUTSIDE_WINDOW: overflow top=$($overflow.top) bottom=$($overflow.bottom) left=$($overflow.left) right=$($overflow.right) rect=$([int]$rect.Left),$([int]$rect.Top) $([int]$rect.Width)x$([int]$rect.Height) window=$([int]$window.Left),$([int]$window.Top) $([int]$window.Width)x$([int]$window.Height)"
+      } elseif ($rect.Height -gt ($window.Height * 3)) {
+        $reject = "SCROLLED_CONTAINER: height=$([int]$rect.Height) exceeds three window heights ($([int]$window.Height))"
+      }
+    }
     $candidates += [pscustomobject]@{
       Element   = $element
       Focusable = $focusable
+      Top       = [int]$rect.Top
       Bottom    = [int]($rect.Top + $rect.Height)
       Width     = [int]$rect.Width
+      Height    = [int]$rect.Height
       Name      = [string]$element.Current.Name
+      Rejected  = $reject
       Value     = ''
     }
   }
@@ -780,29 +862,107 @@ function Get-ElementInventory {
 }
 
 function Select-InputElement {
-  param($Root, [switch]$Soft)
+  # Rank what survived the geometry filter.  Three keys, in this order, and
+  # each one is a separate claim so the receipt can say which claim decided:
+  #
+  #   hint        the control's name is exactly a profiled composer hint;
+  #   lower band  its bottom edge sits in the lower 45% of the window, which
+  #               is where a chat composer lives and a filter box does not;
+  #   lowest      ties are broken downward, then by width.
+  #
+  # Hints come only from the profile.  The generic OCR placeholders are for
+  # the opaque-client path; letting "输入" or "Ask" bid here made a search box
+  # outrank a composer on clients that name both the same way.
+  param($Root, [switch]$Soft, [string[]]$Hints = @())
   $candidates = Get-InputCandidates -Root $Root
-  if ($candidates.Count -eq 0) {
-    if ($Soft) { return $null }
-    throw 'NO_INPUT_CONTROL: no enabled editable control found; refusing to guess coordinates'
+  $viable = @($candidates | Where-Object { -not $_.Rejected })
+  $dropped = @($candidates | Where-Object { $_.Rejected })
+  $window = $null
+  try { $window = $Root.Current.BoundingRectangle } catch { }
+  $bandTop = 0
+  if ($window -and $window.Height -gt 0) { $bandTop = $window.Top + ($window.Height * 0.55) }
+  $cleanHints = @($Hints | Where-Object { $_ -and $_.Trim() } | ForEach-Object { $_.Trim() } | Select-Object -Unique)
+  $scored = @()
+  foreach ($candidate in $viable) {
+    $name = ([string]$candidate.Name).Trim()
+    $hintMatch = [bool]($name -and ($cleanHints -contains $name))
+    $lowerBand = [bool]($bandTop -gt 0 -and $candidate.Bottom -ge $bandTop)
+    $score = 0
+    if ($hintMatch) { $score += 2 }
+    if ($lowerBand) { $score += 1 }
+    $scored += [pscustomobject]@{
+      Element    = $candidate.Element
+      Focusable  = $candidate.Focusable
+      Top        = $candidate.Top
+      Bottom     = $candidate.Bottom
+      Width      = $candidate.Width
+      Height     = $candidate.Height
+      Name       = $candidate.Name
+      HintMatch  = $hintMatch
+      LowerBand  = $lowerBand
+      Score      = $score
+    }
   }
-  $described = @($candidates | Sort-Object -Property @{Expression = { -$_.Focusable } }, @{Expression = { -$_.Bottom } })
+  if ($scored.Count -eq 0) {
+    if ($Soft) { return $null }
+    $reasons = (@($dropped | ForEach-Object { $_.Rejected }) | Select-Object -Unique) -join '; '
+    throw "NO_INPUT_CONTROL: no enabled editable control inside the window (rejected $($dropped.Count) of $($candidates.Count): $reasons); refusing to guess coordinates"
+  }
+  $described = @($scored | Sort-Object -Property `
+      @{Expression = { -$_.Score }}, @{Expression = { -$_.Bottom }}, @{Expression = { -$_.Width }})
   $chosen = $described[0]
-  $sameRow = @($described | Where-Object { $_.Focusable -eq $chosen.Focusable -and [Math]::Abs($_.Bottom - $chosen.Bottom) -le 8 })
+  $sameRow = @($described | Where-Object { [Math]::Abs($_.Bottom - $chosen.Bottom) -le 8 })
+  $selectedReason = if ($chosen.HintMatch) { 'composer-hint' }
+    elseif ($chosen.LowerBand) { 'lower-band' }
+    else { 'lowest-control' }
   return [pscustomobject]@{
     Element      = $chosen.Element
     CandidateCount = $candidates.Count
+    ViableCount  = $scored.Count
+    Rejected     = @($dropped | ForEach-Object { [ordered]@{ name = $_.Name; top = $_.Top; bottom = $_.Bottom; width = $_.Width; height = $_.Height; reason = $_.Rejected } })
     Ambiguous    = [bool]($sameRow.Count -gt 1)
+    SelectedReason = $selectedReason
+    Top          = $chosen.Top
     Bottom       = $chosen.Bottom
     Name         = $chosen.Name
     List         = @($described | Select-Object -First $MaxInputCandidates | ForEach-Object {
-      [ordered]@{ focusable = $_.Focusable; bottom = $_.Bottom; width = $_.Width; name = $_.Name }
+      [ordered]@{ focusable = $_.Focusable; top = $_.Top; bottom = $_.Bottom; width = $_.Width
+        name = $_.Name; hint_match = $_.HintMatch; lower_band = $_.LowerBand; score = $_.Score }
     })
   }
 }
 
+function Test-AepControlLabel {
+  # A control label is a word; a transcript line and a session title are
+  # sentences.  Matching the whole tree by substring lost that distinction and
+  # every conversation that merely mentioned "执行中" made its client look
+  # permanently busy -- measured 2026-11-05: ChatGPT held 213 transcript lines
+  # and 32917 characters unchanged across 25 seconds (idle) while reporting
+  # busy, and the scheduler therefore delivered nothing, ever.
+  #
+  # Two rules, both cheap and both falsifiable:
+  #   * only controls are asked (Text is the transcript, not a state);
+  #   * the pattern must be the label's prefix and the label must be short,
+  #     so "任务 前两天提交的 PR 有反馈： 操作" cannot answer for a Send button.
+  param([string[]]$Names, [string[]]$Patterns)
+  $hits = @()
+  foreach ($raw in $Names) {
+    if (-not $raw) { continue }
+    $name = $raw.Trim()
+    if (-not $name -or $name.Length -gt 24) { continue }
+    foreach ($pattern in $Patterns) {
+      if (-not $pattern) { continue }
+      if ($name.StartsWith($pattern, [StringComparison]::OrdinalIgnoreCase)) {
+        $hits += $pattern
+        break
+      }
+    }
+  }
+  return @($hits | Select-Object -Unique)
+}
+
 function Get-ActivityEvidence {
-  param($Root, [IntPtr]$Hwnd, [bool]$InputFound, [bool]$InputAmbiguous, [switch]$Ocr, [string[]]$InterjectHints = @())
+  param($Root, [IntPtr]$Hwnd, [bool]$InputFound, [bool]$InputAmbiguous, [switch]$Ocr, [string[]]$InterjectHints = @(), [string]$ComposerName = '')
   $interjectHintList = @($InterjectHints | ForEach-Object { [string]$_ -split ',' } |
     Where-Object { $_ -and $_.Trim() } | ForEach-Object { $_.Trim() } | Select-Object -Unique)
   $busyPatterns = @(
@@ -813,18 +973,27 @@ function Get-ActivityEvidence {
   $defaultInterjectPatterns = @('插话', '继续执行并发送', '继续执行', '在后台发送', 'Send while running', 'Interject', 'Add message while running', 'Add message')
   $interjectPatterns = @($interjectHintList + $defaultInterjectPatterns | Where-Object { $_ -and $_.Trim() } | Select-Object -Unique)
   $stopPatterns = @('停止', '取消', '中止', 'Stop generating', 'Cancel', 'Abort')
-  $names = @()
+  $controlNames = @()
+  $textCount = 0
   $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
   $queue = New-Object System.Collections.Queue
   if ($Root) { $queue.Enqueue($Root) }
-  while ($queue.Count -gt 0 -and $names.Count -lt 800) {
+  while ($queue.Count -gt 0 -and ($controlNames.Count + $textCount) -lt 800) {
     $element = $queue.Dequeue()
     try {
       $type = $element.Current.ControlType.ProgrammaticName
       $name = [string]$element.Current.Name
       $offscreen = [bool]$element.Current.IsOffscreen
-      if (-not $offscreen -and $name -and ($type -match 'Button|ProgressBar|Custom|Text')) {
-        $names += $name.Trim()
+      if (-not $offscreen -and $name) {
+        if ($type -match 'Button|ProgressBar|Custom') {
+          # The composer is always there, in every state, so it cannot testify
+          # about the state.  Excluding it is what stops "发送任务消息" from
+          # being read as a Send button that proves the client is idle.
+          if (-not ($ComposerName -and $name.Trim() -eq $ComposerName.Trim())) {
+            $controlNames += $name.Trim()
+          }
+        }
+        elseif ($type -match 'Text') { $textCount++ }
       }
       $child = $walker.GetFirstChild($element)
       while ($child) { $queue.Enqueue($child); $child = $walker.GetNextSibling($child) }
@@ -839,16 +1008,40 @@ function Get-ActivityEvidence {
       $ocrLanguage = [string]$scan.Language
     } catch { $ocrText = '' }
   }
-  $joined = (($names -join ' ') + ' ' + $ocrText)
-  $busyHits = @($busyPatterns | Where-Object { $joined -match [regex]::Escape($_) } | Select-Object -Unique)
-  $readyHits = @($readyPatterns | Where-Object { $joined -match [regex]::Escape($_) } | Select-Object -Unique)
-  $interjectHits = @($interjectPatterns | Where-Object { $joined -match [regex]::Escape($_) } | Select-Object -Unique)
-  $stopHits = @($stopPatterns | Where-Object { $joined -match [regex]::Escape($_) } | Select-Object -Unique)
+  $busyHits = Test-AepControlLabel -Names $controlNames -Patterns $busyPatterns
+  $readyHits = Test-AepControlLabel -Names $controlNames -Patterns $readyPatterns
+  $interjectHits = Test-AepControlLabel -Names $controlNames -Patterns $interjectPatterns
+  $stopHits = Test-AepControlLabel -Names $controlNames -Patterns $stopPatterns
+  $activitySource = 'uia-controls'
+  if ($controlNames.Count -eq 0 -and $ocrText) {
+    # No accessibility tree at all: the rendered text is the only witness, so
+    # it has to be used -- but say so, because here a control label and a
+    # sentence are the same kind of string and the verdict is correspondingly
+    # weaker.  A client that reaches this branch is exactly the opaque one.
+    $activitySource = 'ocr-text'
+    $busyHits = @($busyPatterns | Where-Object { $ocrText -match [regex]::Escape($_) } | Select-Object -Unique)
+    $readyHits = @($readyPatterns | Where-Object { $ocrText -match [regex]::Escape($_) } | Select-Object -Unique)
+    $interjectHits = @($interjectPatterns | Where-Object { $ocrText -match [regex]::Escape($_) } | Select-Object -Unique)
+    $stopHits = @($stopPatterns | Where-Object { $ocrText -match [regex]::Escape($_) } | Select-Object -Unique)
+  }
   $state = 'unknown'
   if ($busyHits.Count -gt 0) { $state = 'busy' }
+  # A send button is replaced by a stop button while a run is active, so a stop
+  # with no send alongside it is the one control-level proof of a live run.
+  # Requiring both conditions is what keeps a permanent Cancel in some dialog
+  # from pinning the client busy forever.
+  elseif ($stopHits.Count -gt 0 -and $readyHits.Count -eq 0) { $state = 'busy' }
   elseif ($readyHits.Count -gt 0 -or ($InputFound -and -not $InputAmbiguous)) { $state = 'ready' }
+
   return [ordered]@{
     state = $state
+    # Which witness produced the verdict.  "busy" read off a rendered
+    # transcript is not the same claim as "busy" read off a Stop button, and
+    # only the receipt can tell a later reader which one they are looking at.
+    activity_source = $activitySource
+    control_names_considered = $controlNames.Count
+    text_elements_ignored = $textCount
+    composer_excluded = [string]$ComposerName
     busy_hits = $busyHits
     ready_hits = $readyHits
     interject_evidence = [ordered]@{
@@ -1037,11 +1230,56 @@ if ($Mode -eq 'deliver' -and $SessionLabel.Trim()) {
   if (-not $root) { throw 'UIA_ROOT_MISSING_AFTER_SESSION_SWITCH' }
 }
 
+# Hints are computed once, above every mode branch.  They were defined inside
+# the compose branch, so the deliver branch read $null: its "is this control
+# just showing its placeholder" test could never be true, and every non-empty
+# composer would have been refused.  Two lists, because the two readers want
+# different things:
+#   $hintsToUse  -- OCR placeholders (profile first, then the generic set);
+#   $inputHints  -- profile-only names for ranking UIA candidates.
+$allHints = @()
+if ($ComposerHint.Trim()) { $allHints += $ComposerHint }
+if ($ComposerHints) { $allHints += @($ComposerHints) }
+$allHints += @($DefaultComposerHints)
+$hintsToUse = if ($RequireComposerHint) { @($ComposerHint) } else { @($allHints | Select-Object -Unique) }
+$inputHints = @()
+if ($ComposerHint.Trim()) { $inputHints += $ComposerHint }
+if ($ComposerHints) { $inputHints += @($ComposerHints) }
+
 $transcript = Get-VisibleTranscript -Root $root -CapChars $MaxCaptureChars
-$selection = Select-InputElement -Root $root -Soft
+
+# Which conversation is this?  A window can be the right process with the
+# wrong chat open -- that is the failure the collaboration区 asked about, and
+# typing into it produces a real message in an unrelated conversation.  The
+# profile names a marker that exists only in the session we mean, so the check
+# is cheap and specific.
+#
+# Fail closed when the transcript is readable and the marker is absent.  When
+# the client exposes no transcript at all, record that instead of pretending
+# the check passed: those clients already require an exact composer hint
+# before any click, and inventing a verdict here would be worse than saying
+# "could not tell".
+$sessionMarkerSeen = $false
+$sessionMarkerCheck = 'not-required'
+if ($SessionMarker.Trim()) {
+  if ($transcript.Text.Length -eq 0) {
+    $sessionMarkerCheck = 'transcript-unreadable'
+  } elseif ($transcript.Text.Contains($SessionMarker)) {
+    $sessionMarkerSeen = $true
+    $sessionMarkerCheck = 'seen'
+  } else {
+    $sessionMarkerCheck = 'absent'
+  }
+  if ($sessionMarkerCheck -eq 'absent' -and ($Mode -eq 'deliver' -or $Mode -eq 'compose')) {
+    throw "SESSION_MARKER_MISSING: '$SessionMarker' is not in this window's transcript; refusing to type into a conversation I cannot identify"
+  }
+}
+
+$selection = Select-InputElement -Root $root -Soft -Hints $inputHints
 $activity = Get-ActivityEvidence -Root $root -Hwnd $window.Hwnd `
   -InputFound ([bool]$selection) -InputAmbiguous $(if ($selection) { [bool]$selection.Ambiguous } else { $false }) `
-  -Ocr:$OcrVerify -InterjectHints $InterjectHints
+  -Ocr:$OcrVerify -InterjectHints $InterjectHints `
+  -ComposerName $(if ($selection) { [string]$selection.Name } else { '' })
 
 # Window geometry and the input's own box, both in window-relative pixels.
 # Without these, a caller cannot tell a located control from a guess: a vision
@@ -1096,6 +1334,9 @@ if ($Mode -eq 'observe') {
     launched               = $launched
     input_found            = [bool]$selection
     input_candidate_count  = $(if ($selection) { $selection.CandidateCount } else { 0 })
+    input_viable_count     = $(if ($selection) { $selection.ViableCount } else { 0 })
+    input_rejected         = $(if ($selection) { $selection.Rejected } else { @() })
+    input_selected_reason  = $(if ($selection) { $selection.SelectedReason } else { '' })
     input_ambiguous        = $(if ($selection) { $selection.Ambiguous } else { $false })
     input_candidates       = $(if ($selection) { $selection.List } else { @() })
     window_size            = $windowRegion
@@ -1108,6 +1349,9 @@ if ($Mode -eq 'observe') {
     transcript_lines       = $transcript.LineCount
     transcript_preview     = $(if ($transcript.Text.Length -gt 600) { $transcript.Text.Substring(0, 600) } else { $transcript.Text })
     transcript_source      = $transcriptSource
+    session_marker         = $SessionMarker
+    session_marker_seen    = $sessionMarkerSeen
+    session_marker_check   = $sessionMarkerCheck
     task_delivered         = $false
     method                 = 'uia-observe'
   }
@@ -1224,17 +1468,12 @@ if ($Mode -eq 'compose') {
     }
     $root = [System.Windows.Automation.AutomationElement]::FromHandle($window.Hwnd)
     if (-not $root) { throw 'UIA_ROOT_MISSING_AFTER_INTERJECT' }
-    $selection = Select-InputElement -Root $root -Soft
+    $selection = Select-InputElement -Root $root -Soft -Hints $inputHints
   }
 
-  # If the editor already contains a human draft, its placeholder is hidden.
-  # An explicit marker can therefore identify the same composer without
-  # falling back to a blind coordinate click.
-  $allHints = @()
-  if ($ComposerHint.Trim()) { $allHints += $ComposerHint }
-  if ($ComposerHints) { $allHints += @($ComposerHints) }
-  $allHints += @($DefaultComposerHints)
-  $hintsToUse = if ($RequireComposerHint) { @($ComposerHint) } else { @($allHints | Select-Object -Unique) }
+  # $hintsToUse was computed above, before the mode branches.  Defining it here
+  # again shadowed the deliver branch's copy and made the placeholder test
+  # there read $null.
 
   # Activation reflows the page; wait for the layout to stop moving instead of
   # guessing how long that takes, then search the settled frame for the hint.
@@ -1576,26 +1815,55 @@ if ($UrgentInterject) {
   }
   $root = [System.Windows.Automation.AutomationElement]::FromHandle($window.Hwnd)
   if (-not $root) { throw 'UIA_ROOT_MISSING_AFTER_INTERJECT' }
-  $selection = Select-InputElement -Root $root -Soft
+  $selection = Select-InputElement -Root $root -Soft -Hints $inputHints
 }
 
 $writeMethod = ''
 $focused = $false
 $inputVerified = $false
 $typedValue = ''
+# The cut that separates "in the conversation" from "still in the composer".
+# Zero means the cut is unknown, and the read-back then behaves as before.
+$composerTop = 0
+if ($selection) {
+  try { $composerTop = [double]$selection.Element.Current.BoundingRectangle.Top } catch { $composerTop = 0 }
+  if ($composerTop -le 0) { $composerTop = [double]$selection.Top }
+}
 
 if ($selection) {
   $inputElement = $selection.Element
   try { $inputElement.SetFocus(); $focused = $true } catch { $focused = $false }
   Start-Sleep -Milliseconds 200
   $readOnly = $false
+  $refusal = ''
   try {
     $valuePattern = $inputElement.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
     if ($valuePattern.Current.IsReadOnly) { $readOnly = $true; throw 'INPUT_READ_ONLY' }
+    # ValuePattern.SetValue replaces the whole control; it does not insert.
+    # Measured 2026-11-05: the selected control was a markdown editor in a side
+    # pane rather than a chat composer, and the probe replaced 112 lines of a
+    # tracked file while the receipt still reported message-visible and
+    # task_delivered=true.  A composer we are allowed to speak in is empty or
+    # shows its placeholder.  Anything else is somebody's content, and
+    # overwriting it is never what "deliver a message" means.
+    $existing = [string]$valuePattern.Current.Value
+    $existingIsPlaceholder = $false
+    if ($existing.Trim()) {
+      foreach ($hint in $hintsToUse) {
+        if ($hint -and $existing.Trim() -eq $hint.Trim()) { $existingIsPlaceholder = $true; break }
+      }
+    }
+    if ($existing.Trim() -and -not $existingIsPlaceholder) {
+      $refusal = "COMPOSER_NOT_EMPTY: the selected control already holds $($existing.Length) characters; refusing to replace them. Select the chat composer, or clear the draft."
+      throw 'COMPOSER_NOT_EMPTY'
+    }
     $valuePattern.SetValue($Text)
     $writeMethod = 'uia-valuepattern'
   } catch {
     if ($readOnly) { throw 'INPUT_READ_ONLY: target input is read-only' }
+    # A refusal must terminate.  Falling through to clipboard-paste would move
+    # the same text into the same wrong control by a different route.
+    if ($refusal) { throw $refusal }
     try { [System.Windows.Forms.Clipboard]::SetText($Text) } catch { Set-Clipboard -Value $Text }
     if (-not $focused) { throw 'INPUT_FOCUS_FAILED: cannot focus the composer; refusing to type blindly' }
     Invoke-AepKeyChord -Modifier 0x11 -Key 0x56
@@ -1662,15 +1930,27 @@ $visible = $false
 $capturedText = ''
 $polls = 0
 $ocrUsed = $false
+$witness = $null
+$windowHeightForWitness = 0
+try {
+  $witnessRect = [System.Windows.Automation.AutomationElement]::FromHandle($window.Hwnd).Current.BoundingRectangle
+  $windowHeightForWitness = [double]$witnessRect.Height
+} catch { }
 while ([DateTime]::UtcNow -lt $deadline) {
   Start-Sleep -Milliseconds 1000
   $polls++
-  $capturedText = (Get-VisibleTranscript -Root $root -CapChars $MaxCaptureChars).Text
-  if ($capturedText -and $capturedText.Contains($EventId)) { $visible = $true; break }
+  $capturedText = (Get-VisibleTranscript -Root $root -CapChars $MaxCaptureChars -AboveTop $composerTop).Text
+  if ($capturedText -and $capturedText.Contains($EventId)) {
+    $witness = Find-AepEventWitness -Root $root -EventId $EventId -AboveTop $composerTop `
+      -MaxHeight ($windowHeightForWitness * 0.8)
+    if ($witness) { $visible = $true; break }
+  }
   if ($OcrVerify) {
     $ocr = Get-WindowOcrText -Hwnd $window.Hwnd
     $ocrUsed = $true
-    if ($ocr.Text -and $ocr.Text.Contains($EventId)) { $visible = $true; $capturedText = $ocr.Text; break }
+    # OCR reads the whole window, so it cannot answer "above the composer" by
+    # itself.  It is allowed to corroborate, never to promote on its own.
+    if ($ocr.Text -and $ocr.Text.Contains($EventId)) { $capturedText = $ocr.Text; break }
   }
 }
 
@@ -1687,7 +1967,7 @@ $composerPolls = 0
 $sendRetry = ''
 if ($selection) {
   $composerCleared = Wait-ComposerCleared -Hwnd $window.Hwnd -EventId $EventId `
-    -TimeoutSeconds $ReadBackTimeoutSeconds -Polls ([ref]$composerPolls)
+    -TimeoutSeconds $ReadBackTimeoutSeconds -Polls ([ref]$composerPolls) -Hints $inputHints
   if (-not $composerCleared) {
     # ValuePattern updates the visual editor without firing the web app's input
     # event, so its send control stays disabled and Enter does nothing.  Paste
@@ -1702,19 +1982,28 @@ if ($selection) {
     }
     if (-not $sendRetry) { Invoke-AepEnter; $sendRetry = 'paste+enter' }
     $composerCleared = Wait-ComposerCleared -Hwnd $window.Hwnd -EventId $EventId `
-      -TimeoutSeconds $ReadBackTimeoutSeconds -Polls ([ref]$composerPolls)
+      -TimeoutSeconds $ReadBackTimeoutSeconds -Polls ([ref]$composerPolls) -Hints $inputHints
     if ($composerCleared) {
       # The earlier transcript hit may have been the composer itself; re-read now
       # that the composer is empty.
       $afterRoot = [System.Windows.Automation.AutomationElement]::FromHandle($window.Hwnd)
       if ($afterRoot) {
-        $after = Get-VisibleTranscript -Root $afterRoot -CapChars $MaxCaptureChars
-        if ($after.Text -and $after.Text.Contains($EventId)) { $visible = $true; $capturedText = $after.Text }
+        $after = Get-VisibleTranscript -Root $afterRoot -CapChars $MaxCaptureChars -AboveTop $composerTop
+        if ($after.Text -and $after.Text.Contains($EventId)) {
+          $witness = Find-AepEventWitness -Root $afterRoot -EventId $EventId -AboveTop $composerTop `
+            -MaxHeight ($windowHeightForWitness * 0.8)
+          if ($witness) { $visible = $true; $capturedText = $after.Text }
+        }
       }
     }
   }
 }
-$delivered = [bool]($visible -and $composerCleared)
+# Three independent claims, all required.  Before this, $visible alone was
+# answered by the composer's own text and $composerCleared was trivially true
+# whenever the text had gone into some other control -- which is how a
+# delivery into a side-pane editor reported task_delivered=true.
+$witnessTooTall = [bool]($witness -and $witness.too_tall)
+$delivered = [bool]($visible -and $composerCleared -and $witness -and -not $witnessTooTall)
 $overlayEvidence = Get-OverlayEvidence -Root ([System.Windows.Automation.AutomationElement]::FromHandle($window.Hwnd))
 if ($OutFile -and $capturedText) {
   $dir = Split-Path -Parent $OutFile
@@ -1747,10 +2036,19 @@ Write-Report @{
   interject_evidence  = $activity.interject_evidence
   composer_cleared    = $composerCleared
   composer_clear_polls = $composerPolls
+  composer_top        = [int]$composerTop
+  session_marker      = $SessionMarker
+  session_marker_seen = $sessionMarkerSeen
+  session_marker_check = $sessionMarkerCheck
+  event_witness       = $witness
+  event_witness_too_tall = $witnessTooTall
   send_retry          = $sendRetry
   activation          = $ActivationEvidence
   input_found         = [bool]$selection
   input_candidate_count = $(if ($selection) { $selection.CandidateCount } else { 0 })
+  input_viable_count  = $(if ($selection) { $selection.ViableCount } else { 0 })
+  input_rejected      = $(if ($selection) { $selection.Rejected } else { @() })
+  input_selected_reason = $(if ($selection) { $selection.SelectedReason } else { '' })
   input_ambiguous     = $(if ($selection) { $selection.Ambiguous } else { $false })
   capture_path        = $(if ($OutFile -and $capturedText) { [IO.Path]::GetFullPath($OutFile) } else { '' })
   task_delivered      = $delivered

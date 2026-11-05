@@ -246,6 +246,77 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(parsed.pid, 4)
         self.assertFalse(parsed.persist)
 
+    def test_status_compares_both_sides_before_saying_drivable(self):
+        """The same defect had a second copy in the CLI, and it outlived the first.
+
+        ``annotate_elevation`` was fixed to compare both integrity levels, but
+        ``coord-a11y status --pid`` kept its own one-sided test -- ``elevation
+        != "unknown"``.  A standard operator probing an elevated client got
+        ``drivable: true`` and then every keystroke vanished into UIPI with no
+        error anywhere, which is the worst shape a refusal can take.
+        """
+        args = cli.build_parser().parse_args(["coord-a11y", "status", "--pid", "4"])
+        buffer = io.StringIO()
+        with mock.patch.object(cli.a11y, "available", return_value=True), \
+                mock.patch.object(cli.a11y, "status", return_value=True), \
+                mock.patch.object(cli.a11y, "elevation", return_value="elevated"), \
+                mock.patch.object(cli.a11y, "self_elevation", return_value="standard"), \
+                contextlib.redirect_stdout(buffer):
+            cli.coord_a11y(args)
+        payload = json.loads(buffer.getvalue())
+        self.assertEqual(payload["target_elevation"], "elevated")
+        self.assertEqual(payload["executor_elevation"], "standard")
+        self.assertFalse(payload["drivable"])
+        self.assertEqual(payload["blocked_by"], "TARGET_NEEDS_ELEVATION")
+
+    def test_status_still_clears_a_target_it_may_drive(self):
+        args = cli.build_parser().parse_args(["coord-a11y", "status", "--pid", "4"])
+        buffer = io.StringIO()
+        with mock.patch.object(cli.a11y, "available", return_value=True), \
+                mock.patch.object(cli.a11y, "status", return_value=True), \
+                mock.patch.object(cli.a11y, "elevation", return_value="elevated"), \
+                mock.patch.object(cli.a11y, "self_elevation", return_value="elevated"), \
+                contextlib.redirect_stdout(buffer):
+            cli.coord_a11y(args)
+        payload = json.loads(buffer.getvalue())
+        self.assertTrue(payload["drivable"])
+        self.assertNotIn("blocked_by", payload)
+
+
+class ProfileArgTests(unittest.TestCase):
+    def test_a_parameter_the_caller_already_named_is_not_named_again(self):
+        """PowerShell rejects a repeated parameter before the script can type.
+
+        ``coord-uia deliver --allow-unknown-path`` on a profile that already
+        sets ``allow_unknown_path`` produced a ParameterBindingException, and
+        the only visible symptom was a dispatch that never happened.  Merging
+        the two lists in one place removes the class rather than the instance.
+        """
+        profile = {"allow_unknown_path": True, "ocr_language": "zh-Hans-CN"}
+        merged = ui_fallback.merge_profile_args(
+            ["pwsh", "-File", "a.ps1", "-AllowUnknownPath"], profile)
+        self.assertEqual(merged.count("-AllowUnknownPath"), 1)
+        self.assertIn("-OcrLanguage", merged)
+        self.assertEqual(merged[merged.index("-OcrLanguage") + 1], "zh-Hans-CN")
+
+    def test_a_flag_with_a_value_keeps_the_value_next_to_it(self):
+        profile = {"composer_hint": "和 Codex 一起工作", "send_mode": "enter"}
+        merged = ui_fallback.merge_profile_args(["pwsh"], profile)
+        self.assertEqual(merged[merged.index("-ComposerHint") + 1], "和 Codex 一起工作")
+        self.assertEqual(merged[merged.index("-SendMode") + 1], "enter")
+
+    def test_the_session_marker_travels_with_every_dispatch(self):
+        # Which conversation, not just which process: the adapter refuses to
+        # type when this marker is absent from a readable transcript.
+        profile = {"session_marker": "赛事夺冠执行"}
+        merged = ui_fallback.merge_profile_args(["pwsh"], profile)
+        self.assertEqual(merged[merged.index("-SessionMarker") + 1], "赛事夺冠执行")
+
+    def test_the_input_is_left_alone(self):
+        argv = ["pwsh", "-File", "a.ps1"]
+        ui_fallback.merge_profile_args(argv, {"send_mode": "enter"})
+        self.assertEqual(argv, ["pwsh", "-File", "a.ps1"])
+
 
 if __name__ == "__main__":
     unittest.main()

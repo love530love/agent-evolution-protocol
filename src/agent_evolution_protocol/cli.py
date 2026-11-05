@@ -2492,16 +2492,20 @@ def coord_uia(args: argparse.Namespace) -> None:
         command += ["-ExpectedTitle", title]
     # Everything else the profile implies (OCR language, composer hints, send
     # button geometry, clipboard opt-in) comes from the same one copy the
-    # scheduled path uses.
-    command += ui_fallback.profile_args(profile)
+    # scheduled path uses.  The operator's own switches are folded into that
+    # copy rather than appended afterwards: PowerShell rejects a repeated
+    # parameter, so ``--allow-unknown-path`` on a profile that already sets
+    # ``allow_unknown_path`` used to abort before anything was typed.
+    effective = dict(profile)
+    if args.allow_unknown_path:
+        effective["allow_unknown_path"] = True
+    if args.allow_clipboard_paste:
+        effective["allow_clipboard_paste"] = True
+    command = ui_fallback.merge_profile_args(command, effective)
     if args.event_id:
         command += ["-EventId", args.event_id]
     if text:
         command += ["-Text", text]
-    if args.allow_unknown_path:
-        command += ["-AllowUnknownPath"]
-    if args.allow_clipboard_paste:
-        command += ["-AllowClipboardPaste"]
     if args.ocr:
         command += ["-OcrVerify"]
     command += ["-ReadBackTimeoutSeconds", str(max(1, min(args.timeout, 300)))]
@@ -2763,8 +2767,19 @@ def coord_a11y(args: argparse.Namespace) -> None:
     if args.action == "status":
         payload = {"available": True, "screen_reader": a11y.status()}
         if args.pid:
+            # A readable token is not permission.  `elevation() != "unknown"`
+            # answers "did Windows tell us the level", and a standard-integrity
+            # operator probing an elevated target gets "elevated" -- which this
+            # branch used to report as drivable, after which every keystroke was
+            # discarded by UIPI with no error anywhere.  The comparison between
+            # the two levels is the answer, so ask for both.
             payload["target_elevation"] = a11y.elevation(args.pid)
-            payload["drivable"] = payload["target_elevation"] != "unknown"
+            payload["executor_elevation"] = a11y.self_elevation()
+            ok, reason = a11y.drivability(payload["target_elevation"],
+                                          payload["executor_elevation"])
+            payload["drivable"] = ok
+            if reason:
+                payload["blocked_by"] = reason
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return
     if args.action == "enable":

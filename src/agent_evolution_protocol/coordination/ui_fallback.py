@@ -213,6 +213,14 @@ def profile_args(profile: dict) -> list[str]:
     # (en-US here), which turns a Chinese UI into Latin look-alikes.
     if profile.get("ocr_language"):
         args += ["-OcrLanguage", str(profile["ocr_language"])]
+    # Which conversation, not just which process.  The adapter refuses to type
+    # when the marker is missing from a transcript it can read.
+    if profile.get("session_marker"):
+        args += ["-SessionMarker", str(profile["session_marker"])]
+    # The profile knows whether Enter sends or a button does.  The scheduled
+    # path never passed this, so it always used the adapter default.
+    if profile.get("send_mode"):
+        args += ["-SendMode", str(profile["send_mode"])]
     if profile.get("allow_unknown_path"):
         args.append("-AllowUnknownPath")
     strict_ocr = profile.get("transport") == "ocr" and profile.get("strict_composer_hint", False)
@@ -248,6 +256,37 @@ def profile_args(profile: dict) -> list[str]:
     if profile.get("settle_timeout_seconds"):
         args += ["-SettleTimeoutSeconds", str(int(profile["settle_timeout_seconds"]))]
     return args
+
+
+def merge_profile_args(argv: list[str], profile: dict) -> list[str]:
+    """Append what the profile implies, never naming a parameter twice.
+
+    Two callers already pass some of these by hand -- ``-AllowUnknownPath``
+    travels with a pinned pid, ``-ExpectedPath`` with a verified exe -- and
+    PowerShell treats a repeated parameter as a terminating binding error.
+    That error arrives *before* the adapter focuses anything, so it is safe,
+    but it is also silent: the caller sees a failed dispatch with no hint that
+    the cause was a duplicate flag.  Merging in one place removes the class.
+
+    The returned list is a new list; ``argv`` is not modified.
+    """
+    merged = list(argv)
+    present = {token.lstrip("-").lower() for token in merged if token.startswith("-")}
+    extra = profile_args(profile)
+    index = 0
+    while index < len(extra):
+        token = extra[index]
+        takes_value = index + 1 < len(extra) and not extra[index + 1].startswith("-")
+        name = token.lstrip("-").lower()
+        if name in present:
+            index += 2 if takes_value else 1
+            continue
+        merged.append(token)
+        if takes_value:
+            merged.append(extra[index + 1])
+        present.add(name)
+        index += 2 if takes_value else 1
+    return merged
 
 
 class PowerShellUiaDriver:

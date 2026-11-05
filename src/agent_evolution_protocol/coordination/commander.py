@@ -345,13 +345,21 @@ def _uia_deliver(root: Path, agent: str, text: str, event_id: str, *,
         # Elevated Electron clients may hide Process.Path from our token.
         # The exact PID was selected from a unique/anchored visible window;
         # permit unknown path only with that PID constraint in place.
-        cmd += ["-ExpectedPid", str(expected_pid), "-AllowUnknownPath"]
+        # -AllowUnknownPath itself is added by the merge below, so it is named
+        # exactly once.
+        cmd += ["-ExpectedPid", str(expected_pid)]
     if profile.get("session_label"):
         cmd += ["-SessionLabel", str(profile["session_label"])]
-    if profile.get("window_titles"):
-        pass
     if ocr:
         cmd += ["-OcrVerify"]
+    # Same one copy the operator command uses: OCR language, session marker,
+    # send mode, composer hints, clipboard opt-in.  This path used to pass
+    # -OcrVerify without -OcrLanguage, so a Chinese UI was read by the en-US
+    # recognizer and no marker ever matched.
+    effective = dict(profile)
+    if expected_pid:
+        effective["allow_unknown_path"] = True
+    cmd = ui_fallback.merge_profile_args(cmd, effective)
     try:
         done = uia_argv.run(cmd, timeout=timeout + 90)
     except Exception as exc:  # noqa: BLE001
@@ -395,9 +403,13 @@ def _uia_observe(root: Path, agent: str, *, expected_pid: int = 0,
     if profile.get("exe"):
         cmd += ["-ExpectedPath", profile["exe"]]
     if expected_pid:
-        cmd += ["-ExpectedPid", str(expected_pid), "-AllowUnknownPath"]
+        cmd += ["-ExpectedPid", str(expected_pid)]
     if ocr:
         cmd += ["-OcrVerify"]
+    effective = dict(profile)
+    if expected_pid:
+        effective["allow_unknown_path"] = True
+    cmd = ui_fallback.merge_profile_args(cmd, effective)
     try:
         done = uia_argv.run(cmd, timeout=timeout + 45)
     except Exception as exc:  # noqa: BLE001
@@ -484,6 +496,10 @@ def _capture_uia(root: Path, agent: str, *, timeout: int = 20) -> tuple[str, str
            "-Mode", "capture", "-OutFile", out_file, "-OcrVerify"]
     if profile.get("exe"):
         cmd += ["-ExpectedPath", profile["exe"]]
+    # Perception had the same missing -OcrLanguage as dispatch: the capture was
+    # taken with the en-US recognizer on a Chinese UI, so the text it published
+    # to the bus was Latin look-alikes and every marker lookup failed.
+    cmd = ui_fallback.merge_profile_args(cmd, profile)
     try:
         uia_argv.run(cmd, timeout=timeout + 90)
     except Exception:  # noqa: BLE001
