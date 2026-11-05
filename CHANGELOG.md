@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.6.17 — 自动发现与自动审计：默认纯规则，模型随用随走
+
+- The project had evidence streams but no consumer: roughly 16 recorded facts sat on disk while
+  `coordination/improvement_events/` and `improvements/` were both empty. This release adds an
+  offline, read-only miner that turns those facts into recomputable leads and feeds verified ones
+  into the existing `improvement.ingest()` evidence journal. No new audit schema, no new command surface.
+- `insight_miner.py` ships four deterministic rules (`unclassified_failure`,
+  `repeated_failure_signature`, `unverified_overlay`, `failed_trajectory_step`). `scan()` always
+  reports per-source `scanned` counts and per-rule `measurements`, so a broken scanner, a clean
+  machine and an unmet threshold cannot produce the same output. `verify()` rereads the evidence
+  and recomputes sha256, count, scanned, key and rule; any drift rejects the finding.
+- The automatic boundary stops at `PROPOSED`: no source edits, no promotion, no commit/push/deploy.
+  `severity` is always `lead` (an escalation is rejected), `deployment_performed` is always false,
+  and `advance`/`validate` remain the job of an independent reviewer with a claim token and a rollback point.
+  "Automatic" means no human has to pose the question or make the judgement, not that a daemon exists:
+  there is deliberately no resident watcher.
+- Append-only evidence is snapshotted before it is frozen. Freezing a live `overlay_audit.jsonl`
+  would make every later `improvement.advance()` fail with `frozen evidence changed` forever;
+  a later source drift now reports `evidence-drift-since-snapshot` instead of silently redefining a proposal.
+- The local model is optional and absent by default. The rule layer is socket-free (AST-guarded,
+  including `ImportFrom.names` and a non-vacuous scan assertion); the proposer is imported only
+  with `--propose`. `insight_proposer.py` supports both LM Studio (`/v1/chat/completions`) and
+  Ollama (`/api/chat`), sees only `rule/count/scanned/summary`, and may emit only
+  `title/hypothesis/checks` under a strict allowlist. Abstention is a valid answer; a dead model
+  costs the note, not the finding.
+- `local_model_session.py` implements "use it and let it go": `lms load --ttl 60 --gpu off
+  -c 2048 -y --identifier aep-insight` and an exact `lms unload aep-insight` in `finally`.
+  No `server start`, no `--all`, no polling, no background thread. Backend offline degrades to
+  the rule-only result. LM Studio end-to-end inference is NOT claimed as verified.
+- `skills/README.md` defines the weak-agent card contract: six fixed sections, a
+  receipt-to-verdict lookup table, `model_required: false`, and
+  `min_agent_capability: file-only|cli|desktop-ui`. `aep-insight-loop` (cli) and
+  `aep-desktop-wake` (file-only, dispatch by writing one JSON into the delegation inbox) let a
+  weak agent reproduce tested abilities without reasoning. `tests/test_capability_cards.py` guards drift.
+- `docs/DESKTOP_SEND_AND_URGENT_INTERJECT.zh-CN.md` is corrected: its old "see the interject control
+  before sending" wording contradicted the measured Qoder 0.5.3 sequence and would mislead an agent
+  following the card. Full boundary: `docs/AUTONOMOUS_INSIGHT_LOOP.zh-CN.md`.
+- Verification: new tests `49 passed, 43 subtests`; full suite
+  `1379 passed, 3 skipped, 503 subtests passed in 163.08s`.
+
 ## 0.6.16 — 插话控件是晚到，不是不存在
 
 - 0.6.15 shipped a conclusion that was wrong, and this release records the
