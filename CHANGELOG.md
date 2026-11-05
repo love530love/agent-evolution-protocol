@@ -1,5 +1,53 @@
 # Changelog
 
+## 0.6.20 — 居中协调愿景的事实基线：先证伪，再立项
+
+- Documentation-only release. `docs/COORDINATOR_VISION_EVIDENCE.zh-CN.md` records the
+  evidence baseline for a central long-running coordinator: eight assertions extracted from
+  the operator's vision, each tagged with its current evidence state, plus a three-state
+  capability inventory (proven with code + consumer + tests / code without a consumer /
+  completely absent / docs only). No runtime code changed.
+- Three assertions are explicitly falsified rather than adopted. "Saves credits": there is
+  no per-agent quota, usage, reset-interval or cost data anywhere in the codebase —
+  `legion_ledger.py` is contribution scoring whose comments say "not transferable credits"
+  and "grants no operational authority", the CLI budget is a single-round competition
+  budget, `volley_plan.plan()` is `PROPOSAL_ONLY_NOT_AUTHORIZED`, and CHANGELOG already
+  states there is no quota scheduling. "Avoids groupthink": `THREAT_FIELDS`,
+  `quorum.evaluate()` and `joint_attack` exist but are not wired into dispatch, and
+  `governance_event()` only checks field presence plus a `confidence` enum. "Replaces a
+  human engineer" contradicts the v0.6.19 boundary: no OS task registration, no resident
+  process, no cross-restart recovery, `VERIFIED`-only closure, `reviewer != author`.
+- A live counterexample for "source count != independent evidence count" is recorded: a
+  Chinese tech blog defines MCP as "Multi-agent Coordination Protocol" with task auctions,
+  blockchain contribution records and PBFT consensus, while the official
+  `modelcontextprotocol.io` (spec 2026-07-28) defines it as Model Context Protocol, a
+  standard connecting AI applications to external systems (tools, resources, prompts).
+  The blog is cited only as a counterexample, never as a fact source.
+- Open-source admission is checked against official sources only: MCP (above), A2A
+  (Agent2Agent, donated by Google to the Linux Foundation, Apache-2.0; officially not an
+  agent dev kit, not a sub-agent/tool-call protocol, not a messaging app, and no durable
+  orchestration / quota / evidence verification), Temporal self-hosting (Temporal Service +
+  persistence + Workers; `temporal server start-dev` is still a resident service), and
+  LiteLLM Proxy budgets (`max_budget`, `budget_duration`, `budget_limits`,
+  `model_max_budget`, `tpm_limit`, `rpm_limit`, `max_parallel_requests`, `spend`,
+  `budget_reset_at`; official text: "Budgets require a database" and "none of them cap
+  anything on a DB-less deployment", with a server-side reset scheduler). Conclusion:
+  borrow protocol and field semantics only. Four hard gates reject any resident service,
+  database, background thread, second envelope schema, new `coord-*` command surface, or
+  probabilistic judging; OS triggers stay with the operator.
+- Five phases, each with a recomputable acceptance criterion: P0 one-shot
+  `coordinator_tick` wiring existing single steps (never a second scheduler), P1 per-agent
+  quota ledger that reports `NO_QUOTA_DATA` instead of guessing, P2 claim-to-evidence
+  binding + common-source dedup + `quorum` wired into dispatch, P3 optional MCP tools /
+  A2A Agent Card as external interface only (existing desktop adapters untouched), P4
+  `artifact_manifest.verify` wiring, notification tiers, cross-restart recovery and a
+  persistent scheduling cursor. Closure still requires `VERIFIED`.
+- Explicitly not claimed: replacing human engineers, 7x24 unattended delivery, or any
+  measured credit saving.
+- Verification: full suite `1406 passed, 3 skipped, 601 subtests passed in 175.70s`
+  (`PYTEST_EXIT=0`, with `CODEBUDDY_SAFE_DELETE_ENABLED=0`); version trio synced to 0.6.20;
+  `git diff --check` clean; `schemas/` still 7 files and the generated skill manifest unchanged.
+
 ## 0.6.19 — 长任务心跳接合：零模型、零显存、默认只读
 
 - Two operator questions drove this release: whether a running LM Studio server still consumes
