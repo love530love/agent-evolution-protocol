@@ -1,5 +1,76 @@
 # Changelog
 
+## 0.6.16 — 插话控件是晚到，不是不存在
+
+- 0.6.15 shipped a conclusion that was wrong, and this release records the
+  correction rather than quietly replacing it: "Qoder has no interject channel"
+  was measured by staging text with `ValuePattern.SetValue`, which updates the
+  visual editor without firing the web app's input event. The client still
+  believed its composer was empty, Enter was swallowed, nothing was queued, and
+  the absent 插话 control was read as an absent capability. An operation failure
+  recorded as a client property. The real sequence is paste -> force Enter once
+  or twice -> the composer clears, 发送消息 becomes 停止生成 and 插话 appears ->
+  click it. The control is not missing, it is late.
+- The pre-send gate is gone. It required the interject control to be visible
+  *before* typing, which on this client can never be true because the control is
+  a product of the send. A gate that can never pass is not a safety property,
+  it is a permanent outage; the only pre-condition now is that the client is
+  busy. `Wait-InterjectControl` polls instead of looking once, which is exactly
+  the mistake that produced the wrong conclusion.
+- The delivery order is now send -> prove the send landed (composer cleared) ->
+  promote -> read back. The old order read the transcript before proving the
+  send, so on a busy client it spent its whole budget looking for a message that
+  could not appear until after the promotion.
+- The retry ladder presses Enter a second time before re-pasting, and the
+  receipt names the rung that worked (`send_attempts`, `send_retry`).
+- `interruption` (the run was killed) and `interject_promoted` (the queue was
+  promoted) are separate fields. Writing the promotion into `interruption`
+  recorded a success as damage, because the caller treats a true value as a
+  failed send.
+- `interject_evidence` gains `appears_after_send` and `profile_hints`, and
+  `interrupt_only` no longer fires on a client that merely shows a stop button
+  while the composer is empty. Both halves are required to proceed: the
+  adapter's observation and a profile that declares `interject_after_send`. A
+  profile whose hints are guesses still cannot get through, which is why
+  `codebuddy_cn` keeps the strict gate until it is measured.
+- Verified on both Qoder builds through the operator command, not a probe
+  script. The strongest evidence is the model's own line on the international
+  build: "AEP-INTERJECT-20261105-04 已收到，国际版插话路径验证通过", noting the
+  original task had been delivered in the same turn -- so the queued message was
+  read by the running turn, not appended after it.
+- `deliver` now honours `maximize_window`. `AEP_MAXIMIZE_WINDOW` was read by
+  capture and compose but not by deliver, which hardcoded `SW_RESTORE`; the
+  international build's window had been left at 237x39 and restore kept it
+  there. A profile declaration that only some code paths read is not a
+  declaration.
+- Delivery identification was rebuilt after a message went into ChatGPT's
+  side-pane Markdown editor and reported `task_delivered=true` while destroying
+  112 lines of a tracked file: candidates outside the window or taller than
+  three windows are rejected and reported, the selection states which claim
+  chose the survivor, and `task_delivered` needs the event id above the composer
+  cut with a witness that is not an ancestor of the composer.
+- Routing can now say "I don't know": `unknown` is a field instead of a
+  clarification flag attached to a scenario, and `read_only_explicit` is kept
+  apart from `read_only` so the fallback branch is not gated shut.
+- The scheduler switches surface instead of asking. A consent prompt is a stop,
+  and `EXECUTOR_TOO_LOW` -- a receipt that proves nothing was typed -- is the
+  only case where switching needs no consent. An uncertain send never switches.
+- The OCR relay confirms its own paste: it waits for the layout to settle
+  instead of sampling once after 400ms, clears the selection with `VK_DELETE`
+  instead of selecting, and probes with trailing Chinese characters the
+  recogniser can actually read.
+- The resident loop passes `--no-perceive` down and prints one JSON line per
+  tick, so "healthy and quiet" and "stuck" no longer look the same.
+- Wake ids are one vocabulary: `dispatch_gate` recognised only `EVT-` ids while
+  `coord-send` passes the mailbox timestamp id, so every `--dispatch` order
+  refused itself before a character was typed.
+- One ISO parser. `fromisoformat` raises on a trailing `Z` in 3.10, and the
+  convention had been hand-copied into seven places; CI had been red since
+  2026-11-02 while the local run stayed green.
+- Cost, stated rather than discovered: after a ValuePattern write the first
+  composer wait runs to its full timeout, so a delivery takes about 26 seconds.
+  Shortening it would press Enter on clients that are merely slow.
+
 ## 0.6.15 — The missing ACK stopped blocking; it did not stop being recorded
 
 - "No ACK, no progress" was a gate with no exception, and the exceptions are
