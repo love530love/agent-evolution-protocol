@@ -58,6 +58,7 @@ model_required: false
 | `aep-start-dispatch` | file-only | 否 | **新 Agent 从零接入 → 认领 → 派工 → 回执判定** |
 | `aep-insight-loop` | cli | 否（可选随用随走） | 自动发现问题 + 自动审计留痕 |
 | `aep-desktop-wake` | file-only | 否 | 唤醒/派工/忙碌态插话（含 Qoder 0.5.3 实测序列） |
+| `aep-mission-pulse` | cli | 否 | 长任务心跳接合：mission 阶段 → 既有 commander 队列，默认只读预览 |
 
 新 Agent 要开始调度任务，从 `aep-start-dispatch` 起步；它给出 `aep join` 的最小序列，
 并明确「只有 `VERIFIED` 能关单」。`aep-agent-onboarding` 是较早的散文规范，
@@ -67,3 +68,6 @@ model_required: false
 
 自动发现/自动审计这条能力的完整边界（自动到哪一步、不自动到哪一步、模型为何可选）见
 `docs/AUTONOMOUS_INSIGHT_LOOP.zh-CN.md`。
+
+长任务心跳的完整边界（显存实测、既有心跳清单、mission 断口、OS 触发归谁、为何不用小模型）见
+`docs/LONGRUN_MISSION_PULSE.zh-CN.md`。**心跳不需要模型**：定时器只触发只读命令，判断由规则完成。

@@ -186,6 +186,19 @@ class CapabilityCardTests(unittest.TestCase):
                     self.assertTrue((REPO / relative).is_file(), relative)
         self.assertGreater(scanned, 0, "no acceptance gate found: guard would be vacuous")
 
+    def test_mission_pulse_card_states_the_no_daemon_boundary(self):
+        card = SKILLS / "aep-mission-pulse" / "SKILL.md"
+        self.assertTrue(card.is_file(), "long-running missions need a pulse card")
+        text = card.read_text(encoding="utf-8")
+        self.assertEqual(_frontmatter(text)["min_agent_capability"], "cli")
+        for token in ("零模型", "--apply", "DEPOSITED", "只有 `VERIFIED` 能关单",
+                      "定时器不是判断", "scripts/register-mission-pulse-task.ps1",
+                      "docs/NOVICE_LONGRUN_WORKFLOW.zh-CN.md", "ALREADY_QUEUED"):
+            with self.subTest(token=token):
+                self.assertIn(token, text)
+        self.assertIn("禁止启动常驻 watcher", text,
+                      "a pulse must never silently become a daemon")
+
 
 if __name__ == "__main__":
     unittest.main()

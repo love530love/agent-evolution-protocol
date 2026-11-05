@@ -45,3 +45,17 @@
 AEP 已具备唯一会话注册、多 transport 路由、ACK lease、失败恢复和桌面定位基础。
 真正的“一句话启动多天任务”还需要上层 mission planner、持久化 DAG runner 和
 通知策略接入；在这些组件完成前，不应向小白用户承诺完全无人值守交付。
+
+### v0.6.19 补上的接合处（不是无人值守已完成的证据）
+
+此前 `scripts/start-mission.ps1` 写出的 `mission_id` 没有任何 runner 消费。
+v0.6.19 增加了 `skills/aep-mission-pulse/SKILL.md` 所描述的**一次性纯规则接合器**：
+把 `ready` 阶段经硬闸门复算后投进既有 `commander` 队列（`DEPOSITED`），
+真正发送仍由既有 `coord-commander tick` 负责。它零模型、零显存、不常驻，
+默认只读预览，`--apply` 才入队；周期触发由 OS 计划任务或外部调度器决定，
+注册动作必须由操作员显式执行。详见 `docs/LONGRUN_MISSION_PULSE.zh-CN.md`。
+
+**仍然缺**：持久化调度游标、跨重启自恢复演练、统一 artifact 验收器、多日预算与
+配额调度、通知策略。OS 计划任务本身还需要登录会话。因此本文件第 45-47 行的
+结论不变：**不应承诺完全无人值守交付**，也绝不能把「入队」写成「送达」，
+关单证据仍然只有 `VERIFIED`。

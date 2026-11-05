@@ -1,5 +1,80 @@
 # Changelog
 
+## 0.6.19 — 长任务心跳接合：零模型、零显存、默认只读
+
+- Two operator questions drove this release: whether a running LM Studio server still consumes
+  local VRAM, and whether unattended long-running missions need a small model or a timed
+  heartbeat to keep the commanding agent alive. Read-only measurements on this machine:
+  `lms status` -> `Server: ON (port: 1234)`, `lms ps` -> `No models are currently loaded`,
+  `nvidia-smi` -> RTX 3090 at `692 MiB / 24576 MiB` and `0%` GPU, `GET /v1/models` -> listing
+  only. A running server is not a loaded model; the only path that loads weights is
+  `insight_miner --propose`, forced to `--gpu off --ttl 60` with an exact `lms unload`.
+  The server can be closed without affecting any default project capability.
+- A heartbeat does not need a model. It answers deterministic, recomputable questions (lease
+  expiry, `last_progress_at` vs `heartbeat_timeout=900`, terminal phase, ACK presence), and a
+  probabilistic model has no "unknown" output and must not replace a fail-closed rule layer.
+  The project already had model-free heartbeat machinery: `commander.tick()`,
+  `federation/engine.tick()` (`_stalled()`), `commander.watch()`, `supervisor.serve()`,
+  `campaign-watch.ps1`, and the OS-triggered `aep-supervisor.ps1` /
+  `register-supervisor-task.ps1`. "The timer is not the judge" remains the standing rule.
+- The actual break was elsewhere: `scripts/start-mission.ps1` writes `missions/M-*.json` and
+  returns a `mission_id`, but `cli.py` has no `mission` subcommand, no runner consumes that id,
+  `mission_supervisor.inspect()` only returns action suggestions, `mission_runtime.py`
+  overwrites state in place, and `mission_graph.py` is a second unconsumed DAG schema.
+  This release adds a bridge instead of a second scheduler.
+- `coordination/mission_pulse.py`: a one-shot, socket-free, process-free, model-free pulse.
+  `scan()` reads missions and reuses `mission_supervisor.inspect()` (no duplicated judgement);
+  `gates()` hard-rejects `ACTION_NOT_ASSIGNABLE`, `NO_TARGET`, `INVALID_AGENT_NAME`,
+  `UNKNOWN_AGENT`, `MISSION_PAST_DEADLINE`, `HUMAN_REQUIRED`, `WAITING_FOR_EVENT`,
+  `TASK_TERMINAL`, `CLAIM_OWNER_MISMATCH`, `CLAIM_EXPIRED`, `ALREADY_QUEUED`; members are
+  derived from `presence/agents/*.json` and `clients/*.json` filenames rather than a drifting
+  hardcoded list; `verify()` recomputes the mission sha256, event id, every gate and the body
+  before the single write path `queue_candidate()` calls `commander.submit_order()`.
+  Only `assign` (a `ready` stage) can be queued; `observe` / `recovery_review` /
+  `blocked_review` / `report_delivery` are report-only. `event_id_for()` hashes
+  `(mission_id, stage_id, state, updated_at, goal)` into a stable `PULSE-...` id, so replaying
+  an unchanged stage returns `ALREADY_QUEUED` instead of duplicating an order. Rejecting a
+  stale candidate never permanently bans the file: the next external call rescans and produces
+  a fresh id, but a rejected candidate can never be written.
+- Default is read-only dry-run; only `--apply` queues, and it produces `state=DEPOSITED`
+  orders. `commander.submit_order()` explicitly sends nothing until a `coord-commander tick`
+  runs, so queuing is never delivery. The pulse report carries hard boundary fields
+  `models_loaded=0`, `processes_started=0`, `ui_touched=false`,
+  `deployment_performed=false`, `system_tasks_registered=false`; any true value is a violation.
+  No new schema, no new `coord-*` command surface, no mission file rewrite.
+- `scripts/run-mission-pulse.ps1` is a bounded one-shot trigger (ASCII, no loop, no sleep,
+  no `--apply` by default). `scripts/register-mission-pulse-task.ps1` is dry-run by default and
+  only calls `Register-ScheduledTask` when an operator passes `-Register` explicitly; it uses
+  `MultipleInstances=IgnoreNew` and a 5-minute `ExecutionTimeLimit`. No task was registered in
+  this release and no resident process was started: a resident process spawned from inside an
+  agent dies with the tool-call job object, so OS-level triggers belong to the operator.
+- `skills/aep-mission-pulse/SKILL.md` adds a `cli` / `model_required: false` capability card
+  with the six-section format and a receipt-to-verdict table: `DEPOSITED` is queued, not
+  delivered; only `VERIFIED` closes a task; a timer only triggers read-only commands.
+  `skills/README.md` and `tests/test_capability_cards.py` were updated to guard the no-daemon
+  boundary. `docs/LONGRUN_MISSION_PULSE.zh-CN.md` records the VRAM measurements, the existing
+  heartbeat inventory, the mission break, the pipeline `scan() -> gates() -> verify() ->
+  [--apply] submit_order() -> DEPOSITED`, and the automatic-boundary table.
+  `docs/NOVICE_LONGRUN_WORKFLOW.zh-CN.md` gains a "v0.6.19 bridge, not proof of unattended
+  delivery" section and keeps its original conclusion unchanged.
+- Explicitly not done: no LM Studio/Ollama end-to-end inference run, no OS task registration,
+  no resident watcher, no persistent scheduling cursor, no cross-restart recovery drill, no
+  unified artifact verifier, no multi-day budget/quota scheduling, no notification policy,
+  and no promise of 7x24 unattended delivery.
+- Verification: `tests/test_mission_pulse.py` and `tests/test_capability_cards.py`
+  `37 passed, 129 subtests`; full suite run twice with identical results,
+  `1406 passed, 3 skipped, 601 subtests passed` (163.74s and 171.47s, both `PYTEST_EXIT=0`).
+  On this machine the full suite is run with
+  `CODEBUDDY_SAFE_DELETE_ENABLED=0`: without it the host safe-delete shim blocks pytest's
+  temp-directory garbage collection (`SAFE_DELETE_BULK_CONFIRM_REQUIRED`), the session is cut
+  off before writing its summary (`PYTEST_EXIT=1`, no summary, one run also showed a stray
+  `F` at 95% while another showed none). With the variable set the same suite is green with
+  exit code 0. This is a host shim conflict, not a code regression. A read-only preview
+  against the real coordination root rejected historical missions with
+  `MISSION_PAST_DEADLINE` and wrote nothing; a temporary sandbox `--apply` produced exactly
+  one `DEPOSITED` order and a replay returned `ALREADY_QUEUED`; the registration script
+  dry-run printed `system_changed: false`.
+
 ## 0.6.18 — 新 Agent 调度入口：接入、认领、派工、回执判定
 
 - v0.6.17 built the weak-agent card specification but left an entry gap: a freshly joined
