@@ -13,6 +13,10 @@
 「有些观点需要实据，避免团队受错误情报影响而越来越差劲」。
 在一个以证据链为核心的项目里，最不能被接受的事，就是协调器自己先靠未经核验的断言立项。
 
+> **v0.6.21 更新**：第 5 节的 **P0「一拍接线」已落地**，实现与验收见
+> `docs/COORDINATOR_TICK.zh-CN.md` 与 `tests/test_coordinator_tick.py`；P1–P4 仍未做。
+> 本文件其余事实基线（三态矩阵、三条证伪、开源准入、不做清单）结论不变。
+
 ---
 
 ## 1. 愿景拆成 8 条断言
@@ -138,7 +142,7 @@ v0.6.19 边界已写死：没有注册任何 OS 计划任务、没有常驻进�
 
 | 期 | 内容 | 完成判据 |
 |---|---|---|
-| **P0 一拍接线** | 一次性 `coordinator_tick`：按固定顺序调用既有单步（mission 扫描 → campaign 回表/截止 → `commander.tick` → `supervisor.step` → 催促/通报），默认 dry-run，`--apply` 才写，统一回执 | 不新建调度器；既有单步签名不变；真协作区只读预览零写入；沙盒 `--apply` 幂等 |
+| **P0 一拍接线**（v0.6.21 已落地，见 `docs/COORDINATOR_TICK.zh-CN.md`） | 一次性 `coordinator_tick`：固定顺序 `campaign_tick.tick` → `mission_pulse.pulse(apply=True)` → **恰好一条**投递路径（`federation/supervisor.step` 或 `commander.tick`），默认 dry-run，`--apply` 才写，统一回执；前置失败 fail-closed 停止，federation 失败绝不回退二次投递 | 已由 `tests/test_coordinator_tick.py` 守住：不新建调度器、既有单步签名不变、两条投递路径互斥、零模型零进程、真协作区只读预览零写入、沙盒 `--apply` 幂等 |
 | **P1 额度可计算** | per-Agent quota ledger：额度声明、窗口与重置时刻、用量记录、派工前闸门。先回答「谁还有额度、何时重置」，不谈优化 | 能输出每个 Agent 的 `remaining / reset_at`；无数据时明确报 `NO_QUOTA_DATA` 而不是猜测 |
 | **P2 实据可核验** | claim↔evidence 绑定、共同来源去重、`quorum.evaluate` 接进派工路径 | 同一 `source` 的 N 个转述计为 1 个独立来源；无证据观点不得进入 `verified` |
 | **P3 手脚标准化** | 唤醒 / 插话 / 读表 / 回表做成可选 MCP tools 或 A2A Agent Card 描述，**仅作对外接口**，内部仍走既有适配器 | 不改动既有桌面适配器；不新增 envelope schema |

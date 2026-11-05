@@ -1,5 +1,60 @@
 # Changelog
 
+## 0.6.21 — 居中协调一拍：把三条既有单步接起来
+
+- P0 of `docs/COORDINATOR_VISION_EVIDENCE.zh-CN.md` is implemented as a thin
+  wiring layer `coordination/coordinator_tick.py`. It is **not** a scheduler:
+  three bounded single-step chains already existed but never called each other —
+  `campaign_tick.tick()` (presence reconcile, delegation mailbox, journal
+  ingestion, `campaign_cycle.reconcile` deadlines/rescue),
+  `mission_pulse.pulse(apply=True)` (persisted ready stages -> `DEPOSITED`), and
+  `federation/supervisor.step()` (settle -> alert -> `engine.tick` -> scope lease
+  -> `commander.tick`). This release only calls them in a fixed order and returns
+  one unified receipt. No existing signature changed; no new schema; no new
+  `coord-*` command surface; no mission file rewrite.
+- Two hard safety properties. (1) **Exactly one dispatch path**, chosen before
+  anything is sent: the DAG path when `--kernel-root` + `--workspace` +
+  `--agents` are all present, otherwise plain `commander.tick`. Because
+  `supervisor.step()` already calls `commander.tick()` internally, calling both
+  would be a duplicate delivery. (2) **No fallback**: a failed federation step
+  may already have sent, so the receipt keeps `dispatch_path="federation_step"`
+  and records `status="failed"` instead of retrying through `commander.tick`.
+  A missing DAG context is reported in `skipped[]` as
+  `FEDERATION_CONTEXT_MISSING`, never as a step that ran.
+- Fail-closed ordering: `campaign_tick.tick` -> `mission_pulse.pulse(apply=True)`
+  -> dispatch. A settlement or mission failure sets `halted=SETTLE_FAILED` /
+  `MISSION_FAILED` and returns before anything further is queued or sent.
+- Default is read-only dry-run: `preview` reports mission scan/candidates/
+  verified/rejected, campaign missions, presence strength, commander orders and
+  `next_due_at` (sourced from the existing `campaign_tick.next_due`, not
+  recomputed here); a broken read-only source is reported as `unavailable`
+  rather than guessed around. `plan` lists the existing callables. `--apply` is
+  the only write path. A one-shot ASCII trigger script
+  `scripts/run-coordinator-tick.ps1` never defaults to `--apply`, has no loop or
+  sleep, and registers no OS task.
+- Receipt hard fields stay `models_loaded=0`, `processes_started=0`,
+  `ui_touched=false`, `deployment_performed=false`,
+  `system_tasks_registered=false`. `DEPOSITED` is queuing, not delivery; only
+  `VERIFIED` closes a task.
+- Added `skills/aep-coordinator-tick/SKILL.md` (cli, `model_required: false`,
+  six sections + receipt verdict table) and `docs/COORDINATOR_TICK.zh-CN.md`;
+  updated `skills/README.md`, the `tests/test_capability_cards.py` guard and the
+  P0 row of the vision baseline. P1-P4 remain undone: no per-agent quota ledger,
+  no claim-to-evidence verification, no MCP/A2A external interface, no artifact
+  verification wiring or cross-restart recovery. No external runtime (Temporal,
+  Postgres, LiteLLM Proxy) was introduced, and no OS task was registered.
+- Verification: full suite `1423 passed, 3 skipped, 663 subtests passed in 207.47s`
+  (`PYTEST_EXIT=0`, with `CODEBUDDY_SAFE_DELETE_ENABLED=0`); version trio synced to
+  0.6.21; `schemas/` still 7 files and the generated skill manifest unchanged.
+  Targeted `tests/test_coordinator_tick.py tests/test_capability_cards.py`
+  `30 passed, 160 subtests`. A read-only preview against the real coordination
+  root reported `scanned=1 / rejected=1`, four `stale` agents, 20 orders and an
+  overdue `next_due_at=2026-10-29T13:52:26.975278+00:00`, with
+  `writes_performed=0` and no new runtime files. A temporary sandbox `--apply`
+  produced exactly one `DEPOSITED` order and a replay returned `ALREADY_QUEUED`
+  with one order file; desktop dispatch was isolated with a mock so the sandbox
+  never typed into a real client.
+
 ## 0.6.20 — 居中协调愿景的事实基线：先证伪，再立项
 
 - Documentation-only release. `docs/COORDINATOR_VISION_EVIDENCE.zh-CN.md` records the

@@ -199,6 +199,19 @@ class CapabilityCardTests(unittest.TestCase):
         self.assertIn("禁止启动常驻 watcher", text,
                       "a pulse must never silently become a daemon")
 
+    def test_coordinator_tick_card_states_the_single_dispatch_boundary(self):
+        card = SKILLS / "aep-coordinator-tick" / "SKILL.md"
+        self.assertTrue(card.is_file(), "the coordinator tick needs a capability card")
+        text = card.read_text(encoding="utf-8")
+        self.assertEqual(_frontmatter(text)["min_agent_capability"], "cli")
+        for token in ("零模型", "不是第二套调度器", "不回退", "--apply", "DEPOSITED",
+                      "只有 `VERIFIED` 能关单", "启动常驻 watcher",
+                      "docs/COORDINATOR_TICK.zh-CN.md", "FEDERATION_CONTEXT_MISSING",
+                      "定时器不是判断"):
+            with self.subTest(token=token):
+                self.assertIn(token, text)
+        self.assertIn("禁止", text, "failure handling must stay explicit")
+
 
 if __name__ == "__main__":
     unittest.main()
