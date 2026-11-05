@@ -1,0 +1,57 @@
+{
+  "_note": "Template, not a working profile. Replace the values named in _fill_in_locally, then copy this file to coordination/ui_profiles/<agent>.json -- that directory is gitignored because it holds machine paths and conversation titles. Everything else here is a measured fact about the client and is safe to share.",
+  "_fill_in_locally": [
+    "exe",
+    "session_marker"
+  ],
+  "agent": "qoder",
+  "process": "Qoder",
+  "title": "Qoder",
+  "exe": "<REPLACE: absolute path to the client executable, read from the running process rather than guessed from the install layout>",
+  "session_marker": "<REPLACE: a phrase that exists only in the target conversation, never in any other chat of this client>",
+  "session_evidence_markers": [
+    "FlagGems-sglang"
+  ],
+  "model_marker": "DeepSeek-Flash",
+  "model_evidence_markers": [
+    "Flash"
+  ],
+  "transport": "uia",
+  "send_mode": "enter",
+  "composer_hint": "长按鼠标语音输入文字",
+  "composer_hints": [
+    "发送任务消息",
+    "长按鼠标语音输入文字",
+    "在这输入",
+    "在这输入：",
+    "输入消息"
+  ],
+  "strict_composer_hint": true,
+  "allow_composer_geometry_fallback": true,
+  "composer_x_ratio": 0.37,
+  "composer_y_ratio": 0.92,
+  "activity_ocr": true,
+  "require_activity_ready": true,
+  "busy_markers": [
+    "正在执行",
+    "执行中",
+    "生成中",
+    "运行中",
+    "处理中"
+  ],
+  "send_button_color": "green",
+  "maximize_window": true,
+  "allow_minor_clipping": true,
+  "allow_unknown_path": true,
+  "reply_timeout_seconds": 120,
+  "allow_busy_interject": true,
+  "interject_after_send": true,
+  "interject_note": "Directly measured, no longer inferred. The previous value here was false and that measurement was invalid: it staged the message with ValuePattern.SetValue, which updates the visual editor without firing the web app's input event -- so the client still believed its composer was empty, Enter was swallowed, and no message was ever queued. With nothing queued there is nothing to interject into, and the absence of a 插话 control was read as 'this client has no interject channel'. Measured properly on this build (pid <local>, 2026-11-05 09:57): a run was started with AEP-START-20261105-01, the client reported activity_state=busy (busy_hits=正在执行), and `aep coord-uia deliver --urgent-interject` then returned status=message-visible, task_delivered=true, promote_after_send=true, interject_polls=1, interject_action=插话, interject_promoted=true, interruption=false, send_attempts=3, send_retry=paste+enter. AEP-INTERJECT-20261105-04 appears in the history at 09:57 and the model itself replied at the top of its next message with 'AEP-INTERJECT-20261105-04 已收到，国际版插话路径验证通过。', while noting the original task had been delivered in the same turn -- so the queued message was read by the running turn, not merely appended after it. Identical to the CN build, same version, same shell. Two things are specific to this build: its window had been left collapsed at 237x39 (deliver now honours the profile's maximize_window like capture and compose already did), and it embeds a browser panel, so the on-screen action-label inventory contains 后退/前进/重新加载/关闭 ... 标签页 as well -- the hint list must stay specific enough not to match a page control.",
+  "interject_hints": [
+    "插话",
+    "继续执行并发送",
+    "Send while running",
+    "Interject"
+  ],
+  "ocr_language": "zh-Hans-CN"
+}

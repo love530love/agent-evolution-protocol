@@ -1,0 +1,36 @@
+{
+  "_note": "Template, not a working profile. Replace the values named in _fill_in_locally, then copy this file to coordination/ui_profiles/<agent>.json -- that directory is gitignored because it holds machine paths and conversation titles. Everything else here is a measured fact about the client and is safe to share.",
+  "_fill_in_locally": [
+    "exe",
+    "session_marker"
+  ],
+  "agent": "qoder_cn",
+  "process": "Qoder CN",
+  "title": "Qoder CN",
+  "exe": "<REPLACE: absolute path to the client executable, read from the running process rather than guessed from the install layout>",
+  "session_marker": "<REPLACE: a phrase that exists only in the target conversation, never in any other chat of this client>",
+  "model_marker": "Qoder",
+  "transport": "uia",
+  "send_mode": "enter",
+  "composer_hint": "发送任务消息",
+  "composer_hint_note": "Measured 2026-11-05 from the live window: the composer is the Edit named exactly this. Without it the choice still worked, but only because the geometry filter happened to leave one candidate in the lower band -- a hint turns that luck into a stated reason (input_selected_reason=composer-hint).",
+  "composer_hints": [
+    "发送任务消息",
+    "长按鼠标语音输入文字",
+    "在这输入",
+    "在这输入：",
+    "输入消息"
+  ],
+  "allow_unknown_path": true,
+  "reply_timeout_seconds": 60,
+  "allow_busy_interject": true,
+  "interject_note": "True, and measured (Qoder CN 0.5.3, pid <local>, 2026-11-05). The earlier note here said false, and it was wrong for a reason worth keeping: the probe looked for the control once, at rest, while the composer was empty. At that moment the only affordance is 停止生成 / 正在执行中 · 20s, so 'no interject channel' looked true. The real sequence is three steps -- paste (a real input event, not ValuePattern) -> force Enter once or twice -> the composer clears, 发送消息 becomes 停止生成 and a 插话 Button appears at 1990,1618 78x30 -> click it and the queued message enters the running turn. Verified end to end: after the click the transcript grew 318 -> 340 lines and the status line changed to 考虑不同角度. So the control is not missing, it is late.",
+  "interject_after_send": true,
+  "interject_hints": [
+    "插话",
+    "继续执行并发送",
+    "Send while running",
+    "Interject"
+  ],
+  "ocr_language": "zh-Hans-CN"
+}

@@ -92,6 +92,11 @@ candidate
 6. 成功流程通过后才生成 OpenAdapt 回放；回放也必须检查会话锚点。
 
 > 打包注意：当前 `coordination/ui_profiles/` 和窗口/PID 锚点属于本机运行态，按 `.gitignore` 保持不上传。发布前必须把不含 PID、token 和个人会话文本的模板移入 `examples/`，由安装器在目标机器重新探测并生成锚点；否则“源码可复现”仍不等于“本机可接管”。
+>
+> **部分已完成（2026-11-05）**：模板已移入 `examples/ui_profiles/`，由 `scripts/export_ui_profile_examples.py` 从本机 profile 生成（`--check` 检测漂移），
+> `tests/test_ui_profile_examples.py` 守着「不含本机路径 / 会话标题 / pid」。**安装器仍未做**：
+> 目标机器目前需要手工复制模板、填 `exe` 与 `session_marker`、再用 `aep coord-uia observe` 验证。
+> 口径与证据等级见 `docs/coordination/UI_PROFILES.zh-CN.md`。
 
 ## 6. 生产发布门槛
 

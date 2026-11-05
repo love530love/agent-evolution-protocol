@@ -1,0 +1,41 @@
+{
+  "_note": "Template, not a working profile. Replace the values named in _fill_in_locally, then copy this file to coordination/ui_profiles/<agent>.json -- that directory is gitignored because it holds machine paths and conversation titles. Everything else here is a measured fact about the client and is safe to share.",
+  "_fill_in_locally": [
+    "exe",
+    "session_marker"
+  ],
+  "agent": "workbuddy3",
+  "process": "WorkBuddy",
+  "title": "WorkBuddy",
+  "exe": "<REPLACE: absolute path to the client executable, read from the running process rather than guessed from the install layout>",
+  "session_marker": "<REPLACE: a phrase that exists only in the target conversation, never in any other chat of this client>",
+  "session_evidence_markers": [
+    "T194",
+    "昆仑"
+  ],
+  "model_marker": "DeepSeek-V4.1-Flash",
+  "model_evidence_markers": [
+    "DeepSeek-V4.1-Flash"
+  ],
+  "transport": "ocr",
+  "send_mode": "enter",
+  "composer_hint": "今天帮你做些什么",
+  "composer_hints": [
+    "今天帮你做些什么",
+    "添加上下文",
+    "调用技能与指令"
+  ],
+  "strict_composer_hint": false,
+  "allow_composer_geometry_fallback": true,
+  "composer_x_ratio": 0.5524,
+  "composer_y_ratio": 0.9076,
+  "allow_clipboard_paste": false,
+  "dpi_aware": true,
+  "ocr_language": "zh-Hans-CN",
+  "maximize_window": true,
+  "allow_unknown_path": true,
+  "allow_minor_clipping": true,
+  "activity_ocr": true,
+  "reply_timeout_seconds": 180,
+  "settle_timeout_seconds": 6
+}

@@ -1,0 +1,33 @@
+{
+  "_note": "Template, not a working profile. Replace the values named in _fill_in_locally, then copy this file to coordination/ui_profiles/<agent>.json -- that directory is gitignored because it holds machine paths and conversation titles. Everything else here is a measured fact about the client and is safe to share.",
+  "_fill_in_locally": [
+    "exe",
+    "session_marker"
+  ],
+  "agent": "codebuddy_cn",
+  "process": "CodeBuddy CN",
+  "title": "Agents",
+  "exe": "<REPLACE: absolute path to the client executable, read from the running process rather than guessed from the install layout>",
+  "session_marker": "<REPLACE: a phrase that exists only in the target conversation, never in any other chat of this client>",
+  "model_marker": "Hy3",
+  "transport": "ocr",
+  "send_mode": "enter",
+  "composer_hint": "输入消息...",
+  "strict_composer_hint": false,
+  "send_button_x_ratio": 0.59,
+  "send_button_y_ratio": 0.945,
+  "send_button_color": "purple",
+  "scroll_composer": true,
+  "maximize_window": true,
+  "allow_unknown_path": true,
+  "reply_timeout_seconds": 60,
+  "allow_busy_interject": true,
+  "interject_note": "Not re-measured since the Qoder finding. The hint list below is the same generic guess, and this profile still relies on the strict at-rest gate (interject_after_send is absent), so an urgent note is refused unless a matching control is visible before anything is typed. That refusal is safe but may be a false negative for the same reason Qoder's was: a client that only shows the control after a message is queued looks like it has no channel at all. Measure with paste+Enter, not ValuePattern, before adding interject_after_send here.",
+  "interject_hints": [
+    "插话",
+    "继续执行并发送",
+    "Send while running",
+    "Interject"
+  ],
+  "ocr_language": "zh-Hans-CN"
+}

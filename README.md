@@ -131,6 +131,7 @@ multi-agent coordination:
 - [any online agent can request a bounded handoff](docs/coordination/ANY_AGENT_CAN_DISPATCH.md)
 - [human-style desktop fallback](docs/coordination/HUMAN_UI_FALLBACK.md)
 - [Enter-first sending and non-interrupting urgent interjection](docs/DESKTOP_SEND_AND_URGENT_INTERJECT.zh-CN.md)
+- [which UI profile facts are distributable and which stay local](docs/coordination/UI_PROFILES.zh-CN.md)
 - [Windows desktop MCP provider discovery and fallback planning](docs/coordination/DESKTOP_MCP_PROVIDERS.md)
 - [shared Windows command memory](docs/coordination/COMMAND_MEMORY.md)
 - [Windows build case index](docs/coordination/WINDOWS_BUILD_KNOWLEDGE.md)
