@@ -224,6 +224,17 @@ class CapabilityCardTests(unittest.TestCase):
                 self.assertIn(token, text)
         self.assertIn("只有 `VERIFIED` 能关单", text)
 
+    def test_legion_announce_card_states_the_room_and_verdict(self):
+        card = SKILLS / "aep-legion-announce" / "SKILL.md"
+        self.assertTrue(card.is_file(), "legion announcements need a capability card")
+        text = card.read_text(encoding="utf-8")
+        self.assertEqual(_frontmatter(text)["min_agent_capability"], "cli")
+        for token in ("agent-legion", "coord-chat-read", "游标",
+                      "command_memory.announce", "--mailbox-only", "DEPOSITED",
+                      "只有 `VERIFIED` 能关单", "docs/LEGION_ANNOUNCE.zh-CN.md"):
+            with self.subTest(token=token):
+                self.assertIn(token, text)
+
 
 if __name__ == "__main__":
     unittest.main()

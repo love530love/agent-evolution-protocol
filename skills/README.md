@@ -61,6 +61,7 @@ model_required: false
 | `aep-mission-pulse` | cli | 否 | 长任务心跳接合：mission 阶段 → 既有 commander 队列，默认只读预览 |
 | `aep-coordinator-tick` | cli | 否 | 居中协调一拍：把三条既有单步接成固定顺序，默认只读预览，投递路径严格二选一 |
 | `aep-relay-drill` | cli | 否 | 在线 Agent 依次互派 + 回环总结 + 三方哈希判定 VERIFIED；默认只读，不代报在线 |
+| `aep-legion-announce` | cli | 否 | 全队通报：固定 `room=agent-legion`、默认只读、只写 1 条共享事件、不碰桌面 |
 
 新 Agent 要开始调度任务，从 `aep-start-dispatch` 起步；它给出 `aep join` 的最小序列，
 并明确「只有 `VERIFIED` 能关单」。`aep-agent-onboarding` 是较早的散文规范，

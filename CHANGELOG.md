@@ -1,5 +1,70 @@
 # Changelog
 
+## 0.6.23 — 查看协作区通报后的开发完善
+
+- **Read the coordination announcement, then fix what it exposed.** Agent `hal`
+  published an all-team audit notice (2026-11-05 17:12) and left uncommitted
+  closeout work. This release integrates that work and finishes the gaps.
+- **Fixed a live command-surface drift.** hal registered `coord-loop-verdict` and
+  `coord-relay-drill` in `cli.py` but did not regenerate the committed manifest:
+  `coord-skill-manifest check` reported `DIGEST_MISMATCH` / `SKILL_STALE` and four
+  guard tests went red (`89 != 91`). Ran `aep coord-skill-manifest write`
+  (count 89 -> 91, documented 25 -> 27, digest now in sync) and updated the two
+  hardcoded counts in
+  `docs/coordination/THIRD_PARTY_CAPABILITY_ABSORPTION_20261102.zh-CN.md`.
+- **Corrected the CRLF "blocker" instead of acting on it.** hal's audit claimed
+  repo-wide CRLF pollution and asked for `git add --renormalize .`. Measured on
+  the Windows host: `git ls-files --eol` shows `i/lf` in the index for every
+  sampled file (working tree `w/crlf` is just `core.autocrlf=true`), and
+  `git diff --check` is clean. Running renormalize would have manufactured a
+  huge meaningless diff. No renormalize was performed. hal's `.gitattributes`
+  (LF for text, CRLF for `.ps1`, binary declarations) is kept and integrated.
+- **Cleared a stale git lock.** `.git/index.lock` was a 0-byte file created at
+  16:51 while every `git.exe` process on the machine had started on 10-31 or
+  11-04; `git add` failed with "Another git process seems to be running".
+  Confirmed 0 bytes + no matching recent process, removed it, and verified
+  `git add` works again.
+- **Applied the two audit suggestions that were real.** `loop_verdict.check()`
+  used substring matching for the evidence digest; it now requires an explicit
+  `analysis_sha256=<64hex>` declaration in both the receipt reply and the
+  sender reply, so a digest merely quoted in prose cannot satisfy the loop.
+  Added a test for that case plus a sender/target-both-omitted inference test.
+  The third suggestion (expose `fresh_online` on the CLI) was **disproved by a
+  live run**: `aep coord-relay-drill` dry-run already returns `fresh_online`,
+  `blocked`, `applied` and `run_complete`; no CLI change, no new manifest drift.
+- **New `coordination/legion_announce.py`**: turns the manual 14-step
+  announcement into a one-shot, read-only-by-default capability. It fixes the
+  three measured traps -- `coord-chat-publish` defaults to `room=workspace`
+  (only `agent-legion` reaches the shared timeline); `coord-chat-read --limit N`
+  walks forward from the cursor and shows the OLDEST events (a fresh notice
+  looks unpublished); `command_memory.announce()` has a hardcoded body and a
+  hardcoded 7-agent list. `--apply` appends exactly ONE
+  `conversation_journal` event with `room=agent-legion`, `actor=source`,
+  `kind=message`; the receipt states `DEPOSITED` (not delivery), both read
+  traps, and the dynamically discovered mailbox targets with ready-to-run
+  `coord-send --mailbox-only` commands. It deliberately does NOT write mailbox
+  messages (that format belongs to `coord-send`) and adds no `coord-*` command,
+  no schema, no desktop input, no process. Ships with
+  `scripts/announce-to-legion.ps1`, `skills/aep-legion-announce/SKILL.md`,
+  `docs/LEGION_ANNOUNCE.zh-CN.md` and `tests/test_legion_announce.py`.
+- **Integrated hal's closeout work**: the `cli.py` command registration,
+  `.gitattributes`, `docs/AUDIT_v0.6.22_hal.md` and
+  `docs/v0.6.22_CLOSEOUT_HAL.md` are committed as historical records. The
+  "CRLF blocking" checkbox in that report is explicitly answered above.
+- Verification: full suite `1452 passed, 3 skipped, 753 subtests passed in 143.05s`
+  (`PYTEST_EXIT=0`, with `CODEBUDDY_SAFE_DELETE_ENABLED=0`). Targeted
+  `tests/test_legion_announce.py tests/test_capability_cards.py
+  tests/test_relay_loop.py tests/test_skill_manifest.py`
+  `70 passed, 211 subtests`. Real coordination root read-only preview:
+  `applied=false`, `room=agent-legion`, `writes_performed=0`,
+  `verdict=NOT_DEPOSITED`, 14 mailbox targets discovered, all hard boundaries
+  0/false, zero new runtime files. `git diff --check` clean;
+  `coord-skill-manifest check` in sync.
+- Still not done: no real in-turn multi-agent mutual dispatch (fresh online
+  evidence remains 0), no desktop wake/interject from this release, no unified
+  broadcast CLI command (deliberately no new command surface), no credit/quota
+  tracking, no 7x24 unattended promise.
+
 ## 0.6.22 — 操作拟真度：在线 Agent 依次互测的可判定完成条件
 
 - **Scope correction (operator, 2026-11-05)**. "Saving credits" was only

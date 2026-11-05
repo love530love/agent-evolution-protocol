@@ -50,6 +50,8 @@ from agent_evolution_protocol.coordination import desktop_runner
 from agent_evolution_protocol.coordination import desktop_ipc
 from agent_evolution_protocol.coordination import improvement
 from agent_evolution_protocol.coordination import improvement_spool
+from agent_evolution_protocol.coordination import loop_verdict
+from agent_evolution_protocol.coordination import relay_drill
 from agent_evolution_protocol.coordination import improvement_work
 from agent_evolution_protocol.coordination import improvement_policy
 from agent_evolution_protocol.coordination import improvement_acceptance
@@ -2953,6 +2955,27 @@ def coord_transcript(args: argparse.Namespace) -> None:
     print(json.dumps(report, ensure_ascii=False, indent=2))
 
 
+
+
+def coord_loop_verdict(args: argparse.Namespace) -> None:
+    """Recompute one handoff loop verdict from filesystem evidence."""
+    root = coord_root(args)
+    bridge = args.bridge_root if getattr(args, "bridge_root", None) else coord_root(args)
+    result = loop_verdict.check(root, bridge, args.event_id,
+                                 sender=getattr(args, "sender", ""),
+                                 target=getattr(args, "target", ""))
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+def coord_relay_drill(args: argparse.Namespace) -> None:
+    """One-shot relay drill: plan or execute in-turn multi-agent dispatch."""
+    root = coord_root(args)
+    bridge = args.bridge_root if getattr(args, "bridge_root", None) else coord_root(args)
+    result = relay_drill.run(root, bridge,
+                               apply=getattr(args, "apply", False),
+                               now=None)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+
 def coord_cdp(args: argparse.Namespace) -> None:
     """Chrome DevTools Protocol transport: exact DOM read and composer write."""
     action = args.action
@@ -3585,6 +3608,11 @@ def build_parser() -> argparse.ArgumentParser:
     claw = commands.add_parser("coord-clawchat"); claw.add_argument("--host", default="127.0.0.1"); claw.add_argument("--port", type=int, default=0); claw.add_argument("--room", default="workspace"); claw.add_argument("--sender", required=True); claw.add_argument("--target", required=True); claw.add_argument("--task"); claw.add_argument("--event-id", required=True); claw.add_argument("--text"); claw.add_argument("--text-file"); claw.add_argument("--timeout", type=float, default=5); claw.add_argument("--execute", action="store_true"); claw.set_defaults(func=coord_clawchat)
 
     cmdr = commands.add_parser("coord-commander"); cmdr.add_argument("action", choices=("submit", "perceive", "tick", "ack", "status", "watch", "resume-deferred")); cmdr.add_argument("--target"); cmdr.add_argument("--order-id"); cmdr.add_argument("--sender", default="human"); cmdr.add_argument("--task"); cmdr.add_argument("--text"); cmdr.add_argument("--text-file"); cmdr.add_argument("--event-id"); cmdr.add_argument("--priority", choices=("urgent", "normal", "low"), default="normal"); cmdr.add_argument("--transport", default="auto"); cmdr.add_argument("--expires-minutes", type=int, default=120); cmdr.add_argument("--allow-launch", action="store_true"); cmdr.add_argument("--urgent-interject", action="store_true", help="send through an exact non-interrupting interject action while the agent is busy"); cmdr.add_argument("--no-perceive", action="store_true"); cmdr.add_argument("--agent"); cmdr.add_argument("--limit", type=int, default=20); cmdr.add_argument("--interval", type=float, default=30); cmdr.add_argument("--max-ticks", type=int, default=0);     cmdr.set_defaults(func=coord_commander)
+
+    loopv = commands.add_parser("coord-loop-verdict", help="recompute one handoff loop verdict from filesystem evidence")
+    loopv.add_argument("--event-id", required=True); loopv.add_argument("--bridge-root", type=Path); loopv.add_argument("--sender", default=""); loopv.add_argument("--target", default=""); loopv.set_defaults(func=coord_loop_verdict)
+    relay = commands.add_parser("coord-relay-drill", help="one-shot relay drill: plan or execute in-turn multi-agent dispatch")
+    relay.add_argument("--bridge-root", type=Path); relay.add_argument("--apply", action="store_true"); relay.set_defaults(func=coord_relay_drill)
 
     assign = commands.add_parser("coord-assign", help="assign a task through the mailbox: DAG node + lease + order in one call")
     assign.add_argument("--workspace", required=True); assign.add_argument("--task", required=True)

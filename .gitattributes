@@ -1,0 +1,15 @@
+# Auto-detect text files, normalize to LF on checkout
+* text=auto eol=lf
+
+# PowerShell scripts should keep CRLF on Windows
+*.ps1 text eol=crlf
+
+# Binary files: never modify line endings
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.tar binary
+*.gz binary

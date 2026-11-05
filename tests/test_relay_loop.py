@@ -102,6 +102,38 @@ class LoopVerdictTests(unittest.TestCase):
                 finally:
                     holder.cleanup()
 
+    def test_hash_mentioned_in_prose_without_the_field_is_refused(self):
+        """A bare digest substring must not count as a declared evidence hash."""
+        root, bridge, holder = _root()
+        try:
+            sha = lv.sha256_text(ANALYSIS)
+            reply_path = bridge / "messages" / SENDER / f"{EVENT}-reply.json"
+            reply_path.write_text(json.dumps({
+                "id": EVENT + "-reply", "to": SENDER,
+                "text": f"prose that merely mentions {sha} in passing",
+                "reply_to": EVENT}), encoding="utf-8")
+            result = lv.check(root, bridge, EVENT, sender=SENDER, target=TARGET)
+            self.assertEqual(result["verdict"], "NOT_VERIFIED")
+            self.assertIn("REPLY_HASH_MISMATCH", result["reasons"])
+            receipt_path = root / "delegation" / "receipts" / f"{EVENT}.json"
+            receipt_path.write_text(json.dumps({
+                "state": "AGENT_ACK", "to": TARGET, "agent_accepted": True,
+                "reply": f"the number {sha} appears but is not a declared field"}),
+                encoding="utf-8")
+            result = lv.check(root, bridge, EVENT, sender=SENDER, target=TARGET)
+            self.assertIn("RECEIPT_HASH_MISMATCH", result["reasons"])
+        finally:
+            holder.cleanup()
+
+    def test_sender_and_target_can_be_inferred_when_both_are_omitted(self):
+        root, bridge, holder = _root()
+        try:
+            result = lv.check(root, bridge, EVENT)
+            self.assertEqual(result["verdict"], "VERIFIED")
+            self.assertEqual(result["evidence_sha256"], lv.sha256_text(ANALYSIS))
+        finally:
+            holder.cleanup()
+
     def test_missing_reply_is_refused(self):
         root, bridge, holder = _root()
         try:

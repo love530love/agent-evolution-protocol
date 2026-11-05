@@ -13,8 +13,8 @@ evidence already required by
    ``agent_accepted=true`` and the expected target;
 2. ``delegation/artifacts/<event_id>/<target>.json`` carries an analysis whose
    SHA-256 is **recomputed from the stored text**;
-3. the sender's ``<event_id>-reply.json`` carries that same digest, and so does
-   the receipt reply.
+3. the sender's ``<event_id>-reply.json`` and the receipt reply both declare
+   that same digest in an explicit ``analysis_sha256=<64hex>`` field.
 
 Anything short of all three is ``NOT_VERIFIED`` with a named reason.  Read-only,
 socket-free, model-free, no process, no state written.
@@ -25,16 +25,29 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
 
 SCHEMA = "aep-loop-verdict-v1"
 VERIFIED = "VERIFIED"
 NOT_VERIFIED = "NOT_VERIFIED"
+HASH_TOKEN = re.compile(r"analysis_sha256=([0-9a-f]{64})")
 NOTE = ("Recomputed three-way evidence only. Not a desktop-send proof, not a "
         "model judgement, and never a substitute for an agent's own ACK.")
 
 
 def sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def declared_hash(value) -> str:
+    """Only an explicit ``analysis_sha256=<64hex>`` field is a hash claim.
+
+    A bare digest appearing in prose is not a declaration.  With substring
+    matching, a reply that merely quoted -- or happened to contain -- the
+    digest could satisfy the loop without binding the analysis to it.
+    """
+    match = HASH_TOKEN.search(str(value))
+    return match.group(1) if match else ""
 
 
 def _read(path: Path) -> dict | None:
@@ -93,13 +106,13 @@ def check(root, bridge_root, event_id: str, *, sender: str = "",
         else:
             checks["artifact"] = True
             checks["digest_recomputed"] = True
-        if digest and digest not in str((receipt or {}).get("reply", "")):
+        if not digest or declared_hash((receipt or {}).get("reply", "")) != digest:
             reasons.append("RECEIPT_HASH_MISMATCH")
 
     reply = _read(Path(bridge_root) / "messages" / s / f"{event_id}-reply.json")
     if not reply:
         reasons.append("REPLY_MISSING")
-    elif not digest or digest not in str(reply.get("text", "")):
+    elif not digest or declared_hash(reply.get("text", "")) != digest:
         reasons.append("REPLY_HASH_MISMATCH")
     elif checks["digest_recomputed"]:
         checks["reply"] = True

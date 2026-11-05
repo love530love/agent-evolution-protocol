@@ -45,7 +45,7 @@ CLI-Anything 的核心主张是：**CLI 就是 agent 的接口，而接口文档
 
 ### AEP 已经有什么
 
-- 89 个子命令（`build_parser()`），其中 25 个在处理函数上有 docstring。
+- 91 个子命令（`build_parser()`），其中 27 个在处理函数上有 docstring。
 - `route_guidance.build_next_action()` 已经会返回**一条**可执行 argv，且明确"never execute"。
 - 有防漂移测试的先例：`tests/test_route_guidance_doc.py`。
 
@@ -68,7 +68,7 @@ CLI-Anything 的核心主张是：**CLI 就是 agent 的接口，而接口文档
    唯一有代价的错误——调用方会以为干跑过了。所以默认值朝安全方向倒，测试只守这个方向。
 3. **摘要覆盖整份清单**，两次生成可以直接比摘要，不必 diff 89 行。
 
-顺手暴露了一个真问题：**64 / 89 个命令在定义处没有任何说明**。第一版渲染把它们显示成
+顺手暴露了一个真问题：**64 / 91 个命令在定义处没有任何说明**。第一版渲染把它们显示成
 `—`，看起来像排版问题；现在它们被显式标成 `未记录`，并且 `tests/test_skill_manifest.py`
 把未记录数量钉成**棘轮**——只许降，涨了就得有人解释。
 

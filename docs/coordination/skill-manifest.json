@@ -1,7 +1,7 @@
 {
   "by_risk": {
     "irreversible": 15,
-    "mutating": 53,
+    "mutating": 55,
     "read-only": 21
   },
   "commands": [
@@ -2813,6 +2813,48 @@
     {
       "arguments": [
         {
+          "dest": "event_id",
+          "flags": [
+            "--event-id"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "bridge_root",
+          "flags": [
+            "--bridge-root"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": "",
+          "dest": "sender",
+          "flags": [
+            "--sender"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": "",
+          "dest": "target",
+          "flags": [
+            "--target"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": true,
+      "name": "coord-loop-verdict",
+      "purpose": "Recompute one handoff loop verdict from filesystem evidence.",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
           "dest": "metrics_file",
           "flags": [
             "--metrics-file"
@@ -3152,6 +3194,32 @@
       ],
       "documented": false,
       "name": "coord-reasoning",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "bridge_root",
+          "flags": [
+            "--bridge-root"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "apply",
+          "flags": [
+            "--apply"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "documented": true,
+      "name": "coord-relay-drill",
+      "purpose": "One-shot relay drill: plan or execute in-turn multi-agent dispatch.",
       "risk": "mutating"
     },
     {
@@ -5365,9 +5433,9 @@
       "risk": "mutating"
     }
   ],
-  "count": 89,
-  "digest": "sha256:09a984be67a82c1c421d337fd55474bcb992e5911c004d91ceb16647e9a68c55",
-  "documented": 25,
+  "count": 91,
+  "digest": "sha256:c5519cf764f128b3c7f4c656d362cc7cac21218af9f0b81f5c0a723dec1f2cfa",
+  "documented": 27,
   "generated_from": "agent_evolution_protocol.cli:build_parser",
   "global_arguments": [
     {

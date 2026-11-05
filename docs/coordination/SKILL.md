@@ -4,10 +4,10 @@
 > 手改会让 `tests/test_skill_manifest.py` 失败——这是刻意的：
 > 上一版研究文档把 `schema=aep-next-action-v1` 写错了整整两天，因为散文不会报错。
 
-- 命令总数：**89**
-- 风险分布：read-only 21、mutating 53、irreversible 15
-- 用途已记录：**25** / 89（未记录 64，只允许减少）
-- 清单摘要：`sha256:09a984be67a82c1c421d337fd55474bcb992e5911c004d91ceb16647e9a68c55`
+- 命令总数：**91**
+- 风险分布：read-only 21、mutating 55、irreversible 15
+- 用途已记录：**27** / 91（未记录 64，只允许减少）
+- 清单摘要：`sha256:c5519cf764f128b3c7f4c656d362cc7cac21218af9f0b81f5c0a723dec1f2cfa`
 
 风险分级是**声明**而不是推导：未登记的命令一律按 `mutating` 处理。
 把会写的命令标成 `read-only` 是这里唯一有代价的错误，所以默认值朝安全方向倒。
@@ -80,6 +80,7 @@
 | `coord-improvement` | mutating | `ACTION` | *未记录* |
 | `coord-joint-case` | mutating | `ACTION --task --submission` | *未记录* |
 | `coord-legion` | mutating | `ACTION` | *未记录* |
+| `coord-loop-verdict` | mutating | `--event-id` | Recompute one handoff loop verdict from filesystem evidence. |
 | `coord-mechanism-audit` | read-only | `--metrics-file` | *未记录* |
 | `coord-onboarding` | mutating | `--agent` | *未记录* |
 | `coord-orca` | mutating | `ACTION` | *未记录* |
@@ -88,6 +89,7 @@
 | `coord-provider-catalog` | read-only | `—` | List optional execution providers without installing or probing them. |
 | `coord-providers` | mutating | `ACTION` | List, promote or retire optional execution providers. |
 | `coord-reasoning` | mutating | `ACTION` | *未记录* |
+| `coord-relay-drill` | mutating | `—` | One-shot relay drill: plan or execute in-turn multi-agent dispatch. |
 | `coord-release` | mutating | `--agent --task` | *未记录* |
 | `coord-route` | read-only | `--observation --window` | Replay a routing decision from recorded receipts, offline. |
 | `coord-send` | irreversible | `--from --to --topic --kind` | *未记录* |
