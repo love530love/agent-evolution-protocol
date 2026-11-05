@@ -46,6 +46,7 @@ ANNOUNCE_TRAP = (
     "本模块用 conversation_journal.append_event，不复制消息格式。"
 )
 MAILBOX_NOTE = ("COORD_ROOT / SOURCE / NOTICE_FILE 是大写占位符，执行前替换。"
+                "发起者自己已自动排除（coord-send 会拒 sender==receiver）。"
                 "--mailbox-only 保证不触发桌面打字；信箱落盘仍不等于已读或已 ACK。")
 
 
@@ -63,10 +64,11 @@ def plan(root, *, text: str, source: str, mailbox_targets=None) -> dict:
     if mailbox_targets is None:
         folder = root / "messages"
         targets = sorted(p.name for p in folder.glob("*")
-                         if p.is_dir() and presence.NAME.fullmatch(p.name)) \
+                         if p.is_dir() and p.name != source
+                         and presence.NAME.fullmatch(p.name)) \
             if folder.is_dir() else []
     else:
-        targets = sorted({str(name) for name in mailbox_targets})
+        targets = sorted({str(name) for name in mailbox_targets} - {source})
     commands = [
         "aep --coord-root COORD_ROOT coord-send --from SOURCE --to " + target +
         " --topic legion-announcement --kind context --mailbox-only --text-file NOTICE_FILE"

@@ -77,6 +77,20 @@ class DryRunTests(unittest.TestCase):
         finally:
             holder.cleanup()
 
+    def test_plan_excludes_the_announcer_itself(self):
+        """coord-send rejects sender == receiver, so the plan must not list it."""
+        root, holder = _root()
+        try:
+            plan = la.plan(root, text=TEXT, source="qoder")
+            self.assertNotIn("qoder", plan["mailbox_targets"])
+            self.assertEqual(plan["mailbox_targets"], ["claude", "codex"])
+            explicit = la.plan(root, text=TEXT, source="hal",
+                               mailbox_targets=["hal", "claude", "codex"])
+            self.assertEqual(explicit["mailbox_targets"], ["claude", "codex"])
+            self.assertIn("自动排除", plan["mailbox_command_note"])
+        finally:
+            holder.cleanup()
+
     def test_empty_text_or_invalid_source_is_refused(self):
         root, holder = _root()
         try:

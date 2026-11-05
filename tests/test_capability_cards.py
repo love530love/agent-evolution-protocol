@@ -235,6 +235,18 @@ class CapabilityCardTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, text)
 
+    def test_delivery_preflight_card_states_the_read_only_boundary(self):
+        card = SKILLS / "aep-delivery-preflight" / "SKILL.md"
+        self.assertTrue(card.is_file(), "desktop preflight needs a capability card")
+        text = card.read_text(encoding="utf-8")
+        self.assertEqual(_frontmatter(text)["min_agent_capability"], "cli")
+        for token in ("只读", "UIPI", "send-after-verification", "第二意见",
+                      "action_verification", "delivery_verdict", "advisory_only",
+                      "只有 `VERIFIED` 能关单", "docs/DESKTOP_DELIVERY_PREFLIGHT.zh-CN.md"):
+            with self.subTest(token=token):
+                self.assertIn(token, text)
+        self.assertIn("coord-uia deliver", text, "the card must name what it refuses to run")
+
 
 if __name__ == "__main__":
     unittest.main()

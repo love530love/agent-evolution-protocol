@@ -1,5 +1,72 @@
 # Changelog
 
+## 0.6.24 — 桌面投递：先补确定性预检，不急着改活路径
+
+- Answered "how to improve desktop delivery" by measuring two hard gaps instead
+  of adding another sender. (1) No component answers, before any input, "can
+  this be sent, by which route, and what is missing": `desktop-preflight.ps1`
+  only checks registration/window count, `probe_uia.ps1` only answers whether a
+  tree is readable, the `observe` receipt has the right fields but
+  `commander._uia_observe()` is dead code, and `input_routing.delivery_verdict()`
+  is used only by offline `coord-route` replay. (2) `action_verification`,
+  `from_send_report()` and `provider_readback()` have no consumer in the live
+  path: `commander._dispatch` reads `task_delivered` as a boolean, which is how
+  a side-panel editor once reported `task_delivered=true` without a closed loop.
+- **New `coordination/delivery_preflight.py`**: a purely read-only preflight
+  plus an advisory post-send recomputation. It reads four existing on-disk
+  facts (`ui_profiles/<agent>.json`, `clients/<agent>.json`,
+  `uia_receipts/last-<agent>.json`, `desktop_health.json`), feeds the EXISTING
+  `input_routing.delivery_verdict()` (no second decision rule), and reports
+  `readiness`, `route` (`uia`/`ocr`), named `missing` gates and `warnings`.
+  Because a preflight has never typed anything, `needs_verification` stays true
+  and the honest best case is `send-after-verification` / `READY_UNVERIFIED`,
+  never a plain "send". Fail-closed gates: `PROFILE_MISSING`, `OBSERVE_MISSING`,
+  `CAPTURE_ONLY_RECEIPT`, `TRANSCRIPT_UNREADABLE`, `SESSION_MARKER_NOT_SEEN`,
+  `INPUT_NOT_FOUND`, `INPUT_REGION_MISSING`, `ACTIVITY_UNKNOWN`, `ACTIVITY_BUSY`,
+  `WINDOW_ENUMERATION_DEGRADED`.
+- `postflight()` recomputes a send receipt with
+  `action_verification.from_send_report()` + `verdict(required=the four declared
+  checks)`, returning `verified` (True/False/None), `missing`, `failed` and
+  `declared_task_delivered`. It is **ADVISORY ONLY** (`advisory_only=true`,
+  note states commander still reads the boolean). Switching the live path over
+  needs a real-machine measurement and is deliberately left for P2.
+- **Read-only drill on the real coordination root (no typing, no files written)**:
+  5 profiles scanned. `chatgpt` -> `uia` / `READY_UNVERIFIED` / no missing;
+  `qoder` and `qoder_cn` -> `DEFERRED` / `CAPTURE_ONLY_RECEIPT` (their `last-*`
+  files are capture receipts, not preflight evidence, even though both had
+  successful same-day deliveries); `codebuddy_cn` -> `ocr` / `DEFERRED` /
+  `TRANSCRIPT_UNREADABLE`, `INPUT_NOT_FOUND`, `INPUT_REGION_MISSING`,
+  `ACTIVITY_UNKNOWN`; `workbuddy3` -> `ocr` / `DEFERRED` /
+  `SESSION_MARKER_NOT_SEEN`, `INPUT_NOT_FOUND`, `INPUT_REGION_MISSING`,
+  `ACTIVITY_UNKNOWN`. All hard boundaries 0/false.
+- **Postflight on the real `AEP-INTERJECT-20261105-04-qoder.json`**: the receipt
+  declares `task_delivered=true` but carries none of the four
+  `SEND_REPORT_CHECKS` fields, so the recomputation returns `verified=None`
+  (`MISSING_CHECK`, 0 checks, all four missing). A boolean is not evidence;
+  this also shows why a live-path switch would currently stall historical
+  orders as `unknown` instead of proving anything.
+- Fixed the `legion_announce.plan()` self-dispatch defect reported in the
+  previous turn: dynamically discovered and explicitly supplied target lists
+  now exclude the announcer (`coord-send` rejects `sender == receiver`), with a
+  test for both paths and an updated command note.
+- Added `skills/aep-delivery-preflight/SKILL.md`,
+  `docs/DESKTOP_DELIVERY_PREFLIGHT.zh-CN.md` (two gaps, phased P0-P4 route,
+  explicit non-goals), `tests/test_delivery_preflight.py`, plus README and
+  capability-card guard updates. No new `coord-*` command, no new schema, no
+  CLI change, no manifest drift.
+- **Explicitly NOT done**: no `coord-uia deliver` / `compose` /
+  `--urgent-interject` / `coord-commander tick`; no typing, focusing, pasting,
+  clicking or external adapter run; `commander._dispatch` verdict unchanged;
+  `_uia_observe()` not wired in; no UIPI / integrity-level auto-decision; no
+  untested `interject_after_send` for `codebuddy_cn` / `workbuddy3` / `chatgpt`;
+  no OS task, no resident process, no credit/quota tracking, no 7x24 promise.
+- Verification: full suite `1470 passed, 3 skipped, 798 subtests passed in 171.15s`
+  (`PYTEST_EXIT=0`, with `CODEBUDDY_SAFE_DELETE_ENABLED=0`). Targeted
+  `tests/test_delivery_preflight.py tests/test_legion_announce.py
+  tests/test_capability_cards.py tests/test_skill_manifest.py`
+  `72 passed, 222 subtests`. `coord-skill-manifest check` in sync;
+  `git diff --check` clean.
+
 ## 0.6.23 — 查看协作区通报后的开发完善
 
 - **Read the coordination announcement, then fix what it exposed.** Agent `hal`
