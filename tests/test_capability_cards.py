@@ -40,6 +40,12 @@ def _manifest_names() -> set[str]:
     return {row["name"] for row in data["commands"]}
 
 
+def _manifest_global_flags() -> set[str]:
+    path = REPO / "docs" / "coordination" / "skill-manifest.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return {flag for row in data["global_arguments"] for flag in row["flags"]}
+
+
 class CapabilityCardTests(unittest.TestCase):
     def test_scanner_sees_cards_and_the_spec(self):
         # A broken scanner and a directory with no cards must not look identical.
@@ -80,11 +86,27 @@ class CapabilityCardTests(unittest.TestCase):
         scanned = 0
         for card in _cards():
             text = card.read_text(encoding="utf-8")
-            for name in set(re.findall(r"\b(coord-[a-z0-9-]+)\b", text)):
+            # (?<!-) excludes the global flag --coord-root: it is an option,
+            # not a command. It is checked separately below instead of being
+            # silently ignored.
+            for name in set(re.findall(r"(?<!-)\b(coord-[a-z0-9-]+)\b", text)):
                 scanned += 1
                 with self.subTest(card=card.parent.name, command=name):
                     self.assertIn(name, known)
         self.assertGreater(scanned, 0, "no commands found: guard would be vacuous")
+
+    def test_global_flags_used_in_cards_are_declared(self):
+        known = _manifest_global_flags()
+        self.assertEqual({"--root", "--coord-root", "--kernel-root"}, known,
+                         "the generated global argument table changed")
+        scanned = 0
+        for card in _cards():
+            text = card.read_text(encoding="utf-8")
+            for flag in set(re.findall(r"(?<!\w)(--(?:coord|kernel|root)[a-z0-9-]*)", text)):
+                scanned += 1
+                with self.subTest(card=card.parent.name, flag=flag):
+                    self.assertIn(flag, known)
+        self.assertGreater(scanned, 0, "no global flags found: guard would be vacuous")
 
     def test_all_referenced_repository_documents_exist(self):
         pattern = re.compile(r"`((?:docs|scripts|schemas)/[^`\s]+?)`")
@@ -117,12 +139,33 @@ class CapabilityCardTests(unittest.TestCase):
                 self.assertIn(token, card)
         self.assertIn("不要去启动", card)
 
-    def test_file_only_card_really_offers_a_file_path(self):
-        card = (SKILLS / "aep-desktop-wake" / "SKILL.md")
-        meta = _frontmatter(card.read_text(encoding="utf-8"))
-        self.assertEqual(meta["min_agent_capability"], "file-only")
-        self.assertIn("coordination/delegation/inbox/<id>.json",
-                      card.read_text(encoding="utf-8"))
+    def test_file_only_cards_really_offer_a_file_path(self):
+        checked = 0
+        for card in _cards():
+            meta = _frontmatter(card.read_text(encoding="utf-8"))
+            if meta.get("min_agent_capability") != "file-only":
+                continue
+            checked += 1
+            with self.subTest(card=card.parent.name):
+                self.assertIn("coordination/delegation/inbox/<id>.json",
+                              card.read_text(encoding="utf-8"),
+                              "a file-only card must be followable without a CLI")
+        self.assertGreaterEqual(checked, 2, "both file-only cards must be discovered")
+
+    def test_start_dispatch_card_covers_join_and_the_verdict_gate(self):
+        card = SKILLS / "aep-start-dispatch" / "SKILL.md"
+        self.assertTrue(card.is_file(), "new agents need an entry card")
+        text = card.read_text(encoding="utf-8")
+        self.assertEqual(_frontmatter(text)["min_agent_capability"], "file-only")
+        for token in ("join --agent", "coord-claim", "coord-delivery-status",
+                      "WAKE_QUEUED_UNVERIFIED", "BLOCKED_HANDOFF_REQUIRED",
+                      "只有 `VERIFIED` 能关单", "MESSAGE_VISIBLE",
+                      "不得重放写操作", "coordination/delegation/inbox/<id>.json"):
+            with self.subTest(token=token):
+                self.assertIn(token, text)
+        self.assertIn("docs/NOVICE_LONGRUN_WORKFLOW.zh-CN.md", text,
+                      "do not let a weak agent promise unattended multi-day runs")
+        self.assertIn("不校验成员", text, "the AGENTS-name trap must be stated")
 
     def test_boundary_document_states_the_hard_limits(self):
         path = REPO / "docs" / "AUTONOMOUS_INSIGHT_LOOP.zh-CN.md"

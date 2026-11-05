@@ -82,7 +82,7 @@ model_required: false
 python -m pytest -q tests/test_insight_miner.py tests/test_local_model_session.py tests/test_capability_cards.py
 ```
 
-期望全绿（当前 49 passed, 43 subtests）。该测试守四件事：证据必须可复算、模型文本不能进证据与事件身份、模型缺席/失败必须降级、快照冻结后 append-only 日志追加不会把提案卡死；第三份测试守能力卡不漂移。
+期望全绿（当前 51 passed, 83 subtests）。该测试守四件事：证据必须可复算、模型文本不能进证据与事件身份、模型缺席/失败必须降级、快照冻结后 append-only 日志追加不会把提案卡死；第三份测试守能力卡不漂移。
 
 补充自检：不带 `--apply` 跑第 1 步后，`coordination/insights/`、`coordination/insight_events/`、`coordination/improvements/` 都不应被创建。
 

@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.6.18 — 新 Agent 调度入口：接入、认领、派工、回执判定
+
+- v0.6.17 built the weak-agent card specification but left an entry gap: a freshly joined
+  agent asked to "start dispatching" had to synthesise steps from four separate documents,
+  and the older `aep-agent-onboarding` card is prose without a receipt-to-verdict table.
+  This release adds `skills/aep-start-dispatch/SKILL.md`, a `file-only` entry card that turns
+  "join -> read context -> claim -> dispatch -> check receipts -> close" into numbered steps
+  plus a lookup table. No runtime code changes.
+- Two paths by capability: a file-only agent writes one
+  `coordination/delegation/inbox/<id>.json` (with the exact id format, a timezone-bearing
+  `reply_due_at` under 3 hours, and `allow_new_session: false`) and may only claim "queued";
+  a CLI agent runs `aep join`, the read-only `coord-status` / `coord-digest` / `inspect` /
+  `kernel-continuation-plan` set, `coord-claim`, a `coord-dispatch` or `coord-wake --dry-run`
+  preview, then `coord-delivery-status` and `coord-task-state`. `coord-assign` and `coord-send`
+  are irreversible and must be previewed first.
+- The card states four traps explicitly: agent names must be looked up in `coord-status`
+  (`valid_agent()` checks characters only, so an unknown `--to` silently creates an unread
+  mailbox); `WAKE_QUEUED_UNVERIFIED` / `RELAY_QUEUED_UNVERIFIED` / `MAILBOX_ONLY` / `REJECTED`
+  and `DEPOSITED` / `WINDOW_FOUND` / `INPUT_SUBMITTED` / `MESSAGE_VISIBLE` are not acceptance
+  and only `VERIFIED` closes a task; no new sessions, no stale wake consumption, no channel
+  switching on a busy target; and no promise of unattended multi-day runs, which
+  `docs/NOVICE_LONGRUN_WORKFLOW.zh-CN.md` still lists as incomplete.
+- `tests/test_capability_cards.py` had a false positive: its command-name regex treated the
+  global flag `--coord-root` as a command, so the new card failed the guard. The fix tightens
+  rather than relaxes it: the regex now matches command positions only, and a new test reads
+  `global_arguments` from the generated `skill-manifest.json` and validates every global flag
+  used in a card. The file-only check now iterates all `file-only` cards and asserts at least two.
+- Verification: `tests/test_capability_cards.py` `12 passed, 71 subtests`; the three new test
+  files `51 passed, 83 subtests`; full suite `1381 passed, 3 skipped, 543 subtests`.
+  `aep` was run read-only (`coord-status`) and confirmed to resolve to this repository's
+  source at the matching version.
+
 ## 0.6.17 — 自动发现与自动审计：默认纯规则，模型随用随走
 
 - The project had evidence streams but no consumer: roughly 16 recorded facts sat on disk while

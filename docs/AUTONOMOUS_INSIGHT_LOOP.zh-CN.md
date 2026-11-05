@@ -144,8 +144,11 @@
   （由 `build_parser()` 生成，不可手改），派工契约复用 `schemas/dispatch-envelope-v1.schema.json`，
   回执结论复用 `docs/DELIVERY_TRUTH_MATRIX.zh-CN.md`，能力包复用
   `schemas/agent-capability-bundle-v1.schema.json`。
-- 当前卡片：`aep-agent-onboarding`（cli）、`aep-insight-loop`（cli）、
+- 当前卡片：`aep-agent-onboarding`（cli，较早的散文规范）、
+  `aep-start-dispatch`（**file-only**：新 Agent 从零接入 → 认领 → 派工 → 回执判定）、
+  `aep-insight-loop`（cli）、
   `aep-desktop-wake`（**file-only**：只写 `coordination/delegation/inbox/<id>.json` 也能发起派工）。
+  新 Agent 要开始调度任务时从 `aep-start-dispatch` 起步。
 - `tests/test_capability_cards.py` 守：卡片 frontmatter 与目录名一致、六节顺序、
   所有 `coord-*` 命令真实存在、所有引用的 `docs|scripts|schemas` 路径真实存在、
   Qoder 0.5.3 插话序列不回退到旧结论。且每条守线都带扫描量断言，防止「守线空转」。
@@ -197,7 +200,7 @@ python -m pytest -q tests/test_insight_miner.py tests/test_local_model_session.p
 
 实测结果（2026-11-05）：
 
-- 上述三个测试文件（含边界文档守线、验收门引用守线）：`49 passed, 43 subtests passed in 1.17s`。
+- 上述三个测试文件（含边界文档守线、验收门引用守线、全局参数守线）：`51 passed, 83 subtests passed in 1.23s`。
 - 全量回归（最终，含新增守线）：`1379 passed, 3 skipped, 503 subtests passed in 163.08s (0:02:43)`；
   补文档与守线之前的一次全量也全绿（`1377 passed, 3 skipped, 493 subtests`）。
 - 真仓库 dry-run：`scanned = {command_memory: 7, overlay_audit: 1, trajectories: 6}`，

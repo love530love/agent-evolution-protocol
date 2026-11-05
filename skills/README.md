@@ -54,9 +54,14 @@ model_required: false
 
 | 卡片 | 最低能力 | 是否需要模型 | 覆盖能力 |
 |---|---|---|---|
-| `aep-agent-onboarding` | cli | 否 | 会话绑定、协作、基础唤醒规范 |
+| `aep-agent-onboarding` | cli | 否 | 会话绑定、协作、基础唤醒规范（散文规范，非执行清单） |
+| `aep-start-dispatch` | file-only | 否 | **新 Agent 从零接入 → 认领 → 派工 → 回执判定** |
 | `aep-insight-loop` | cli | 否（可选随用随走） | 自动发现问题 + 自动审计留痕 |
 | `aep-desktop-wake` | file-only | 否 | 唤醒/派工/忙碌态插话（含 Qoder 0.5.3 实测序列） |
+
+新 Agent 要开始调度任务，从 `aep-start-dispatch` 起步；它给出 `aep join` 的最小序列，
+并明确「只有 `VERIFIED` 能关单」。`aep-agent-onboarding` 是较早的散文规范，
+用于理解纪律，不作为弱 Agent 的逐步执行清单。
 
 `min_agent_capability: file-only` 的卡片必须提供一条「只写文件」的路径，不能要求命令行。
 
