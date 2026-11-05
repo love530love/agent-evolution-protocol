@@ -27,6 +27,7 @@ param(
   [ValidateRange(1, 300)][int]$ReadBackTimeoutSeconds = 20,
   [ValidateRange(1, 60)][int]$SettleTimeoutSeconds = 10,
   [ValidateRange(1, 60)][int]$PasteConfirmTimeoutSeconds = 8,
+  [ValidateRange(1, 60)][int]$InterjectTimeoutSeconds = 10,
   [string]$SendKey = '{ENTER}',
   [double]$SendButtonXRatio = 0,
   [double]$SendButtonYRatio = 0,
@@ -679,16 +680,47 @@ function Get-TextElements {
   return , $found
 }
 
+function Get-AepAncestorIds {
+  # Runtime ids of an element and every control-view ancestor above it.
+  #
+  # This is the honest test for "does this element contain the composer":
+  # reading TextPattern on a container returns the text of everything inside
+  # it, so an ancestor of the composer will happily quote the composer's own
+  # draft.  A message bubble is never an ancestor of the composer.
+  param($Element)
+  $ids = New-Object 'System.Collections.Generic.HashSet[string]'
+  if (-not $Element) { return , $ids }
+  $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+  $current = $Element
+  $depth = 0
+  while ($current -and $depth -lt 200) {
+    $depth++
+    try {
+      $runtime = $current.GetRuntimeId()
+      if ($runtime -and $runtime.Length -gt 0) { [void]$ids.Add(($runtime -join '.')) }
+    } catch { }
+    try { $current = $walker.GetParent($current) } catch { break }
+  }
+  return , $ids
+}
+
 function Find-AepEventWitness {
   # The smallest element whose text carries the event id, above a cut.
   #
   # "The id is somewhere on screen" is answered by any container that happens
   # to span the window, so the answer is a *witness*: the tightest element
   # that holds the id, with its geometry.  A message bubble is small; a
-  # container that holds the whole conversation is not, and the caller can
-  # reject the second by size.  Returning the witness rather than a boolean is
-  # what makes the verdict auditable after the fact.
-  param($Root, [string]$EventId, [double]$AboveTop = 0, [double]$MaxHeight = 0)
+  # container that holds the whole conversation is not.
+  #
+  # Containment is decided by ancestry, not by height.  Measured on Qoder CN
+  # 2026-11-05: the conversation pane is a single Document 2013x1233, taller
+  # than the 0.8-window gate this used to apply, and the delivered message sat
+  # inside it as an ordinary Text element.  The height gate rejected the
+  # Document and turned a real delivery into submitted-unconfirmed; excluding
+  # ancestors of the composer rejects the one element that could lie, and
+  # nothing else.
+  param($Root, [string]$EventId, [double]$AboveTop = 0, $ExcludeAncestorsOf = $null)
+  $banned = Get-AepAncestorIds -Element $ExcludeAncestorsOf
   $best = $null
   foreach ($element in (Get-TextElements -Root $Root)) {
     $text = Get-ElementText -Element $element
@@ -696,7 +728,9 @@ function Find-AepEventWitness {
     try {
       $rect = $element.Current.BoundingRectangle
       $control = $element.Current.ControlType.ProgrammaticName
+      $runtime = ($element.GetRuntimeId() -join '.')
     } catch { continue }
+    if ($banned.Count -gt 0 -and $runtime -and $banned.Contains($runtime)) { continue }
     if ($AboveTop -gt 0 -and $rect.Top -ge $AboveTop) { continue }
     $area = [double]($rect.Width * $rect.Height)
     if ($best -and $area -ge $best.area) { continue }
@@ -708,7 +742,6 @@ function Find-AepEventWitness {
       height       = [int]$rect.Height
       control      = $control
       name         = ([string]$element.Current.Name)
-      too_tall     = [bool]($MaxHeight -gt 0 -and $rect.Height -gt $MaxHeight)
     }
   }
   return $best
@@ -1032,6 +1065,10 @@ function Get-ActivityEvidence {
   # from pinning the client busy forever.
   elseif ($stopHits.Count -gt 0 -and $readyHits.Count -eq 0) { $state = 'busy' }
   elseif ($readyHits.Count -gt 0 -or ($InputFound -and -not $InputAmbiguous)) { $state = 'ready' }
+  # The two ways to reach "busy" are not the same evidence: a 生成中-style label
+  # says it outright, while a lone Stop button is an inference.  Both count, so
+  # the interject verdict has to key off the verdict, not off $busyHits.
+  $isBusy = ($state -eq 'busy')
 
   return [ordered]@{
     state = $state
@@ -1045,10 +1082,28 @@ function Get-ActivityEvidence {
     busy_hits = $busyHits
     ready_hits = $readyHits
     interject_evidence = [ordered]@{
-      ready = [bool]($busyHits.Count -gt 0 -and $interjectHits.Count -gt 0)
+      # A control visible right now.  This is the strongest form, and it is the
+      # one that is usually unavailable: measured on Qoder CN 0.5.3 while a run
+      # was live (2026-11-05), the only composer affordance at rest was
+      # 停止生成 -- the 插话 Button appears only after a message has been
+      # queued into the run.  Reading "ready=false" as "no interject channel"
+      # is the mistake this pair of fields exists to prevent.
+      ready = [bool]($isBusy -and $interjectHits.Count -gt 0)
+      # The profile names a control and it is not on screen yet, so the client
+      # is the kind that offers one after the send.  The adapter promotes once
+      # the send is confirmed, and the receipt records whether that worked.
+      appears_after_send = [bool]($isBusy -and
+                                  $interjectHintList.Count -gt 0 -and
+                                  $interjectHits.Count -eq 0)
       hits = $interjectHits
       stop_hits = $stopHits
-      interrupt_only = [bool]($busyHits.Count -gt 0 -and $interjectHits.Count -eq 0 -and $stopHits.Count -gt 0)
+      # Nothing named by the profile and only Stop on offer: the sole way to
+      # get a word in is to kill the run, which is never what "urgent" means.
+      interrupt_only = [bool]($isBusy -and
+                              $interjectHits.Count -eq 0 -and
+                              $stopHits.Count -gt 0 -and
+                              $interjectHintList.Count -eq 0)
+      profile_hints = $interjectHintList
       hints = $interjectPatterns
     }
     input_found = $InputFound
@@ -1269,6 +1324,36 @@ function Invoke-InterjectControl {
     }
   }
   if ($Seen) { $Seen.Value = @($seenLabels | Select-Object -Unique) }
+  return ''
+}
+
+function Wait-InterjectControl {
+  # Polls for the 插话 affordance instead of looking for it once.
+  #
+  # Measured on Qoder CN 0.5.3 (pid 118632, 2026-11-05): the control does not
+  # exist while the composer is empty, and it does not exist the instant the
+  # message is queued either -- it appears only after the client has accepted
+  # the send and moved 发送消息 into 停止生成.  A single look therefore reports
+  # "no interject channel", which is the wrong conclusion about the client and
+  # the reason the previous gate could never pass.  Waiting is the fix.
+  param([IntPtr]$Hwnd, [string[]]$Hints = @(), [double]$TimeoutSeconds = 10,
+        [ref]$Seen, [ref]$Polls)
+  $deadline = [DateTime]::UtcNow.AddSeconds([Math]::Max(2, $TimeoutSeconds))
+  $lastSeen = @()
+  while ([DateTime]::UtcNow -lt $deadline) {
+    if ($Polls) { $Polls.Value++ }
+    $root = [System.Windows.Automation.AutomationElement]::FromHandle($Hwnd)
+    if (-not $root) { break }
+    $seenLabels = @()
+    $action = Invoke-InterjectControl -Root $root -Hwnd $Hwnd -Hints $Hints -Seen ([ref]$seenLabels)
+    if ($action) {
+      if ($Seen) { $Seen.Value = @($seenLabels | Select-Object -Unique) }
+      return $action
+    }
+    if ($seenLabels.Count -gt 0) { $lastSeen = @($seenLabels | Select-Object -Unique) }
+    Start-Sleep -Milliseconds 400
+  }
+  if ($Seen) { $Seen.Value = $lastSeen }
   return ''
 }
 
@@ -1511,29 +1596,18 @@ if ($Mode -eq 'compose') {
   if (-not $ActivationEvidence.foreground) { throw 'WINDOW_FOCUS_DENIED: Windows rejected foreground activation' }
   Start-Sleep -Milliseconds 250
 
+  # The urgent path used to require a 插话 control *before* typing anything, and
+  # that gate could never pass: measured on Qoder CN 0.5.3 (2026-11-05) the
+  # control does not exist until a message has been queued into a live run.  So
+  # the pre-condition is only that the client is busy; the promotion itself
+  # happens after the send, below.
+  $promoteAfterSend = [bool]($UrgentInterject -and $activity.state -eq 'busy')
   $interjectAction = ''
-  if ($UrgentInterject) {
-    if ($activity.state -ne 'busy' -or -not $activity.interject_evidence.ready) {
-      Write-Report @{ status = 'urgent-interject-unavailable'; pid = $window.Pid; title = $window.Title;
-        interruption = $false; interject_action = ''; interject_evidence = $activity.interject_evidence;
-        action_labels = Get-AepActionLabels -Root $root;
-        input_found = [bool]$selection; input_candidate_count = $(if ($selection) { $selection.CandidateCount } else { 0 })
-        task_delivered = $false; method = 'uia-compose' }
-      return
-    }
-    $seenLabels = @()
-    $interjectAction = Invoke-InterjectControl -Root $root -Hwnd $window.Hwnd -Hints $InterjectHints -Seen ([ref]$seenLabels)
-    if (-not $interjectAction) {
-      Write-Report @{ status = 'urgent-interject-unavailable'; pid = $window.Pid; title = $window.Title;
-        interruption = $false; interject_action = ''; interject_evidence = $activity.interject_evidence;
-        action_labels = $seenLabels;
-        input_found = [bool]$selection; input_candidate_count = $(if ($selection) { $selection.CandidateCount } else { 0 })
-        task_delivered = $false; method = 'uia-compose' }
-      return
-    }
-    $root = [System.Windows.Automation.AutomationElement]::FromHandle($window.Hwnd)
-    if (-not $root) { throw 'UIA_ROOT_MISSING_AFTER_INTERJECT' }
-    $selection = Select-InputElement -Root $root -Soft -Hints $inputHints
+  $interjectSeen = @()
+  if ($UrgentInterject -and -not $promoteAfterSend) {
+    # An "urgent" note to an idle client is an ordinary send: there is no run to
+    # interject into, and saying so is more useful than refusing.
+    $interjectAction = 'not-needed-client-idle'
   }
 
   # $hintsToUse was computed above, before the mode branches.  Defining it here
@@ -1808,6 +1882,37 @@ if ($Mode -eq 'compose') {
   }
   $probeInTranscript = Test-AepTextInBand -Scan $verifyScan -Hwnd $window.Hwnd -Probe $probeFragment -From 0 -To 0.72
   $eventInComposer = Test-AepTextInBand -Scan $verifyScan -Hwnd $window.Hwnd -Probe $EventId -From 0.72 -To 1.01
+
+  # Promotion.  On a client that is mid-run the message is *queued*, not
+  # answered, and it does not reach the transcript until the queue is promoted.
+  # Qoder CN 0.5.3 exposes exactly one way to do that -- a 插话 Button that
+  # only exists after the send has been accepted -- so this runs after the send
+  # and after the composer has been observed empty, never before.
+  $interjectPolls = 0
+  if ($promoteAfterSend) {
+    $interjectAction = Wait-InterjectControl -Hwnd $window.Hwnd -Hints $InterjectHints `
+      -TimeoutSeconds $InterjectTimeoutSeconds -Seen ([ref]$interjectSeen) -Polls ([ref]$interjectPolls)
+    if (-not $interjectAction) {
+      $interjectAction = $(if ($composerCleared) { 'interject-control-not-found' } else { 'send-not-confirmed' })
+    } else {
+      # The scan above was taken before the promotion, so it cannot answer
+      # "did the message reach the conversation".  Re-read.
+      Start-Sleep -Milliseconds 800
+      $promotedScan = Get-WindowOcrText -Hwnd $window.Hwnd
+      if ($promotedScan.Text) {
+        $verifyScan = $promotedScan
+        $body = $promotedScan.Text
+        if ($probeFragment -and $promotedScan.Text.Contains($probeFragment)) { $visible = $true }
+        $probeInTranscript = Test-AepTextInBand -Scan $promotedScan -Hwnd $window.Hwnd -Probe $probeFragment -From 0 -To 0.72
+        $probeInComposerAfter = Test-AepTextInBand -Scan $promotedScan -Hwnd $window.Hwnd -Probe $probeFragment -From 0.72 -To 1.01
+        $eventInComposer = Test-AepTextInBand -Scan $promotedScan -Hwnd $window.Hwnd -Probe $EventId -From 0.72 -To 1.01
+      }
+    }
+  }
+  $interjection = [bool]($interjectAction -and
+                          $interjectAction -ne 'not-needed-client-idle' -and
+                          $interjectAction -ne 'interject-control-not-found' -and
+                          $interjectAction -ne 'send-not-confirmed')
   $delivered = [bool](($probeInTranscript -or $visible) -and $composerCleared -and
                       -not $probeInComposerAfter -and -not $eventInComposer)
 
@@ -1837,9 +1942,16 @@ if ($Mode -eq 'compose') {
     send_button_method = $sendButtonMethod
     send_button_evidence = $sendButtonEvidence
     send_mode         = $SendMode
+    # "interruption" means the run was killed -- which this adapter never does.
+    # The promotion is the opposite claim, and it gets its own field so the two
+    # cannot be confused by a reader or by a caller.
     interruption      = $false
+    interject_promoted = $interjection
     interject_action  = $interjectAction
     interject_evidence = $activity.interject_evidence
+    interject_polls   = $interjectPolls
+    interject_seen    = $interjectSeen
+    promote_after_send = $promoteAfterSend
     task_delivered    = $delivered
     method            = 'uia-compose'
   }
@@ -1861,29 +1973,20 @@ if (-not $ActivationEvidence.foreground) {
 }
 Start-Sleep -Milliseconds 300
 
+# The urgent path used to require a "插话" control *before* typing anything.
+# That gate could never pass, and the reason is a fact about the client, not a
+# missing hint: measured on Qoder CN 2026-11-05, the 插话 Button (1990,1618
+# 78x30) does not exist until a message has been queued into a live run.  The
+# real sequence is type -> send -> the button appears -> click it to promote the
+# queued message into the running turn.  So the promotion happens after the
+# send, and the only pre-condition is that the client is actually busy.
+$promoteAfterSend = [bool]($UrgentInterject -and $activity.state -eq 'busy')
 $interjectAction = ''
-if ($UrgentInterject) {
-  if ($activity.state -ne 'busy' -or -not $activity.interject_evidence.ready) {
-    Write-Report @{ status = 'urgent-interject-unavailable'; pid = $window.Pid; title = $window.Title;
-      interruption = $false; interject_action = ''; interject_evidence = $activity.interject_evidence;
-      action_labels = Get-AepActionLabels -Root $root;
-      input_found = [bool]$selection; input_candidate_count = $(if ($selection) { $selection.CandidateCount } else { 0 })
-      task_delivered = $false; method = 'uia-deliver' }
-    return
-  }
-  $seenLabels = @()
-  $interjectAction = Invoke-InterjectControl -Root $root -Hwnd $window.Hwnd -Hints $InterjectHints -Seen ([ref]$seenLabels)
-  if (-not $interjectAction) {
-    Write-Report @{ status = 'urgent-interject-unavailable'; pid = $window.Pid; title = $window.Title;
-      interruption = $false; interject_action = ''; interject_evidence = $activity.interject_evidence;
-      action_labels = $seenLabels;
-      input_found = [bool]$selection; input_candidate_count = $(if ($selection) { $selection.CandidateCount } else { 0 })
-      task_delivered = $false; method = 'uia-deliver' }
-    return
-  }
-  $root = [System.Windows.Automation.AutomationElement]::FromHandle($window.Hwnd)
-  if (-not $root) { throw 'UIA_ROOT_MISSING_AFTER_INTERJECT' }
-  $selection = Select-InputElement -Root $root -Soft -Hints $inputHints
+$interjectSeen = @()
+if ($UrgentInterject -and -not $promoteAfterSend) {
+  # An "urgent" note to an idle client is an ordinary send: there is no run to
+  # interject into, and saying so is more useful than refusing.
+  $interjectAction = 'not-needed-client-idle'
 }
 
 $writeMethod = ''
@@ -2019,24 +2122,100 @@ if (-not $sendMethod) {
   return
 }
 
+# ---------------------------------------------------------------------------
+# Send -> confirm the send landed -> promote -> read back.
+#
+# The order is load-bearing.  A read-back that runs before the send has been
+# proven to land spends its whole budget looking for a message that is still in
+# the composer, and -- on a client that is mid-run -- looking for a message
+# that will not reach the transcript until the queued turn is promoted.  The
+# proof that the send landed is the composer going empty: cheap and local, so
+# it comes first.
+# ---------------------------------------------------------------------------
+$composerCleared = $false
+$composerPolls = 0
+$sendRetry = ''
+$sendAttempts = 1
+if ($selection) {
+  $composerCleared = Wait-ComposerCleared -Hwnd $window.Hwnd -EventId $EventId `
+    -TimeoutSeconds $ReadBackTimeoutSeconds -Polls ([ref]$composerPolls) -Hints $inputHints
+  if (-not $composerCleared) {
+    # "Force Enter once or twice" is the measured way to send on these clients,
+    # and a second Enter is cheaper than re-typing.  The first Enter after a
+    # ValuePattern write is swallowed: ValuePattern updates the visual editor
+    # without firing the web app's input event, so the client still believes
+    # its composer is empty and its send control stays disabled.  A second
+    # Enter helps only when the text really is in the control, so it is tried
+    # first and the paste-and-send retry is kept behind it.
+    try { $selection.Element.SetFocus() } catch { }
+    Invoke-AepEnter
+    $sendAttempts++
+    $composerCleared = Wait-ComposerCleared -Hwnd $window.Hwnd -EventId $EventId `
+      -TimeoutSeconds ([Math]::Min(6, $ReadBackTimeoutSeconds)) -Polls ([ref]$composerPolls) -Hints $inputHints
+    if ($composerCleared) { $sendRetry = 'enter-again' }
+  }
+  if (-not $composerCleared) {
+    # The text never reached the app as an input event.  Paste through the
+    # focused control, which does fire it, then send again.
+    try { $selection.Element.SetFocus() } catch { }
+    Invoke-AepPasteClipboard -Value $Text -Replace
+    Start-Sleep -Milliseconds 600
+    $retryRoot = [System.Windows.Automation.AutomationElement]::FromHandle($window.Hwnd)
+    if ($retryRoot) {
+      $retryMethod = Invoke-SendControl -Root $retryRoot -Hwnd $window.Hwnd -Mode $SendMode
+      if ($retryMethod) { $sendRetry = "paste+$retryMethod" }
+    }
+    if (-not $sendRetry) { Invoke-AepEnter; $sendRetry = 'paste+enter' }
+    $sendAttempts++
+    $composerCleared = Wait-ComposerCleared -Hwnd $window.Hwnd -EventId $EventId `
+      -TimeoutSeconds $ReadBackTimeoutSeconds -Polls ([ref]$composerPolls) -Hints $inputHints
+  }
+}
+
+# Promotion.  A message typed into a client that is mid-run is *queued*, not
+# answered.  Measured on Qoder CN 0.5.3 (pid 118632, 2026-11-05): the 插话
+# Button at 1990,1618 78x30 does not exist while the composer is empty and does
+# not exist the instant the message is queued either -- it appears once the
+# client has accepted the send and turned 发送消息 into 停止生成.  Clicking it
+# is what promotes the queue into the running turn; without it the receipt can
+# honestly say "the message is in the transcript" while the live turn never
+# reads it.
+$interjectPolls = 0
+if ($promoteAfterSend) {
+  $interjectAction = Wait-InterjectControl -Hwnd $window.Hwnd -Hints $InterjectHints `
+    -TimeoutSeconds $InterjectTimeoutSeconds -Seen ([ref]$interjectSeen) -Polls ([ref]$interjectPolls)
+  if (-not $interjectAction) {
+    # Two different failures, and the operator can act on either only if they
+    # are told apart: the send never landed, or it landed and the client has no
+    # such control.
+    $interjectAction = $(if ($composerCleared) { 'interject-control-not-found' } else { 'send-not-confirmed' })
+  }
+}
+$interjection = [bool]($interjectAction -and
+                        $interjectAction -ne 'not-needed-client-idle' -and
+                        $interjectAction -ne 'interject-control-not-found' -and
+                        $interjectAction -ne 'send-not-confirmed')
+
+# Read-back.  The event id has to be visible *above* the composer, witnessed by
+# an element that is not an ancestor of the composer, or it proves nothing.
 $deadline = [DateTime]::UtcNow.AddSeconds($ReadBackTimeoutSeconds)
 $visible = $false
 $capturedText = ''
 $polls = 0
 $ocrUsed = $false
 $witness = $null
-$windowHeightForWitness = 0
-try {
-  $witnessRect = [System.Windows.Automation.AutomationElement]::FromHandle($window.Hwnd).Current.BoundingRectangle
-  $windowHeightForWitness = [double]$witnessRect.Height
-} catch { }
+$witnessRoot = [System.Windows.Automation.AutomationElement]::FromHandle($window.Hwnd)
 while ([DateTime]::UtcNow -lt $deadline) {
   Start-Sleep -Milliseconds 1000
   $polls++
-  $capturedText = (Get-VisibleTranscript -Root $root -CapChars $MaxCaptureChars -AboveTop $composerTop).Text
+  # Reacquire: the tree is rebuilt when a run starts or a queue is promoted, so
+  # the element captured before the send can be stale by the first poll.
+  $pollRoot = [System.Windows.Automation.AutomationElement]::FromHandle($window.Hwnd)
+  if (-not $pollRoot) { break }
+  $capturedText = (Get-VisibleTranscript -Root $pollRoot -CapChars $MaxCaptureChars -AboveTop $composerTop).Text
   if ($capturedText -and $capturedText.Contains($EventId)) {
-    $witness = Find-AepEventWitness -Root $root -EventId $EventId -AboveTop $composerTop `
-      -MaxHeight ($windowHeightForWitness * 0.8)
+    $witness = Find-AepEventWitness -Root $pollRoot -EventId $EventId -AboveTop $composerTop `
+      -ExcludeAncestorsOf $(if ($selection) { $selection.Element } else { $witnessRoot })
     if ($witness) { $visible = $true; break }
   }
   if ($OcrVerify) {
@@ -2047,57 +2226,15 @@ while ([DateTime]::UtcNow -lt $deadline) {
     if ($ocr.Text -and $ocr.Text.Contains($EventId)) { $capturedText = $ocr.Text; break }
   }
 }
-
-# A transcript hit is insufficient if the event id is still sitting in the
-# composer. Require the composer to be cleared after the explicit send action.
-#
-# Check it until it clears rather than once: the transcript already contains the
-# composer, so the read-back loop above can succeed on its first poll while the
-# app has not yet processed the send.  Checking once there produced a false
-# negative -- the message had been delivered and the receipt still said
-# submitted-unconfirmed, which invites a duplicate send.
-$composerCleared = $false
-$composerPolls = 0
-$sendRetry = ''
-if ($selection) {
-  $composerCleared = Wait-ComposerCleared -Hwnd $window.Hwnd -EventId $EventId `
-    -TimeoutSeconds $ReadBackTimeoutSeconds -Polls ([ref]$composerPolls) -Hints $inputHints
-  if (-not $composerCleared) {
-    # ValuePattern updates the visual editor without firing the web app's input
-    # event, so its send control stays disabled and Enter does nothing.  Paste
-    # through the focused control, which does fire it, then send again.
-    try { $selection.Element.SetFocus() } catch { }
-    Invoke-AepPasteClipboard -Value $Text -Replace
-    Start-Sleep -Milliseconds 600
-    $retryRoot = [System.Windows.Automation.AutomationElement]::FromHandle($window.Hwnd)
-    if ($retryRoot) {
-      $retryMethod = Invoke-SendControl -Root $retryRoot -Hwnd $window.Hwnd -Mode $SendMode
-      if ($retryMethod) { $sendRetry = "paste+$retryMethod" }
-    }
-    if (-not $sendRetry) { Invoke-AepEnter; $sendRetry = 'paste+enter' }
-    $composerCleared = Wait-ComposerCleared -Hwnd $window.Hwnd -EventId $EventId `
-      -TimeoutSeconds $ReadBackTimeoutSeconds -Polls ([ref]$composerPolls) -Hints $inputHints
-    if ($composerCleared) {
-      # The earlier transcript hit may have been the composer itself; re-read now
-      # that the composer is empty.
-      $afterRoot = [System.Windows.Automation.AutomationElement]::FromHandle($window.Hwnd)
-      if ($afterRoot) {
-        $after = Get-VisibleTranscript -Root $afterRoot -CapChars $MaxCaptureChars -AboveTop $composerTop
-        if ($after.Text -and $after.Text.Contains($EventId)) {
-          $witness = Find-AepEventWitness -Root $afterRoot -EventId $EventId -AboveTop $composerTop `
-            -MaxHeight ($windowHeightForWitness * 0.8)
-          if ($witness) { $visible = $true; $capturedText = $after.Text }
-        }
-      }
-    }
-  }
-}
 # Three independent claims, all required.  Before this, $visible alone was
 # answered by the composer's own text and $composerCleared was trivially true
 # whenever the text had gone into some other control -- which is how a
 # delivery into a side-pane editor reported task_delivered=true.
-$witnessTooTall = [bool]($witness -and $witness.too_tall)
-$delivered = [bool]($visible -and $composerCleared -and $witness -and -not $witnessTooTall)
+#
+# The witness is excluded by ancestry rather than by height, so the receipt no
+# longer needs a separate too-tall verdict: an element that survived the filter
+# cannot be quoting the composer's draft.
+$delivered = [bool]($visible -and $composerCleared -and $witness)
 $overlayEvidence = Get-OverlayEvidence -Root ([System.Windows.Automation.AutomationElement]::FromHandle($window.Hwnd))
 if ($OutFile -and $capturedText) {
   $dir = Split-Path -Parent $OutFile
@@ -2125,9 +2262,16 @@ Write-Report @{
   ocr_used            = $ocrUsed
   send_method         = $sendMethod
   send_mode           = $SendMode
+  send_attempts       = $sendAttempts
+  # "interruption" means the run was killed -- which this adapter never does.
+  # The promotion is the opposite claim, so it gets its own field.
   interruption        = $false
+  interject_promoted  = $interjection
   interject_action    = $interjectAction
   interject_evidence  = $activity.interject_evidence
+  interject_polls     = $interjectPolls
+  interject_seen      = $interjectSeen
+  promote_after_send  = $promoteAfterSend
   composer_cleared    = $composerCleared
   composer_clear_polls = $composerPolls
   composer_top        = [int]$composerTop
@@ -2135,7 +2279,7 @@ Write-Report @{
   session_marker_seen = $sessionMarkerSeen
   session_marker_check = $sessionMarkerCheck
   event_witness       = $witness
-  event_witness_too_tall = $witnessTooTall
+  event_witness_rule  = 'smallest element above the composer cut that is not an ancestor of the composer'
   send_retry          = $sendRetry
   activation          = $ActivationEvidence
   input_found         = [bool]$selection

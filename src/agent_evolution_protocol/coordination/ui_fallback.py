@@ -102,6 +102,11 @@ def load_profile(path: Path) -> dict:
         raise ValueError("interject_hints must be a list of non-empty strings")
     profile["interject_hints"] = [item.strip() for item in interject_hints]
     profile["allow_busy_interject"] = bool(profile.get("allow_busy_interject", False))
+    # A claim about the client, not a setting: "the interject control exists
+    # but only after a message has been queued".  Measured on Qoder CN 0.5.3
+    # (2026-11-05).  Kept separate from interject_hints because a hint list is
+    # allowed to be a guess while this is not.
+    profile["interject_after_send"] = bool(profile.get("interject_after_send", False))
     for key in ("session_evidence_markers", "model_evidence_markers"):
         markers = profile.get(key, [])
         if markers is None:
@@ -644,9 +649,35 @@ def run(profile: dict, message: str, *, event_id: str, receipt_path: Path,
                              interject=interject)
                 _atomic(receipt_path, state)
                 return state
-            if not interject.get("ready") or interject.get("interrupt_only"):
+            # "interrupt_only" is the hard refusal: the only affordance on
+            # screen is Stop, so the sole way to get a word in is to kill the
+            # run.  That is never what an urgent note means.
+            if interject.get("interrupt_only"):
                 state.update(state="URGENT_INTERJECT_UNAVAILABLE",
-                             reason="no uniquely identified non-interrupting interject control was observed",
+                             reason="the only affordance on screen is a stop control",
+                             activity=observation.get("activity_evidence", {}),
+                             interject=interject)
+                _atomic(receipt_path, state)
+                return state
+            # "ready" means the interject control is visible right now.  On
+            # Qoder CN 0.5.3 it cannot be: measured 2026-11-05, the 插话
+            # Button (1990,1618 78x30) does not exist until a message has been
+            # queued into the live run, and appears only after the send turns
+            # 发送消息 into 停止生成.  So a client whose profile *claims* that
+            # behaviour (interject_after_send) is allowed to proceed on "the
+            # send will make it appear"; the adapter then promotes after the
+            # send and reports whether that worked.  Requiring "ready" up front
+            # was a gate that could never pass.
+            #
+            # Both halves are needed: the adapter's observation says the client
+            # is busy and the profiled control is not on screen, and the
+            # profile says this client shows it late.  A profile that merely
+            # guesses a hint therefore still cannot get through.
+            late_control = bool(profile.get("interject_after_send")
+                                and interject.get("appears_after_send"))
+            if not interject.get("ready") and not late_control:
+                state.update(state="URGENT_INTERJECT_UNAVAILABLE",
+                             reason="no interject control was observed and none is expected after the send",
                              activity=observation.get("activity_evidence", {}),
                              interject=interject)
                 _atomic(receipt_path, state)
@@ -786,7 +817,16 @@ def run(profile: dict, message: str, *, event_id: str, receipt_path: Path,
         accepted_statuses = {"message-visible", "submitted-unconfirmed"}
         if urgent:
             accepted_statuses |= {"urgent-interject-visible", "urgent-interject-submitted"}
-            if sent.get("interruption", False) or not sent.get("interject_action"):
+            # A promotion that was attempted and failed must not read as a
+            # success.  These two codes are the adapter saying the message is
+            # queued and the live turn has not been told about it, which is
+            # exactly the case a duplicate-send decision must not mistake for
+            # "delivered and read".
+            failed_actions = {"interject-control-not-found", "send-not-confirmed"}
+            action = str(sent.get("interject_action") or "")
+            promoted = bool(sent.get("interject_promoted")) or (
+                bool(action) and action not in failed_actions)
+            if sent.get("interruption", False) or not promoted:
                 state.update(state="URGENT_INTERJECT_UNCERTAIN",
                              reason="send receipt did not prove a non-interrupting interject action",
                              send_report=sent)

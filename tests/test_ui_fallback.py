@@ -22,7 +22,8 @@ class FakeDriver:
                  interject_ready=False, interruption=False, drivable=None,
                  blocked_by=None, answers=True, delivered=None,
                  input_candidate_count=None, input_ambiguous=False,
-                 window_size=None, input_region=None):
+                 window_size=None, input_region=None,
+                 interject_evidence=None, interject_action=None):
         self.model = model
         self.session = session
         self.input_found = input_found
@@ -30,6 +31,8 @@ class FakeDriver:
         self.send_status = send_status
         self.activity_state = activity_state
         self.interject_ready = interject_ready
+        self.interject_evidence = interject_evidence
+        self.interject_action = interject_action
         self.interruption = interruption
         self.drivable = drivable
         self.blocked_by = blocked_by
@@ -52,8 +55,8 @@ class FakeDriver:
         report = {"status": "window-observed", "pid": 1234, "input_found": self.input_found,
                   "input_ambiguous": self.input_ambiguous,
                   "activity_state": self.activity_state,
-                  "interject_evidence": {"ready": self.interject_ready,
-                                         "interrupt_only": False}}
+                  "interject_evidence": self.interject_evidence or {
+                      "ready": self.interject_ready, "interrupt_only": False}}
         if self.input_candidate_count is not None:
             report["input_candidate_count"] = self.input_candidate_count
         if self.window_size is not None:
@@ -92,7 +95,7 @@ class FakeDriver:
             return {"status": self.send_status,
                     "task_delivered": self.delivered is True,
                     "interruption": self.interruption,
-                    "interject_action": "Interject" if urgent else ""}
+                    "interject_action": self.interject_action or ("Interject" if urgent else "")}
         import re
         match = re.search(r"校验串 ([0-9A-F]+) 的倒序", message)
         assert match
@@ -100,7 +103,7 @@ class FakeDriver:
         assert self.expected_ack not in message
         return {"status": self.send_status,
                 "interruption": self.interruption,
-                "interject_action": "Interject" if urgent else ""}
+                "interject_action": self.interject_action or ("Interject" if urgent else "")}
 
 
 class UiFallbackTests(unittest.TestCase):
@@ -317,6 +320,55 @@ class UiFallbackTests(unittest.TestCase):
         profile = {**PROFILE, "allow_busy_interject": True}
         driver = FakeDriver(activity_state="busy", interject_ready=True, interruption=True)
         result = ui.run(profile, "Urgent note", event_id="EVT-URGENT-INT-1",
+                        receipt_path=self.receipt, lock_path=self.lock,
+                        driver=driver, poll_seconds=0.1, urgent=True)
+        self.assertEqual(result["state"], "URGENT_INTERJECT_UNCERTAIN")
+
+    def test_a_late_control_is_allowed_when_the_profile_claims_it(self):
+        # Qoder CN 0.5.3 shows 插话 only after a message is queued, so an
+        # at-rest observation can never say "ready".  A profile that claims
+        # that behaviour may proceed, and the adapter promotes after the send.
+        profile = {**PROFILE, "allow_busy_interject": True, "interject_after_send": True}
+        driver = FakeDriver(activity_state="busy", interject_evidence={
+            "ready": False, "appears_after_send": True, "interrupt_only": False})
+        result = ui.run(profile, "Urgent note", event_id="EVT-URGENT-LATE-1",
+                        receipt_path=self.receipt, lock_path=self.lock,
+                        driver=driver, poll_seconds=0.1, urgent=True)
+        self.assertEqual(result["state"], "AGENT_REPLY_VERIFIED")
+        self.assertEqual(driver.sent, 1)
+
+    def test_a_late_control_needs_both_halves(self):
+        # The adapter's observation alone is not a claim about the client: a
+        # profile that merely guesses a hint must not get through.
+        profile = {**PROFILE, "allow_busy_interject": True}
+        driver = FakeDriver(activity_state="busy", interject_evidence={
+            "ready": False, "appears_after_send": True, "interrupt_only": False})
+        result = ui.run(profile, "Urgent note", event_id="EVT-URGENT-LATE-2",
+                        receipt_path=self.receipt, lock_path=self.lock,
+                        driver=driver, poll_seconds=0.1, urgent=True)
+        self.assertEqual(result["state"], "URGENT_INTERJECT_UNAVAILABLE")
+        self.assertEqual(driver.sent, 0)
+
+    def test_a_stop_only_client_refuses_even_when_the_profile_claims_a_late_control(self):
+        # "interrupt_only" is the hard refusal: killing the run is never what an
+        # urgent note means, so no profile claim can override it.
+        profile = {**PROFILE, "allow_busy_interject": True, "interject_after_send": True}
+        driver = FakeDriver(activity_state="busy", interject_evidence={
+            "ready": False, "appears_after_send": True, "interrupt_only": True})
+        result = ui.run(profile, "Urgent note", event_id="EVT-URGENT-STOP-2",
+                        receipt_path=self.receipt, lock_path=self.lock,
+                        driver=driver, poll_seconds=0.1, urgent=True)
+        self.assertEqual(result["state"], "URGENT_INTERJECT_UNAVAILABLE")
+        self.assertEqual(driver.sent, 0)
+
+    def test_a_failed_promotion_is_not_a_delivered_urgent_note(self):
+        # The message is queued and the live turn has not been told about it.
+        # Reading that as success is what invites a duplicate send later.
+        profile = {**PROFILE, "allow_busy_interject": True, "interject_after_send": True}
+        driver = FakeDriver(activity_state="busy", interject_evidence={
+            "ready": False, "appears_after_send": True, "interrupt_only": False},
+            interject_action="interject-control-not-found")
+        result = ui.run(profile, "Urgent note", event_id="EVT-URGENT-FAIL-1",
                         receipt_path=self.receipt, lock_path=self.lock,
                         driver=driver, poll_seconds=0.1, urgent=True)
         self.assertEqual(result["state"], "URGENT_INTERJECT_UNCERTAIN")

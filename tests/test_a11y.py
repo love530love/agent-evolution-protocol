@@ -369,14 +369,52 @@ class InterjectSafetyTests(unittest.TestCase):
     def test_the_english_verb_matches_inside_a_phrase(self):
         self.assertTrue(self._label_is_stop("Stop generating"))
 
-    def test_a_refusal_says_what_the_client_offers_instead(self):
-        # "the hint did not match" leaves the operator guessing.  The refusal
-        # now lists the short on-screen button labels, which is how the absence
-        # of any interject control on Qoder was established in the first place.
-        for status in ("urgent-interject-unavailable",):
-            start = self.SOURCE.index(f"'{status}'")
-            window = self.SOURCE[start:start + 900]
-            self.assertIn("action_labels", window, f"{status} does not report action_labels")
+    def test_a_failed_promotion_says_what_the_client_offers_instead(self):
+        # A refusal that only says "the hint did not match" leaves the operator
+        # guessing.  Both ways a promotion can fail are reported next to
+        # interject_seen -- the short, on-screen button labels the adapter
+        # walked past -- so the receipt can say what the client offered instead
+        # of only that the expected control was not there.
+        receipt = self.SOURCE[self.SOURCE.index("interject_promoted"):]
+        self.assertIn("interject_seen", receipt)
+        for status in ("interject-control-not-found", "send-not-confirmed"):
+            self.assertIn(f"'{status}'", self.SOURCE)
+
+    def test_the_urgent_gate_no_longer_demands_a_control_before_the_send(self):
+        # The old gate required interject_evidence.ready *before* typing, which
+        # on Qoder CN 0.5.3 can never be true: the 插话 Button does not exist
+        # until a message has been queued into the live run (measured
+        # 2026-11-05, 1990,1618 78x30 appearing only after the send turned
+        # 发送消息 into 停止生成).  A gate that can never pass is not a safety
+        # property, it is a permanent outage, so its absence is asserted here.
+        self.assertNotIn("interject_evidence.ready", self.SOURCE)
+        self.assertIn(
+            "$promoteAfterSend = [bool]($UrgentInterject -and $activity.state -eq 'busy')",
+            self.SOURCE)
+
+    def test_the_promotion_waits_instead_of_looking_once(self):
+        # Looking once is exactly how "no interject channel" was concluded from
+        # a client that merely shows the control late.
+        body = self._function("Wait-InterjectControl")
+        self.assertIn("while ([DateTime]::UtcNow -lt $deadline)", body)
+        self.assertIn("Invoke-InterjectControl", body)
+
+    def test_promoting_is_not_recorded_as_interrupting(self):
+        # "interruption" means the run was killed, and the caller treats a true
+        # value as a failed send.  Promotion is the opposite claim; collapsing
+        # the two made a successful interject look like damage.
+        self.assertIn("interruption        = $false", self.SOURCE)
+        self.assertIn("interject_promoted  = $interjection", self.SOURCE)
+
+    def test_the_send_is_retried_with_a_second_enter_before_retyping(self):
+        # "Force Enter once or twice" is the measured way to send: the first
+        # Enter after a ValuePattern write is swallowed because that write never
+        # fired the web app's input event.  A second Enter is cheaper than
+        # re-typing, so it comes first in the retry ladder.
+        deliver = self.SOURCE[self.SOURCE.index("$sendAttempts = 1"):]
+        second_enter = deliver.index("'enter-again'")
+        repaste = deliver.index("Invoke-AepPasteClipboard -Value $Text -Replace")
+        self.assertLess(second_enter, repaste)
 
 
 if __name__ == "__main__":

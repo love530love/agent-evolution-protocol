@@ -202,14 +202,21 @@ def test_the_adapter_still_refuses_blind_paste_by_default():
 
 def test_every_deliver_early_return_says_whether_an_input_was_found():
     # The evidence ladder is only machine-checkable if the failing branches
-    # answer the same question as the succeeding one.  These three used to
+    # answer the same question as the succeeding one.  These two used to
     # report a status and nothing about input_found.  Scoped to the deliver
     # section: the compose path has its own receipts with their own rules.
+    #
+    # "urgent-interject-unavailable" is deliberately not in this list any more.
+    # It was a pre-send gate that required the interject control to be visible
+    # *before* typing, which on Qoder CN 0.5.3 can never be true -- the 插话
+    # Button only appears once a message has been queued.  The refusal now
+    # happens after the adapter has tried, and it is the caller that records it
+    # (URGENT_INTERJECT_UNAVAILABLE, carrying the interject evidence).
     source = (ROOT / "src" / "agent_evolution_protocol" / "coordination"
               / "wake_adapters" / "uia_session.ps1").read_text(encoding="utf-8")
     deliver_start = source.index("if (-not $selection -and -not $AllowClipboardPaste) {")
     deliver = source[deliver_start:]
-    for status in ("urgent-interject-unavailable", "input-not-confirmed",
-                   "send-control-not-found"):
+    assert "'urgent-interject-unavailable'" not in deliver
+    for status in ("input-not-confirmed", "send-control-not-found"):
         start = deliver.index(f"'{status}'")
         assert "input_found" in deliver[start:start + 700], f"{status} does not report input_found"
