@@ -60,6 +60,7 @@ model_required: false
 | `aep-desktop-wake` | file-only | 否 | 唤醒/派工/忙碌态插话（含 Qoder 0.5.3 实测序列） |
 | `aep-mission-pulse` | cli | 否 | 长任务心跳接合：mission 阶段 → 既有 commander 队列，默认只读预览 |
 | `aep-coordinator-tick` | cli | 否 | 居中协调一拍：把三条既有单步接成固定顺序，默认只读预览，投递路径严格二选一 |
+| `aep-relay-drill` | cli | 否 | 在线 Agent 依次互派 + 回环总结 + 三方哈希判定 VERIFIED；默认只读，不代报在线 |
 
 新 Agent 要开始调度任务，从 `aep-start-dispatch` 起步；它给出 `aep join` 的最小序列，
 并明确「只有 `VERIFIED` 能关单」。`aep-agent-onboarding` 是较早的散文规范，
@@ -76,3 +77,8 @@ model_required: false
 居中协调一拍的完整边界（三条既有单步、固定顺序、投递路径互斥、失败不回退、触发归操作员）见
 `docs/COORDINATOR_TICK.zh-CN.md`。**接线不是新建调度器**：默认只读，`--apply` 才按既有函数顺序执行；
 `federation/supervisor.step()` 内部已经调过 `commander.tick()`，所以两条投递路径必须严格二选一。
+
+**操作拟真度与在线 Agent 依次互测**：目标是手脚流畅、快速、连贯地完成调度与回环，
+完成判据是「在线 Agent 依次互派 + 回环总结 + 全部 `VERIFIED`」。
+**「省积分」不是本项目目标**（v0.6.22 口径修正：属使用侧成本，不追踪、不需实据、不作为验收项）。
+四层「在线」区分、本轮实测阻塞与真机 SOP 见 `docs/OPERATIONAL_FIDELITY_AND_RELAY_DRILL.zh-CN.md`。

@@ -1,5 +1,82 @@
 # Changelog
 
+## 0.6.22 — 操作拟真度：在线 Agent 依次互测的可判定完成条件
+
+- **Scope correction (operator, 2026-11-05)**. "Saving credits" was only
+  background context: it is **not** a project goal, needs no evidence from this
+  project, and is not an acceptance target. Credit burn comes from agent-side
+  stalls, dawdling and low smoothness, i.e. usage-side cost. The project does not track
+  credits, quotas, token usage, rate limits, reset intervals or cost.
+  Accordingly `docs/COORDINATOR_VISION_EVIDENCE.zh-CN.md` section 3.1 and its
+  P1 "per-agent quota ledger" are **retired** (not disproved, out of scope), and
+  `docs/COORDINATOR_TICK.zh-CN.md` no longer lists P1 as a debt. "Claims need
+  evidence" still applies to loop verdicts, source verification and bad
+  intelligence; it simply does not apply to this out-of-scope proposition.
+- The real goal is **operational fidelity**: hands and feet carrying out
+  dispatch, delegation, wake, interject, polling, team-wide notice, return-sheet
+  chasing and follow-through smoothly and quickly, at the coherence of a human
+  engineer operating in the room. This is a quality target for operations, not
+  a claim that the project has replaced a human engineer (that identity claim
+  remains rejected by the v0.6.20 baseline).
+- **New completion criterion (operator)**: online agents use this project to
+  dispatch to each other **in turn**, return an evidence-backed summary, and the
+  run counts as finished only after every agent has passed. Recomputable form:
+  fresh self-reported presence for every participant; a directed cycle where
+  each agent sends once and receives once; one `event_id` bound to analysis +
+  SHA-256 + sender reply per leg; `run_complete=true` only when **all** legs are
+  `VERIFIED`.
+- `coordination/loop_verdict.py`: the first function in `src` able to answer
+  "is this loop VERIFIED?". Previously the only producer of `RESULT_VERIFIED`
+  was `dual_channel.WakeState`, with no caller in `src` (it required the caller
+  to pass `result_verified=True`). This module recomputes the three-way evidence
+  already required by `EVIDENCE_BACKED_AGENT_HANDOFF`: receipt `AGENT_ACK` +
+  `agent_accepted` + target match; artifact SHA-256 **recomputed from the stored
+  analysis text**; sender `<event_id>-reply.json` and the receipt reply carrying
+  the same digest. Otherwise `NOT_VERIFIED` with a named reason. Read-only,
+  model-free, process-free.
+- `coordination/relay_drill.py`: one-shot in-turn orchestration. `fresh_online()`
+  accepts only `presence.effective(row)=="online"` (never the stored `state`
+  field); builds a directed cycle; default dry-run reports the plan plus
+  `NEED_AT_LEAST_TWO_ONLINE_AGENTS` and per-agent self-signalling instructions;
+  `--apply` calls the existing `team_dispatch.create` once per leg and saves the
+  plan. A repeated `--apply` replays the saved plan with `writes_performed=0`
+  instead of minting new event ids (duplicate dispatch guard); `--fresh-plan` is
+  the only explicit restart. `run_complete` is computed by re-running
+  `loop_verdict.check` for every leg. It never signals presence for a peer,
+  never fabricates an ACK and never touches a desktop window.
+- Four distinct meanings of "online" are documented and measured separately:
+  file says `online` (4), fresh presence evidence (**0**), OS process with a
+  main window (6: ChatGPT 34244, CodeBuddy CN 43924, Qoder 75180, Qoder CN
+  118632, WorkBuddy 93060, WorkBuddyAI 54400), window actually drivable
+  (only qoder/qoder_cn had same-day delivery/interject evidence). Read-only
+  probe: all 4 presence rows were `stale`; a real
+  `team_dispatch.create(sender=workbuddyai, to=qoder_cn)` was refused with
+  `SENDER_NOT_ONLINE`; inbox stayed at 27 files. The executor was
+  `High Mandatory Level` / administrator, so UIPI was not the blocker — the
+  protocol gate was. Presence must be self-reported by each agent
+  (`scripts/join-agent.ps1`); a coordinator writing `online` for peers would be
+  rehearsing with itself.
+- Added `docs/OPERATIONAL_FIDELITY_AND_RELAY_DRILL.zh-CN.md` (scope correction,
+  four-layer online table, measured blocker, real-machine SOP, explicit
+  "not finished" list) and `skills/aep-relay-drill/SKILL.md` (cli,
+  `model_required: false`, six sections + receipt verdict table). Updated
+  `skills/README.md`, the capability-card guard, and the retired 3.1/P1 wording
+  in the vision baseline and P0 boundary doc. Historical Release notes for
+  v0.6.20/v0.6.21 were left untouched on purpose.
+- **The real-machine in-turn mutual test is NOT done**: fresh online evidence is
+  0, the dispatch was refused, no message was sent, no desktop window was
+  touched, no presence or ACK was written on an agent's behalf. A read-only
+  `coord-uia observe` returned no determinable session-marker result, so no
+  delivery was attempted rather than risking the wrong chat.
+- Verification: full suite `1438 passed, 3 skipped, 716 subtests passed in 158.91s`
+  (`PYTEST_EXIT=0`, with `CODEBUDDY_SAFE_DELETE_ENABLED=0`); version trio synced to
+  0.6.22; `schemas/` still 7 files and the generated skill manifest unchanged.
+  Targeted `tests/test_relay_loop.py tests/test_capability_cards.py`
+  `29 passed, 174 subtests`. Real coordination root read-only preview:
+  `fresh_online=[]`, `blocked=NEED_AT_LEAST_TWO_ONLINE_AGENTS`, `legs=[]`,
+  `writes_performed=0`, `run_complete=false`, all hard boundaries 0/false, and
+  no new runtime files.
+
 ## 0.6.21 — 居中协调一拍：把三条既有单步接起来
 
 - P0 of `docs/COORDINATOR_VISION_EVIDENCE.zh-CN.md` is implemented as a thin

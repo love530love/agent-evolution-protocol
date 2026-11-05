@@ -212,6 +212,18 @@ class CapabilityCardTests(unittest.TestCase):
                 self.assertIn(token, text)
         self.assertIn("禁止", text, "failure handling must stay explicit")
 
+    def test_relay_drill_card_states_the_completion_criterion(self):
+        card = SKILLS / "aep-relay-drill" / "SKILL.md"
+        self.assertTrue(card.is_file(), "the relay drill needs a capability card")
+        text = card.read_text(encoding="utf-8")
+        self.assertEqual(_frontmatter(text)["min_agent_capability"], "cli")
+        for token in ("省积分", "操作拟真度", "依次", "run_complete", "VERIFIED",
+                      "join-agent.ps1", "不代报在线", "SENDER_NOT_ONLINE",
+                      "docs/OPERATIONAL_FIDELITY_AND_RELAY_DRILL.zh-CN.md"):
+            with self.subTest(token=token):
+                self.assertIn(token, text)
+        self.assertIn("只有 `VERIFIED` 能关单", text)
+
 
 if __name__ == "__main__":
     unittest.main()

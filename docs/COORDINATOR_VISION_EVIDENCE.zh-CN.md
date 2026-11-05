@@ -15,7 +15,12 @@
 
 > **v0.6.21 更新**：第 5 节的 **P0「一拍接线」已落地**，实现与验收见
 > `docs/COORDINATOR_TICK.zh-CN.md` 与 `tests/test_coordinator_tick.py`；P1–P4 仍未做。
-> 本文件其余事实基线（三态矩阵、三条证伪、开源准入、不做清单）结论不变。
+> 本文件其余事实基线（三态矩阵、证伪、开源准入、不做清单）结论不变。
+>
+> **v0.6.22 口径修正**：操作员明确「省积分」只是背景说明、不是项目目标、不需实据，
+> 故 3.1 与 P1 作废；项目目标改为**操作拟真度**，完成判据改为
+> **在线 Agent 依次互派 + 回环总结 + 全部 `VERIFIED`**。见
+> `docs/OPERATIONAL_FIDELITY_AND_RELAY_DRILL.zh-CN.md`。
 
 ---
 
@@ -29,7 +34,7 @@
 | A4 | 任何多 Agent 长程任务由它居中完成分工、传递、唤醒、回表 | **部分站得住**：分工/唤醒/回表各有实现，但彼此未接线、无统一一拍 |
 | A5 | 相当于代替人类工程师 | **不成立**：见 3.3 |
 | A6 | 调动所有存活或可启动的 Agent 协助执行 | **部分站得住**：`client_registry` / `presence` / 桌面唤醒可用；启动 Agent 不等于接单 |
-| A7 | 把各 Agent 额度内能力极致调动，从而省积分 | **没有数据支撑**：见 3.1 |
+| A7 | 把各 Agent 额度内能力极致调动，从而省积分 | **已移出范围**（v0.6.22）：背景说明，非本项目目标，无需实据 |
 | A8 | 避免偏听偏信，观点需实据 | **字段级有、核验级没有**：见 3.2 |
 
 ---
@@ -78,18 +83,26 @@
 
 ---
 
-## 3. 三个必须先证伪的断言
+## 3. 需要证伪的断言（v0.6.22 口径修正后剩两个）
 
-### 3.1 「省积分」目前算不出来
+> **3.1 已作废**：操作员 2026-11-05 明确说明「省积分」只是背景说明，
+> **不需要项目拿实据证明，也不是本项目验收目标**。积分上涨的根因是 Agent 执行步骤
+> 阻滞多、拖沓、顺畅度低，属于**使用侧成本**；项目不追踪积分、额度、token 用量、
+> 限流、重置间隔或费用。原先把它列为一号证伪、把 P1「per-Agent 额度账本」列为下一期，
+> 属于把范围外的命题误当成目标。完整口径与新的完成判据见
+> `docs/OPERATIONAL_FIDELITY_AND_RELAY_DRILL.zh-CN.md`。
+> 「观点需要实据」仍适用于回环判定、来源核验与错误情报，只是不套在「省积分」上。
+
+### 3.1 「省积分」移出项目范围（原证伪段落作废，事实保留作背景）
 
 `legion_ledger.py` 是**贡献评分**账本，注释明写 "not transferable credits"、"grants no operational authority"；
-`cli.py` 的 `init_round/commit/record_result` 是**单轮赛制预算**（`total_budget` / `budget_reserved` / `budget_spent`）；
+`cli.py` 的 `init_round/commit/record_result` 是**单轮赛制预算**；
 `volley_plan.plan(quota_remaining, reserve, wave_size)` 带 `PROPOSAL_ONLY_NOT_AUTHORIZED`；
-`reasoning_contract.py` 的 `budget` 注释是 "planning data"。
-`CHANGELOG.md` 自己写着 "no multi-day budget/quota scheduling, no notification policy"。
+`CHANGELOG.md` 写着 "no multi-day budget/quota scheduling, no notification policy"。
 
-要谈「极致调动额度」，至少要有四类事实：每个 Agent 的额度、已用量、重置时刻、单次任务成本估计。
-**四类数据一个都没有** ⇒ 现在任何「节省 X%」都是猜测。第一步不是优化，是**记账**。
+这些「没有额度数据」的事实仍然成立，**但结论不再是「先记账再优化」**：
+每 Agent 额度、已用量、重置时刻、任务成本这四类数据，本项目根本不需要采集，
+因此第 5 节的 P1 与第 6 节相关条目一并作废。
 
 ### 3.2 「避免偏听偏信」目前靠字段，不靠核验
 
@@ -143,7 +156,7 @@ v0.6.19 边界已写死：没有注册任何 OS 计划任务、没有常驻进�
 | 期 | 内容 | 完成判据 |
 |---|---|---|
 | **P0 一拍接线**（v0.6.21 已落地，见 `docs/COORDINATOR_TICK.zh-CN.md`） | 一次性 `coordinator_tick`：固定顺序 `campaign_tick.tick` → `mission_pulse.pulse(apply=True)` → **恰好一条**投递路径（`federation/supervisor.step` 或 `commander.tick`），默认 dry-run，`--apply` 才写，统一回执；前置失败 fail-closed 停止，federation 失败绝不回退二次投递 | 已由 `tests/test_coordinator_tick.py` 守住：不新建调度器、既有单步签名不变、两条投递路径互斥、零模型零进程、真协作区只读预览零写入、沙盒 `--apply` 幂等 |
-| **P1 额度可计算** | per-Agent quota ledger：额度声明、窗口与重置时刻、用量记录、派工前闸门。先回答「谁还有额度、何时重置」，不谈优化 | 能输出每个 Agent 的 `remaining / reset_at`；无数据时明确报 `NO_QUOTA_DATA` 而不是猜测 |
+| ~~**P1 额度可计算**~~（v0.6.22 作废） | 原计划 per-Agent quota ledger | **命题移出项目范围**：积分/额度/用量/重置间隔属使用侧成本，本项目不采集、不作为验收项。新的第一优先级是 `docs/OPERATIONAL_FIDELITY_AND_RELAY_DRILL.zh-CN.md` 的在线 Agent 依次互测闭环 |
 | **P2 实据可核验** | claim↔evidence 绑定、共同来源去重、`quorum.evaluate` 接进派工路径 | 同一 `source` 的 N 个转述计为 1 个独立来源；无证据观点不得进入 `verified` |
 | **P3 手脚标准化** | 唤醒 / 插话 / 读表 / 回表做成可选 MCP tools 或 A2A Agent Card 描述，**仅作对外接口**，内部仍走既有适配器 | 不改动既有桌面适配器；不新增 envelope schema |
 | **P4 闭环** | `artifact_manifest.verify` 接线、通知定级、跨重启 mission 恢复、持久化调度游标 | 关单仍需 `VERIFIED`；恢复演练有前后状态与哈希证据 |
@@ -155,7 +168,7 @@ v0.6.19 边界已写死：没有注册任何 OS 计划任务、没有常驻进�
 
 ## 6. 明确不做（写在这里防止被别处误读成已完成）
 
-- 不宣称「代替人类工程师」「7x24 完全无人值守」「已节省积分」；
+- 不宣称「代替人类工程师」「7x24 完全无人值守」；**「省积分」不属于本项目目标，不追踪积分/额度/用量/重置间隔**（v0.6.22 口径修正）；
 - 不启动常驻 watcher / 后台线程 / model server / Postgres / Proxy；
 - 不由 agent 自己注册 OS 计划任务；
 - 不用概率模型做心跳、闸门或裁判；
@@ -168,7 +181,7 @@ v0.6.19 边界已写死：没有注册任何 OS 计划任务、没有常驻进�
 
 | 来源 | 用途 |
 |---|---|
-| 仓库只读盘点（2026-11-05）：`coordination/` 125 个模块、`federation/`、`cli.py`、`scripts/`、`tests/` 160 个文件 | 第 2 节三态矩阵、第 3.1 / 3.2 节代码事实 |
+| 仓库只读盘点（2026-11-05）：`coordination/` 125 个模块、`federation/`、`cli.py`、`scripts/`、`tests/` 160 个文件 | 第 2 节三态矩阵、第 3.2 / 3.3 节代码事实（3.1 已于 v0.6.22 作废） |
 | `https://modelcontextprotocol.io/`（规范 2026-07-28） | MCP 官方定义，用来证伪博客误称 |
 | `https://a2a-protocol.org/latest/` | A2A 治理、范围、明确「不是什么」 |
 | `https://docs.temporal.io/self-hosted-guide` | 自托管运行足迹 |
