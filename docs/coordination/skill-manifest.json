@@ -3869,6 +3869,7 @@
         {
           "choices": [
             "capture",
+            "compose",
             "deliver",
             "observe"
           ],
@@ -4005,7 +4006,7 @@
       ],
       "documented": true,
       "name": "coord-uia",
-      "purpose": "Desktop transport probe: observe, capture or deliver to an original window.",
+      "purpose": "Desktop transport probe: observe/capture, or deliver/compose to an original window.",
       "risk": "irreversible"
     },
     {
@@ -5434,7 +5435,7 @@
     }
   ],
   "count": 91,
-  "digest": "sha256:c5519cf764f128b3c7f4c656d362cc7cac21218af9f0b81f5c0a723dec1f2cfa",
+  "digest": "sha256:f1e52ddccf2d3dc5f5ed09cef486dff0390ed75d5fa398000d5ed1141374f87a",
   "documented": 27,
   "generated_from": "agent_evolution_protocol.cli:build_parser",
   "global_arguments": [

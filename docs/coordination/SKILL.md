@@ -7,7 +7,7 @@
 - 命令总数：**91**
 - 风险分布：read-only 21、mutating 55、irreversible 15
 - 用途已记录：**27** / 91（未记录 64，只允许减少）
-- 清单摘要：`sha256:c5519cf764f128b3c7f4c656d362cc7cac21218af9f0b81f5c0a723dec1f2cfa`
+- 清单摘要：`sha256:f1e52ddccf2d3dc5f5ed09cef486dff0390ed75d5fa398000d5ed1141374f87a`
 
 风险分级是**声明**而不是推导：未登记的命令一律按 `mutating` 处理。
 把会写的命令标成 `read-only` 是这里唯一有代价的错误，所以默认值朝安全方向倒。
@@ -99,7 +99,7 @@
 | `coord-task-state` | mutating | `--agent --task --phase --goal` | *未记录* |
 | `coord-trajectory` | mutating | `ACTION` | Record, check and replay a run without letting the replay re-fire it. |
 | `coord-transcript` | irreversible | `ACTION` | Shared conversation bus so every agent can perceive every other session. |
-| `coord-uia` | irreversible | `ACTION --agent` | Desktop transport probe: observe, capture or deliver to an original window. |
+| `coord-uia` | irreversible | `ACTION --agent` | Desktop transport probe: observe/capture, or deliver/compose to an original window. |
 | `coord-vision` | read-only | `ACTION` | Ask a grounder where a control is, and compare it with a known answer. |
 | `coord-volley-plan` | mutating | `--manifest-file --results-file --quota-remaining` | *未记录* |
 | `coord-wake` | irreversible | `--from --to --task --reason` | *未记录* |

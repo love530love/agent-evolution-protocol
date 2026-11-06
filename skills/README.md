@@ -62,7 +62,7 @@ model_required: false
 | `aep-coordinator-tick` | cli | 否 | 居中协调一拍：把三条既有单步接成固定顺序，默认只读预览，投递路径严格二选一 |
 | `aep-relay-drill` | cli | 否 | 在线 Agent 依次互派 + 回环总结 + 三方哈希判定 VERIFIED；默认只读，不代报在线 |
 | `aep-legion-announce` | cli | 否 | 全队通报：固定 `room=agent-legion`、默认只读、只写 1 条共享事件、不碰桌面 |
-| `aep-delivery-preflight` | cli | 否 | 投递前只读预检 + 回执复算第二意见；不打字、不改 commander 活路径 |
+| `aep-delivery-preflight` | cli | 否 | 投递前只读预检 + 回执复算；可加 UIA 转写并列第二判定源；不打字、不改 commander 活路径 |
 
 新 Agent 要开始调度任务，从 `aep-start-dispatch` 起步；它给出 `aep join` 的最小序列，
 并明确「只有 `VERIFIED` 能关单」。`aep-agent-onboarding` 是较早的散文规范，
@@ -84,3 +84,10 @@ model_required: false
 完成判据是「在线 Agent 依次互派 + 回环总结 + 全部 `VERIFIED`」。
 **「省积分」不是本项目目标**（v0.6.22 口径修正：属使用侧成本，不追踪、不需实据、不作为验收项）。
 四层「在线」区分、本轮实测阻塞与真机 SOP 见 `docs/OPERATIONAL_FIDELITY_AND_RELAY_DRILL.zh-CN.md`。
+
+**桌面投递**（v0.6.25）：Electron 客户端真发走 `aep coord-uia compose`（剪贴板真实粘贴），
+`deliver` 的 UIA `ValuePattern` 不触发 input event；发完可用
+`delivery_preflight --transcript-file` 加一份 UIA 转写**并列第二判定源**。
+第二源绝不放宽四项 OCR 检查的主判，两源冲突只报事实。
+`task_delivered` 布尔两个方向都出现过错误，完整实据见
+`docs/DESKTOP_DELIVERY_PREFLIGHT.zh-CN.md` 第 7 节。

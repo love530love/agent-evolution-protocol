@@ -54,7 +54,23 @@ model_required: false
    **它只是第二意见**：`advisory_only=true`，commander 活路径仍读布尔，
    不得据此宣称已经接通复算或已送达。
 
-4. **真实投递由既有通道负责**：`coord-uia deliver` / `coord-commander tick`。
+4. **可选：投递后加一份 UIA 转写第二判定源**（只读，与四项 OCR 检查**并列**）：
+
+   ```text
+   aep --coord-root coordination coord-uia capture --agent <name> --event-id <id> --out-file <转写.txt>
+   python -m agent_evolution_protocol.coordination.delivery_preflight --coord-root coordination --send-receipt <回执.json> --transcript-file <转写.txt> --event-id <id> --composer-hint "<profile 的 composer_hint>"
+   ```
+
+   看 `postflight.transcript_verdict.verified` 与 `postflight.sources_in_conflict`。
+   第二判定源**绝不放宽**主判：`postflight.verified` 仍由
+   `action_verification` 的四项检查决定，`advisory_only` 恒 true。
+   两源不一致时 `conflict_note=OCR_BAND_FALSE_NEGATIVE_SUSPECTED` 只报事实，
+   不把主判改成 true，也不宣称送达。没有 `composer_hint` 就报
+   `NO_COMPOSER_BOUNDARY`（边界未知，不靠猜行数）。
+
+5. **真实投递由既有通道负责**：`coord-uia compose`（Electron 客户端的真发路径，
+   剪贴板真实粘贴 + OCR 回读）/ `coord-uia deliver` / `coord-commander tick`。
+   `compose` 与 `deliver` 一样必须带 `--event-id` 且正文包含该 ID。
    本卡不替代、不包装、不重试它们。发完仍按 `docs/DELIVERY_TRUTH_MATRIX.zh-CN.md`
    查回执：**只有 `VERIFIED` 能关单**。
 
@@ -72,7 +88,10 @@ model_required: false
 | `warnings` 含 `CLIENT_NOT_REGISTERED` | 仅提示；`commander` 用 `registry.profile` + `discover`，不必然阻塞 |
 | `postflight.verified=null` 且 `declared_task_delivered=true` | **布尔不是证据**：回执缺少 4 项检查字段 |
 | `postflight.verified=true` | 4 项检查都通过且无反驳；仍只是第二意见 |
-| `postflight.verified=false` | 有检查被反驳，看 `failed` |
+| `postflight.verified=false` | 有检查被反驳，看 `failed`；**不会**被第二判定源改写 |
+| `postflight.transcript_verdict.verified=true` | 只读 UIA 转写里事件 ID 在会话区、不在 composer 区；仅证明「消息可见」，不是 ACK / 回复 / VERIFIED |
+| `postflight.sources_in_conflict=true` | 主判与第二判定源**并列**不一致；`conflict_note` 具名（如 `OCR_BAND_FALSE_NEGATIVE_SUSPECTED`），不得据此宣称已送达 |
+| `postflight.transcript_verdict.verified=null` | `NO_TRANSCRIPT` / `NO_EVENT_ID` / `NO_COMPOSER_BOUNDARY`；缺输入就不猜 |
 | `DEPOSITED / MESSAGE_VISIBLE / AGENT_ACK` | 都不是关单证据；**只有 `VERIFIED` 能关单** |
 
 ## 失败处置
@@ -82,6 +101,8 @@ model_required: false
 - **禁止**把 `readiness=READY_UNVERIFIED` 读成「可以发」；它要求发前验证。
 - **禁止**把 `postflight` 的复算当成活路径已接通；`commander` 切换到复算判定
   必须有真机实测，不能靠单测。
+- **禁止**用 `transcript_verdict` 改写主判或把 `sources_in_conflict=true` 读成「其实送达了」；
+  它是**并列**的第二判定源，不是对四项 OCR 检查的豁免。
 - **禁止**给 `codebuddy_cn` / `workbuddy3` / `chatgpt` 直接加 `interject_after_send=true`：
   这些客户端的忙碌插话未复测/未测，等于放行盲发。
 - **禁止**对 `CEASED` / `SUBMISSION_UNCONFIRMED` / `SEND_UNCERTAIN` 订单做

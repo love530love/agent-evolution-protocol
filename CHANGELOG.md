@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.6.25 — 暴露 compose，补 UIA 转写并列第二判定源
+
+- Expose the adapter's existing `compose` mode as `aep coord-uia compose`:
+  Electron clients reject UIA `ValuePattern.SetValue` because it does not fire
+  an input event; the measured path is clipboard paste + OCR read-back.
+  `WRITING_UIA_ACTIONS` now guards both `deliver` and `compose` with the same
+  `--event-id` and "event id must be inside the message body" checks.
+- Add `coordination/uia_transcript_verdict.py`: an INDEPENDENT post-send
+  verdict from a read-only UIA transcript capture. It splits conversation from
+  composer at the last line holding the profile's exact `composer_hint`, then
+  requires the event id above the boundary and absent below it. A missing hint
+  is `NO_COMPOSER_BOUNDARY` / `verified=None`, never a guessed line count.
+- Wire it into `delivery_preflight.postflight()` as a SECOND source beside the
+  four existing OCR checks: `--transcript-file`, `--event-id`, `--probe`,
+  `--composer-hint` produce `transcript_verdict`, `sources_in_conflict` and
+  `conflict_note`. The primary `verified`, `REQUIRED_SEND_CHECKS` and
+  `advisory_only` are unchanged; disagreement is reported, never resolved in
+  favour of delivery. commander's live path was not touched.
+- Real-machine evidence (2026-11-06, ChatGPT, event
+  `20261106T065238959490Z-9fd49a50`): compose receipt said
+  `task_delivered=false` with three OCR checks failed, while a read-only UIA
+  capture held the event id and the agent had begun a read-only audit.
+  Recomputation: primary `false`, second source `true`,
+  `sources_in_conflict=true`, `OCR_BAND_FALSE_NEGATIVE_SUSPECTED`.
+  `task_delivered` is therefore unreliable in BOTH directions.
+- Regenerate `docs/coordination/skill-manifest.json` and `SKILL.md` after the
+  CLI change (digest updated, command count stays 91 / documented 27).
+  Update the `aep-delivery-preflight` card, `skills/README.md`,
+  `docs/DESKTOP_DELIVERY_PREFLIGHT.zh-CN.md` (new section 7) and the capability
+  card guard tests.
+- Verification: full suite `1493 passed, 3 skipped, 814 subtests passed
+  in 152.89s` (`PYTEST_EXIT=0`, `CODEBUDDY_SAFE_DELETE_ENABLED=0`). Targeted
+  `tests/test_uia_transcript_verdict.py tests/test_delivery_preflight.py
+  tests/test_capability_cards.py tests/test_skill_manifest.py`:
+  `83 passed, 218 subtests`. Two earlier full runs each had one environment-only
+  failure: a version-import race (the release bump landed while pytest was
+  collecting) and a known flaky `test_federation_a2a` dead-peer timing case
+  (targeted rerun 3/3 green, no federation file changed). Neither test was
+  modified. No new `coord-*` command, no new schema, no second scheduler,
+  no change to `_dispatch` or the OCR band formula.
+
 ## 0.6.24 — 桌面投递：先补确定性预检，不急着改活路径
 
 - Answered "how to improve desktop delivery" by measuring two hard gaps instead

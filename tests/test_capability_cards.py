@@ -246,6 +246,11 @@ class CapabilityCardTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, text)
         self.assertIn("coord-uia deliver", text, "the card must name what it refuses to run")
+        for token in ("coord-uia compose", "transcript_verdict",
+                      "sources_in_conflict", "并列", "不放宽"):
+            with self.subTest(token=token):
+                self.assertIn(token, text,
+                              "the second verdict source must stay beside, not above, the OCR checks")
 
 
 if __name__ == "__main__":

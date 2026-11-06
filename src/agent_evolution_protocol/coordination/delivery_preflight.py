@@ -30,7 +30,7 @@ import argparse
 import json
 from pathlib import Path
 
-from . import action_verification, input_routing
+from . import action_verification, input_routing, uia_transcript_verdict
 
 NOTE = ("Read-only preflight plus an advisory post-send recomputation. "
         "It never sends, never types, never focuses a window, and does not "
@@ -149,21 +149,44 @@ def preflight(root, agent: str) -> dict:
             "note": "Preflight only. It does not authorise a delivery."}
 
 
-def postflight(receipt: dict) -> dict:
-    """Recompute a send receipt.  ADVISORY: commander still owns the live path."""
+def postflight(receipt: dict, *, transcript: str | None = None,
+               event_id: str = "", probe: str = "",
+               composer_hint: str = "") -> dict:
+    """Recompute a send receipt.  ADVISORY: commander still owns the live path.
+
+    ``transcript`` adds a SECOND, independent source read from a read-only UIA
+    capture. It sits beside the four OCR checks; the primary verdict, the
+    required-check list and ``advisory_only`` are unchanged. Disagreement is
+    named instead of resolved, because relaxing the existing contract to make
+    a false negative disappear would let an undelivered message pass too.
+    """
     checks = action_verification.from_send_report(receipt)["checks"]
     verdict = action_verification.verdict(checks, required=REQUIRED_SEND_CHECKS)
+    second = (uia_transcript_verdict.evaluate(
+        transcript=transcript or "", event_id=event_id, probe=probe,
+        composer_hint=composer_hint) if transcript is not None else None)
+    primary = verdict["verified"]
+    conflict = bool(second is not None and second["verified"] is not primary)
+    if not conflict:
+        conflict_note = ""
+    elif second["verified"] is True:
+        conflict_note = "OCR_BAND_FALSE_NEGATIVE_SUSPECTED"
+    else:
+        conflict_note = "SECOND_SOURCE_DISAGREES"
     return {"source": "action_verification", "checks": checks,
-            "verified": verdict["verified"], "reason": verdict["reason"],
+            "verified": primary, "reason": verdict["reason"],
             "missing": verdict["missing"], "failed": verdict["failed"],
             "declared_task_delivered": bool(receipt.get("task_delivered")),
+            "transcript_verdict": second,
+            "sources_in_conflict": conflict, "conflict_note": conflict_note,
             "advisory_only": True,
             "note": ("commander still reads the boolean; this recomputation is "
                      "a second opinion and must not be switched in without a "
                      "real-machine measurement")}
 
 
-def run(root, *, agents=None, send_receipt=None) -> dict:
+def run(root, *, agents=None, send_receipt=None, transcript: str | None = None,
+        event_id: str = "", probe: str = "", composer_hint: str = "") -> dict:
     root = Path(root)
     if agents is None:
         folder = root / "ui_profiles"
@@ -173,7 +196,10 @@ def run(root, *, agents=None, send_receipt=None) -> dict:
         names = list(agents)
     rows = [preflight(root, name) for name in names]
     return {"root": str(root), "scanned": len(rows), "agents": rows,
-            "postflight": postflight(send_receipt) if send_receipt is not None else None,
+            "postflight": (postflight(send_receipt, transcript=transcript,
+                                      event_id=event_id, probe=probe,
+                                      composer_hint=composer_hint)
+                           if send_receipt is not None else None),
             "models_loaded": 0, "processes_started": 0,
             "ui_input_performed": False, "deployment_performed": False,
             "system_tasks_registered": False, "note": NOTE}
@@ -185,9 +211,25 @@ def main(argv=None) -> int:
     parser.add_argument("--agent", nargs="*", default=None)
     parser.add_argument("--send-receipt", type=Path, default=None,
                         help="recompute one existing send receipt as an advisory")
+    parser.add_argument("--transcript-file", type=Path, default=None,
+                        help="read-only UIA capture to add a SECOND verdict source")
+    parser.add_argument("--event-id", default="",
+                        help="event id the transcript must carry above the composer")
+    parser.add_argument("--probe", default="",
+                        help="optional trailing fragment that must have moved")
+    parser.add_argument("--composer-hint", default="",
+                        help="exact composer placeholder marking the band boundary")
     args = parser.parse_args(argv)
     receipt = _read(args.send_receipt) if args.send_receipt else None
-    report = run(args.coord_root, agents=args.agent, send_receipt=receipt)
+    transcript = None
+    if args.transcript_file:
+        try:
+            transcript = args.transcript_file.read_text(encoding="utf-8")
+        except OSError:
+            transcript = ""
+    report = run(args.coord_root, agents=args.agent, send_receipt=receipt,
+                 transcript=transcript, event_id=args.event_id,
+                 probe=args.probe, composer_hint=args.composer_hint)
     print(json.dumps(report, ensure_ascii=True, indent=2))
     return 0
 
