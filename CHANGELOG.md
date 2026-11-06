@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.6.26 — ClawChat Protocol v2 官方组织调研：只引协议，不引运行时
+
+- Add `docs/CLAWCHAT_V2_SURVEY.zh-CN.md`: a reproducible fact baseline for
+  every repository under `https://github.com/clawling`, collected read-only
+  with the authenticated `gh` CLI (no clone, install, registration or server
+  connection). `clawling` is an **Organization** (`CLAWLING PTE.LTD.`,
+  `public_repos=2`, `type=all` confirms no forks/private/archived repos).
+- The two repositories are `clawchat-plugin-hermes-agent` (Python, 29 stars,
+  MIT, pushed 2026-11-04, ClawChat **Protocol v2 / WebSocket** peer client for
+  Hermes Agent >=0.12, 55 `provides_tools` and 7 `provides_hooks` in
+  `plugin.yaml`, six bundled `SKILL.md` cards, sole runtime dependency
+  `websockets>=13,<16`) and `clawchat-plugin-install-cli` (TypeScript, npm
+  installer targeting openclaw|hermes, canonical host for the `skills/` and
+  `livewares/` trees pinned to `skills-vX.Y.Z` tags).
+- Record the **protocol gap**: this project's `clawchat_transport.py` is local
+  TCP + NDJSON and `docs/CLAWLING_INTEGRATION.md` describes a local GUI
+  **v1 / HTTP `/v1/send`** channel; neither is an official v2 WebSocket client.
+  `docs/CLAWCHAT_EVALUATION.md` evaluates same-name but different projects
+  (Cowchat, an Electron front end, a P2P chat), not this organisation.
+- Decision: **do not import the runtime** (needs a third-party server holding
+  the wire contract, a resident WebSocket, a Hermes/OpenClaw host and npm;
+  `--dangerously-force-unsafe-install` bypasses the host's install-time scan),
+  which conflicts with the project's library-level no-service/no-DB/no-thread,
+  no new schema or `coord-*` command, rule-recomputable, dry-run-by-default
+  constraints. Only protocol ideas and engineering conventions are reusable:
+  capability cards + generated manifest + guard tests, atomic writes, named
+  refusals, profile isolation, prompt-injection/tool-grant boundaries,
+  secret-output assertions, and "channel connected != host answered".
+- Document a live misinformation sample: the official README says **53**
+  tools, `docs/reference/tools.md` says **55**, and `plugin.yaml` actually
+  declares **55** (`tools.md` itself names `plugin.yaml` authoritative).
+  Prose counts are not evidence; declaration files are.
+- Add `tests/test_clawchat_v2_survey.py` (8 tests / 41 subtests) guarding the
+  fact baseline: both repos named, protocol gap stated, authoritative count and
+  drift recorded, no integration claim slips in, reproducible `gh` commands and
+  raw snapshot present, hard constraints and reusable ideas both present, and
+  the legacy evaluation links to the new survey. Add that link at the top of
+  `docs/CLAWCHAT_EVALUATION.md` without changing its original conclusions.
+- Verification: full suite `1501 passed, 3 skipped, 855 subtests passed
+  in 184.10s` (`PYTEST_EXIT=0`, `CODEBUDDY_SAFE_DELETE_ENABLED=0`, one clean
+  run with the version bumped BEFORE starting pytest). Targeted
+  `tests/test_clawchat_v2_survey.py`: `8 passed, 41 subtests`. No runtime code,
+  schema, command surface or dependency changed; `coord-skill-manifest`
+  remains `in_sync=true`.
+
 ## 0.6.25 — 暴露 compose，补 UIA 转写并列第二判定源
 
 - Expose the adapter's existing `compose` mode as `aep coord-uia compose`:

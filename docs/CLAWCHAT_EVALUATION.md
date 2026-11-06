@@ -1,5 +1,11 @@
 # ClawChat / Cowchat 评估
 
+> **2026-11-06 补充**：本文评估的是**同名不同项目**（`cbd/clawchat` → Cowchat、
+> `ngmaloney/clawchat` Electron 前端、`alexrudloff/clawchat` P2P），
+> **不是** GitHub 组织 `clawling` 的官方 ClawChat Protocol v2 插件。
+> 官方组织全量调研（2 个仓库、v2 WebSocket、与本项目 v1/NDJSON 的协议代差）
+> 见 `docs/CLAWCHAT_V2_SURVEY.zh-CN.md`。本文原有结论继续有效，但不可套用到该组织。
+
 ## 结论
 
 “ClawChat”存在多个同名项目，不能直接把名称当作唯一依赖。最相关的 `cbd/clawchat` 已更名为 Cowchat；旧仓库仅保留 v0.3.x 兼容代码。其协议是本地 TCP/Unix socket + NDJSON，提供房间、投票、决策记录和领导者选举，任何能写 JSON Lines 的 Agent 都可接入。
