@@ -66,10 +66,12 @@ def probe(provider: str, *, timeout: float = 15) -> dict:
     return result
 
 
-def message_plan(provider: str, session_id: str, text: str) -> dict:
-    """Build an existing-session message; caller supplies text through stdin."""
-    if not session_id or session_id.startswith('-') or not text.strip():
-        raise ValueError('existing session id and nonempty text required')
+def message_plan(provider: str, session_id: str, text: str, *, target_agent: str = '') -> dict:
+    """Build an existing-session input plan with a complete session identity."""
+    if (not isinstance(session_id, str) or not session_id or session_id.startswith('-')
+            or not isinstance(text, str) or not text.strip()
+            or not isinstance(target_agent, str) or not target_agent.strip()):
+        raise ValueError('existing session id, target agent and nonempty text required')
     prefix = resolve(provider)
     if not prefix:
         raise ValueError('provider not installed')
@@ -83,9 +85,9 @@ def message_plan(provider: str, session_id: str, text: str) -> dict:
         raise ValueError('LobeHub server integration disabled: local-only project policy')
     else:
         raise ValueError('desktop messages require a bound UI workflow')
-    return {'provider': provider, 'session_id': session_id,
+    return {'provider': provider, 'target_agent': target_agent, 'session_id': session_id,
             'argv': [*prefix, *args], 'stdin': stdin,
-            'execution_started': False, 'delivery_verified': False}
+            'input_capable': True, 'execution_started': False, 'delivery_verified': False}
 
 
 def local_worker_plan(agent_type: str, workspace: Path, session_id: str) -> dict:
@@ -97,10 +99,11 @@ def local_worker_plan(agent_type: str, workspace: Path, session_id: str) -> dict
     prefix = resolve('lobehub')
     if not prefix:
         raise ValueError('LobeHub CLI not installed')
-    return {'argv': [*prefix, 'hetero', 'exec', '--type', agent_type,
+    return {'provider': 'lobehub', 'target_agent': agent_type, 'session_id': session_id,
+            'argv': [*prefix, 'hetero', 'exec', '--type', agent_type,
                      '--cwd', str(workspace.resolve()), '--resume', session_id,
                      '--prompt', '-'], 'stdin_required': True,
-            'server_ingest': False, 'execution_started': False}
+            'input_capable': True, 'server_ingest': False, 'execution_started': False}
 
 
 def main() -> int:
@@ -109,13 +112,15 @@ def main() -> int:
     parser.add_argument('--provider', choices=UPSTREAMS)
     parser.add_argument('--session-id')
     parser.add_argument('--text-file', type=Path)
+    parser.add_argument('--target-agent')
     args = parser.parse_args()
     if args.action != 'inventory' and not args.provider:
         parser.error('--provider required')
     if args.action == 'message-plan':
-        if not args.session_id or not args.text_file:
-            parser.error('--session-id and --text-file required')
-        result = message_plan(args.provider, args.session_id, args.text_file.read_text(encoding='utf-8'))
+        if not args.session_id or not args.text_file or not args.target_agent:
+            parser.error('--session-id, --target-agent and --text-file required')
+        result = message_plan(args.provider, args.session_id, args.text_file.read_text(encoding='utf-8'),
+                              target_agent=args.target_agent)
     else:
         result = ([plan(name) for name in UPSTREAMS] if args.action == 'inventory'
               else probe(args.provider) if args.action == 'probe' else plan(args.provider))

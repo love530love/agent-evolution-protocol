@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased — bounded external execution and original-session fencing
+
+- Turn `coordination.external_runner` from a direct `subprocess.run` wrapper
+  into a bounded execution boundary: validate input before reserving the event,
+  continuously drain capped stdout/stderr, keep explicit capture metadata, and
+  preserve no-replay receipts.
+- On Windows, contain each external target with an `AEPExternal-*` Job Object
+  and a trusted `-I -S` bootstrap that joins the parent-owned job before the
+  target starts. Timeout now terminates normally-created descendants and the
+  runner records whether Job disappearance was observed.
+- Require a workspace/provider/target-agent/session identity for input-capable
+  plans. A cross-process per-session lock serializes the original conversation;
+  timeout/interruption leaves `SESSION_UNCERTAIN` until an evidence-bearing
+  reconciliation, rather than silently allowing a second send.
+- Add actual Windows containment, cross-process session-lock, bounded-output,
+  invalid-pre-reservation and UTF-8 receipt coverage. Document both the
+  successful read-only `agent-desktop list-apps` run and remaining production
+  gates in `docs/HANDS_AUDIT_20261107.md`.
+
 ## 0.6.26 — ClawChat Protocol v2 官方组织调研：只引协议，不引运行时
 
 - Add `docs/CLAWCHAT_V2_SURVEY.zh-CN.md`: a reproducible fact baseline for

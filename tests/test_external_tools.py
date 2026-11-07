@@ -40,21 +40,28 @@ def test_probe_timeout_retains_unknown_delivery():
 
 def test_t3_resume_message_keeps_text_off_argv():
     with patch('agent_evolution_protocol.coordination.external_tools.resolve', return_value=['t3.exe']):
-        result = message_plan('t3code', 'thread-1', 'hello 世界')
+        result = message_plan('t3code', 'thread-1', 'hello 世界', target_agent='qoder')
         assert result['argv'][:7] == ['t3.exe', 'thread', 'send', 'thread-1', '-', '--wait', '--json']
         assert result['stdin'] == 'hello 世界'
+        assert result['target_agent'] == 'qoder'
+        assert result['input_capable'] is True
         assert result['execution_started'] is False
 
 
 def test_lobehub_real_notify_contract():
     with patch('agent_evolution_protocol.coordination.external_tools.resolve', return_value=['node.exe', 'lh.js']):
         with pytest.raises(ValueError, match='local-only'):
-            message_plan('lobehub', 'topic-1', 'a; b')
+            message_plan('lobehub', 'topic-1', 'a; b', target_agent='qoder')
 
 
 def test_reject_option_as_session():
     with pytest.raises(ValueError):
-        message_plan('t3code', '--new', 'hello')
+        message_plan('t3code', '--new', 'hello', target_agent='qoder')
+
+
+def test_reject_message_without_bound_target_agent():
+    with pytest.raises(ValueError, match='target agent'):
+        message_plan('t3code', 'thread-1', 'hello')
 
 
 def test_local_worker_never_uses_server_ingest(tmp_path):
@@ -63,3 +70,5 @@ def test_local_worker_never_uses_server_ingest(tmp_path):
         assert '--topic' not in result['argv']
         assert '--resume' in result['argv']
         assert result['server_ingest'] is False
+        assert result['input_capable'] is True
+        assert result['session_id'] == 'native-1'

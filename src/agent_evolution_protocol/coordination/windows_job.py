@@ -1,4 +1,4 @@
-"""Small Windows Job Object owner for trusted validation subprocesses.
+"""Small Windows Job Object owner for trusted AEP subprocesses.
 
 Only the parent creates a job. A worker opens that existing job, assigns itself,
 and closes its own handle before running tests. The parent's noninheritable
@@ -86,8 +86,15 @@ def _api():
 
 
 def _name(name):
-    if not isinstance(name, str) or re.fullmatch(r"AEPValidation-[0-9a-f]{32}", name) is None:
-        raise ValueError("invalid validation job name")
+    """Accept only a random, purpose-scoped AEP job object name.
+
+    ``AEPValidation`` remains reserved for the fixed validation bootstrap.
+    ``AEPExternal`` is used by the separate external-CLI bootstrap.  Keeping
+    both prefixes narrow matters: opening an arbitrary named job would let a
+    corrupted receipt point this module at an unrelated Windows job object.
+    """
+    if not isinstance(name, str) or re.fullmatch(r"AEP(?:Validation|External)-[0-9a-f]{32}", name) is None:
+        raise ValueError("invalid AEP job name")
     return name
 
 
