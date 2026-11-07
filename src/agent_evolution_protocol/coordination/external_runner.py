@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import math
 from uuid import uuid4
 
 from .external_tools import local_worker_plan, message_plan, resolve
@@ -17,8 +18,11 @@ def execute(root: Path, *, event_id: str, workspace: Path, plan: dict,
             text: str = '', timeout: float = 120) -> dict:
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,159}', event_id):
         raise ValueError('invalid event id')
-    if not workspace.is_dir() or timeout <= 0:
+    if not workspace.is_dir() or not math.isfinite(timeout) or timeout <= 0:
         raise ValueError('existing workspace and positive timeout required')
+    argv = plan.get('argv')
+    if not isinstance(argv, list) or not argv or any(not isinstance(v, str) or '\0' in v for v in argv) or not argv[0]:
+        raise ValueError('argv must be a nonempty string array')
     root.mkdir(parents=True, exist_ok=True)
     request = {'argv': plan['argv'], 'stdin': text, 'workspace': str(workspace.resolve())}
     digest = sha256(json.dumps(request, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
@@ -32,11 +36,23 @@ def execute(root: Path, *, event_id: str, workspace: Path, plan: dict,
             handle.flush()
             os.fsync(handle.fileno())
     except FileExistsError:
-        existing = json.loads(attempt.read_text(encoding='utf-8'))
+        try:
+            existing = json.loads(attempt.read_text(encoding='utf-8'))
+            if not isinstance(existing, dict) or 'request_sha256' not in existing:
+                raise ValueError('incomplete attempt')
+        except (OSError, ValueError):
+            return {'event_id': event_id, 'state': 'UNKNOWN', 'replay_allowed': False,
+                    'error': 'attempt incomplete or unreadable; reconcile before retry'}
         if existing['request_sha256'] != digest:
             raise ValueError('event id already reserved for a different request')
-        return (json.loads(result_path.read_text(encoding='utf-8')) if result_path.exists()
-                else {'event_id': event_id, 'state': 'UNKNOWN', 'replay_allowed': False})
+        if result_path.exists():
+            try:
+                saved = json.loads(result_path.read_text(encoding='utf-8'))
+                if saved.get('request_sha256') == digest and saved.get('event_id') == event_id:
+                    return saved
+            except (OSError, ValueError, AttributeError):
+                pass
+        return {'event_id': event_id, 'state': 'UNKNOWN', 'replay_allowed': False}
     result = {'event_id': event_id, 'workspace': request['workspace'],
               'request_sha256': digest, 'delivery_verified': False,
               'replay_allowed': False}

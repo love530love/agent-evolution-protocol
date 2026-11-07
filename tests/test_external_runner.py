@@ -41,3 +41,28 @@ def test_crash_after_reservation_not_replayed(tmp_path):
     with patch('subprocess.run') as child:
         assert run(tmp_path/'receipts', tmp_path)['state'] == 'UNKNOWN'
         child.assert_not_called()
+
+
+def test_partial_reservation_is_unknown(tmp_path):
+    root=tmp_path/'receipts';root.mkdir()
+    (root/'EVT-test-001.attempt.json').write_text('{', encoding='utf-8')
+    with patch('subprocess.run') as child:
+        assert run(root,tmp_path)['state']=='UNKNOWN'
+        child.assert_not_called()
+
+
+@pytest.mark.parametrize('argv', ['fake.exe', [], [None], ['']])
+def test_invalid_argv_before_reservation(tmp_path,argv):
+    with pytest.raises(ValueError):
+        execute(tmp_path/'receipts',event_id='test',workspace=tmp_path,plan={'argv':argv})
+    assert not (tmp_path/'receipts').exists()
+
+
+def test_real_process_utf8_and_durable_result(tmp_path):
+    import sys
+    result=execute(tmp_path/'receipts',event_id='real',workspace=tmp_path,
+                   plan={'argv':[sys.executable,'-X','utf8','-c',
+                                 'import sys; print(sys.stdin.read())']}, text='真实回读')
+    assert result['exit_code']==0
+    assert '真实回读' in result['stdout']
+    assert json.loads((tmp_path/'receipts/real.result.json').read_text(encoding='utf-8'))==result
