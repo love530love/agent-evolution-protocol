@@ -1,0 +1,19 @@
+{
+  "schema": "aep-optional-external-tools-v1",
+  "agent_desktop": {
+    "repository": "https://github.com/vercel-labs/agent-desktop",
+    "mcpServer": {"command": "agent-desktop", "args": ["mcp"]},
+    "status": "candidate"
+  },
+  "t3code": {
+    "repository": "https://github.com/pingdotgg/t3code",
+    "command": "t3",
+    "status": "candidate",
+    "boundary": "Supported harnesses only; no Qoder or WorkBuddy compatibility assumed"
+  },
+  "lobehub": {
+    "repository": "https://github.com/lobehub/lobehub",
+    "status": "local-cli-only",
+    "boundary": "No hosted login or notify; optional standalone hetero execution only"
+  }
+}
