@@ -178,3 +178,62 @@ CLI 的 `coord-uia` 没有入口。v0.6.25 把 `compose` 加进 `action` choices
 **本版没有**：真打字/聚焦/点击、修 PowerShell 的 `$delivered` 公式、
 改 `commander` 判定、给未复测客户端放开插话、注册 OS 任务、常驻进程。
 `compose` 只是把**已经存在**的适配器模式从 CLI 暴露出来，不是新手脚。
+
+## 8. 离线验收夹具（v0.6.28）：把真机判定失败冻结成可复算证据
+
+### 为什么要做
+
+到第 7 节为止，判定逻辑已经能识别 OCR band 假阴性，但**这些结论只存在于聊天记录和
+gitignored 回执里**：CI 上跑不到、改判定器后没有回归闸门、也没人能保证下次不会
+为了让汇总好看而悄悄放宽契约。上游验收实践里有两条正好对症的思路（只引方法论，
+独立实现，不复制源码）：
+
+1. 声明了 `requiredEvidence` 的检查**不能只凭文字通过**；缺产物就记 `uncertain`
+   并**持住**交付。回执里的 `task_delivered=true`、`status=message-visible` 都是文字，
+   不是证据。
+2. 一个有界实验要有六段命名契约：`experiment / effect / safety / oracle / receipt / result`，
+   让复核者能分开看「注入了什么故障」「事先期望什么」「实际测到什么」「哪些事绝不能发生」。
+
+### 实现
+
+`coordination/delivery_acceptance_fixture.py` 内嵌四份**合成但取自真机**的夹具，
+不读 `coordination/` 运行时文件（否则 CI 必红），全部复用既有
+`action_verification.from_send_report/verdict`、`delivery_preflight.postflight`、
+`uia_transcript_verdict.evaluate`，**不新建第二套判定**：
+
+| 夹具 | 真机来源 | 注入的故障 | 期望结论 |
+|---|---|---|---|
+| `ocr_band_false_negative` | 11-06 ChatGPT compose #1 | 多显示器 `rect [960,429,2880,1659]` 让 OCR band 切错 | 主判 `false`、第二源 `true`、冲突具名 → `pass` |
+| `boolean_false_positive` | 11-05 qoder interject | `task_delivered=true` 但四项检查字段全缺、无 UIA 转写 | 主判 `null`、**缺证据持住** → `uncertain` |
+| `primary_kept_under_conflict` | 11-06 ChatGPT compose #2 | `placeholder_gone=false`，UIA 转写证明送达 | 主判仍 `false`、第二源 `true` → `pass` |
+| `submitted_unconfirmed` | 11-06 workbuddy3 | `composer_cleared=true` 但 OCR 回读丢事件 ID 与 hint | 第二源 `null` / `NO_COMPOSER_BOUNDARY` → `pass` |
+
+`requiredEvidence` 可从 `receipt / check_fields / uia_transcript /
+event_id_in_transcript / composer_hint / probe` 六类事实中声明；任一缺失即
+`result.outcome=uncertain`、`matched=false`，**且绝不调用任何写入或重放**。
+每份夹具的 `fixture_sha256` 由内容稳定重算，防漂移；`oracle` 在复算前声明，
+`ORACLE_MISMATCH` 判 `fail` 而不是 `uncertain`。
+
+正常基线：**3 passed + 1 held + 0 failed**。`held=1` 是正确结果，不是测试挂了。
+
+### 六段契约里的硬边界
+
+`safety` 恒为 `no_adapter / no_network / no_process / no_write / no_login /
+no_model / no_ui_input = true`；`run_all()` 的 `models_loaded=0`、
+`processes_started=0`、`ui_input_performed=false`、`deployment_performed=false`、
+`system_tasks_registered=false`、`external_login_performed=false`。
+AST 守线禁止 `socket / urllib / requests / httpx / subprocess / threading /
+asyncio / 模型模块`，源码文本守线禁止 `lh login` / `lobehub.com` / `market-cli` /
+`oauth` / `api_key` / `access_token`。
+
+### 与上游的边界（用户明确要求）
+
+**不引入 LobeHub 登录后云端能力**。既有 `docs/EXTERNAL_TOOLS.zh-CN.md` 已定
+「不连接官方服务、不发起登录」，`external_tools.py` 对服务器通知直接抛
+`LobeHub server integration disabled: local-only project policy`；本夹具不碰这些路径。
+上游 `LICENSE` 是 LobeHub Community License（Apache-2.0 + 衍生分发需商业授权），
+`package.json` 却写 `MIT`、GitHub API 返回 `NOASSERTION` ⇒ 更不能复制源码。
+本模块只独立实现两条方法论，`skills/aep-delivery-fixture/SKILL.md` 是弱 Agent 执行卡。
+
+**本夹具不证明任何一次真投递成功**：它证明的是「判定器在这些故障下仍给出预期结论」。
+只有 `VERIFIED` 能关单。

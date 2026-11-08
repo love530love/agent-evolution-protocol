@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.6.28 — 离线验收夹具：把真机判定失败冻结成可复算证据
+
+- Add `coordination/delivery_acceptance_fixture.py`: four self-contained
+  SYNTHETIC fixtures distilled from real-machine receipts (2026-11-05 qoder,
+  2026-11-06 ChatGPT compose #1/#2, 2026-11-06 workbuddy3). No dependency on
+  gitignored runtime files, so CI can recompute them. All verdicts come from
+  the existing `action_verification` / `delivery_preflight.postflight` /
+  `uia_transcript_verdict` contract; nothing replaces or relaxes it.
+- Enforce the borrowed acceptance rule, independently implemented: a round
+  that declares `requiredEvidence` cannot pass on prose alone. A missing
+  artifact marks the round `uncertain` and HOLDS the delivery;
+  `task_delivered=true` / `status=message-visible` are text, not evidence.
+  Six named contract sections (experiment / effect / safety / oracle /
+  receipt / result), a stable `fixture_sha256`, and a pre-declared oracle
+  (`ORACLE_MISMATCH` is a failure, never an uncertain).
+- Baseline: `3 passed + 1 held + 0 failed`. The held case is the qoder
+  receipt with `task_delivered=true` but no `SEND_REPORT_CHECKS` fields and
+  no UIA transcript. The `primary_kept_under_conflict` case guards that a
+  second source reporting delivered never rewrites a `false` primary verdict.
+- Zero-side-effect by construction and by guard: no adapter, socket, process,
+  model, login, write or UI input; AST/text guards forbid
+  `socket/urllib/requests/httpx/subprocess/threading/asyncio`, model modules,
+  and `lh login` / `lobehub.com` / `market-cli` / `oauth` / `api_key`.
+  No new schema, no new `coord-*` command, no new dependency.
+- Add `skills/aep-delivery-fixture/SKILL.md` (cli / model_required false),
+  `skills/README.md` entry, `tests/test_delivery_acceptance_fixture.py`
+  (18 tests), a guard in `tests/test_capability_cards.py`, and section 8 of
+  `docs/DESKTOP_DELIVERY_PREFLIGHT.zh-CN.md`.
+- Scope note: only two methodology ideas from upstream acceptance practice
+  are reused and independently implemented. Per the user's standing choice,
+  no LobeHub login / cloud capability, no self-hosted runtime
+  (Postgres + Redis + S3 + Next.js), and no upstream source is copied or
+  redistributed (upstream LICENSE is LobeHub Community License).
+- Verification: full suite `1580 passed, 3 skipped, 949 subtests passed
+  in 255.81s` (`PYTEST_EXIT=0`, `CODEBUDDY_SAFE_DELETE_ENABLED=0`, one clean
+  run with the version pinned BEFORE starting pytest). Targeted
+  `tests/test_delivery_acceptance_fixture.py tests/test_delivery_preflight.py
+  tests/test_uia_transcript_verdict.py tests/test_capability_cards.py
+  tests/test_skill_manifest.py`: `102 passed, 266 subtests`.
+
 ## 0.6.27 — 会话租约与执行边界 + Agent 接入排障基线
 
 - Add `docs/AGENT_JOIN_TROUBLESHOOTING.zh-CN.md` as the diagnostic baseline

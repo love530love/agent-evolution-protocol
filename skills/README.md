@@ -63,6 +63,7 @@ model_required: false
 | `aep-relay-drill` | cli | 否 | 在线 Agent 依次互派 + 回环总结 + 三方哈希判定 VERIFIED；默认只读，不代报在线 |
 | `aep-legion-announce` | cli | 否 | 全队通报：固定 `room=agent-legion`、默认只读、只写 1 条共享事件、不碰桌面 |
 | `aep-delivery-preflight` | cli | 否 | 投递前只读预检 + 回执复算；可加 UIA 转写并列第二判定源；不打字、不改 commander 活路径 |
+| `aep-delivery-fixture` | cli | 否 | 离线复算四份真机投递夹具；`requiredEvidence` 缺失即 `uncertain`，零服务零登录 |
 
 新 Agent 要开始调度任务，从 `aep-start-dispatch` 起步；它给出 `aep join` 的最小序列，
 并明确「只有 `VERIFIED` 能关单」。`aep-agent-onboarding` 是较早的散文规范，
@@ -91,3 +92,8 @@ model_required: false
 第二源绝不放宽四项 OCR 检查的主判，两源冲突只报事实。
 `task_delivered` 布尔两个方向都出现过错误，完整实据见
 `docs/DESKTOP_DELIVERY_PREFLIGHT.zh-CN.md` 第 7 节。
+
+**离线验收夹具**（v0.6.28）：`aep-delivery-fixture` 把四份真机案例冻结成自包含
+可复算数据，守「缺 `requiredEvidence` ⇒ `uncertain` 持住交付」与主判不被第二源改写。
+只借鉴上游验收方法论并独立实现，**不连接 LobeHub 云端、不登录、不复制源码**；
+边界见 `docs/DESKTOP_DELIVERY_PREFLIGHT.zh-CN.md` 第 8 节。

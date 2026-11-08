@@ -252,6 +252,19 @@ class CapabilityCardTests(unittest.TestCase):
                 self.assertIn(token, text,
                               "the second verdict source must stay beside, not above, the OCR checks")
 
+    def test_delivery_fixture_card_states_the_offline_boundary(self):
+        card = SKILLS / "aep-delivery-fixture" / "SKILL.md"
+        self.assertTrue(card.is_file(), "offline acceptance needs a capability card")
+        text = card.read_text(encoding="utf-8")
+        self.assertEqual(_frontmatter(text)["min_agent_capability"], "cli")
+        for token in ("requiredEvidence", "uncertain", "held", "零登录",
+                      "不复制", "只有 `VERIFIED` 能关单",
+                      "docs/DESKTOP_DELIVERY_PREFLIGHT.zh-CN.md"):
+            with self.subTest(token=token):
+                self.assertIn(token, text)
+        self.assertIn("lh login", text,
+                      "the card must explicitly name the excluded login path")
+
 
 if __name__ == "__main__":
     unittest.main()
