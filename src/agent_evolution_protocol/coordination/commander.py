@@ -428,7 +428,8 @@ def _uia_observe(root: Path, agent: str, *, expected_pid: int = 0,
 
 
 def _profiled_deliver(root: Path, agent: str, text: str, event_id: str, *,
-                      allow_launch: bool = False, urgent_interject: bool = False) -> dict:
+                      allow_launch: bool = False, urgent_interject: bool = False,
+                      workspace_id: str = "") -> dict:
     profile_path = Path(root) / "ui_profiles" / f"{agent}.json"
     try:
         profile = ui_fallback.load_profile(profile_path)
@@ -441,6 +442,11 @@ def _profiled_deliver(root: Path, agent: str, text: str, event_id: str, *,
             lock_path=Path(root) / "desktop-input.lock",
             driver=uia3.driver_for(profile), allow_launch=allow_launch,
             urgent=urgent_interject,
+            session_root=Path(root),
+            # A legacy order may not yet carry a logical workspace ID.  It is
+            # still fenced inside this coordination root; new cross-route
+            # callers should pass the same explicit ID to every adapter.
+            workspace_id=workspace_id or str(Path(root).resolve()),
         )
         receipt = {
             "status": result.get("state", "UNKNOWN"),
@@ -453,7 +459,7 @@ def _profiled_deliver(root: Path, agent: str, text: str, event_id: str, *,
         # Carry the integrity verdict into the durable order history.  Without
         # it the receipt says "no input" and leaves the reader to work out that
         # the reason was UIPI rather than a client that would not focus.
-        for key in ("drivable", "blocked_by", "target_elevation", "executor_elevation", "reason"):
+        for key in ("drivable", "blocked_by", "target_elevation", "executor_elevation", "reason", "session_lease"):
             if result.get(key) not in (None, ""):
                 receipt[key] = result[key]
         return receipt
@@ -982,7 +988,8 @@ def _dispatch(root: Path, *, order: dict) -> dict:
     if profile_path.is_file():
         receipt = _profiled_deliver(root, target, order["text"], order["event_id"],
                                     allow_launch=bool(order.get("allow_launch")),
-                                    urgent_interject=bool(order.get("urgent_interject")))
+                                    urgent_interject=bool(order.get("urgent_interject")),
+                                    workspace_id=str(order.get("workspace_id", "")))
         transport = "profiled-ui"
     else:
         receipt = _uia_deliver(root, target, order["text"], order["event_id"],

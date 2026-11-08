@@ -23,9 +23,10 @@ import threading
 import time
 from uuid import uuid4
 
-from agent_evolution_protocol.federation.locking import LockTimeout, workspace_lock
+from agent_evolution_protocol.federation.locking import LockTimeout
 
 from .external_tools import local_worker_plan, message_plan, resolve
+from . import session_lease
 
 
 DEFAULT_MAX_OUTPUT_BYTES = 512 * 1024
@@ -93,40 +94,66 @@ def _session_binding(plan: dict, workspace: Path) -> dict | None:
     fields = {name: plan.get(name) for name in ("provider", "target_agent", "session_id")}
     if any(not isinstance(item, str) or not item.strip() or "\0" in item for item in fields.values()):
         raise ValueError("input-capable plan needs provider, target_agent and existing session_id")
-    return {"workspace": str(workspace.resolve()), **fields}
+    # ``provider`` names the transport we are launching.  A UIA relay and an
+    # external CLI can reach the same native chat through different transports,
+    # so a verified route mapping may supply one canonical session provider.
+    # An alias without retained evidence would be a dangerous guess.
+    transport_provider = fields["provider"].strip()
+    session_provider = plan.get("session_provider") or transport_provider
+    if not isinstance(session_provider, str) or not session_provider.strip() or "\0" in session_provider:
+        raise ValueError("session_provider must be a nonempty string when provided")
+    session_provider = session_provider.strip()
+    if session_provider != transport_provider:
+        evidence = plan.get("session_binding_evidence")
+        if not isinstance(evidence, str) or not evidence.strip():
+            raise ValueError("session_provider alias requires session_binding_evidence")
+    # An adapter that shares a native conversation with UIA can opt into the
+    # same logical workspace key.  The resolved working directory remains the
+    # conservative backward-compatible default for standalone CLI plans.
+    workspace_id = plan.get("workspace_id") or str(workspace.resolve())
+    return session_lease.binding(workspace_id=workspace_id, provider=session_provider,
+                                 target_agent=fields["target_agent"],
+                                 session_id=fields["session_id"])
+
+
+def _lease_root(receipt_root: Path, explicit_root: Path | None) -> Path:
+    """Return the one root that must be shared by all routes to this chat."""
+    return Path(explicit_root) if explicit_root is not None else session_lease.canonical_root(receipt_root)
 
 
 def _session_digest(binding: dict) -> str:
-    return _digest(binding)
+    return session_lease.digest(binding)
 
 
 def _state_path(root: Path, binding: dict) -> Path:
-    return root / "session_state" / (_session_digest(binding) + ".json")
+    return session_lease.state_path(root, binding)
 
 
 def _read_state(path: Path) -> dict | None:
+    # Kept as a small compatibility wrapper for tests/callers which already
+    # pass the state file.  All new paths use the shared lease implementation.
     if not path.exists():
         return None
     try:
         row = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return {"state": "UNCERTAIN", "error": "session state unreadable"}
+        return {"state": "UNCERTAIN", "error": "session lease state unreadable"}
     if not isinstance(row, dict) or not isinstance(row.get("state"), str):
-        return {"state": "UNCERTAIN", "error": "session state malformed"}
+        return {"state": "UNCERTAIN", "error": "session lease state malformed"}
     return row
 
 
 def _write_state(path: Path, *, binding: dict, event_id: str, request_sha256: str,
                  state: str, **details: object) -> dict:
-    row = {"schema": "aep-external-session-state-v1", "binding": binding,
-           "event_id": event_id, "request_sha256": request_sha256,
-           "state": state, "updated_at": time.time(), **details}
-    _atomic_json(path, row)
-    return row
+    # ``path`` is retained for source compatibility; it is deterministic from
+    # the binding and points beneath the lease root.
+    return session_lease.write_state(path.parent.parent, binding, event_id=event_id,
+                                     request_sha256=request_sha256, state=state,
+                                     **details)
 
 
 def _active_session_state(row: dict | None) -> bool:
-    return bool(row and row.get("state") in {"STARTING", "RUNNING", "UNCERTAIN"})
+    return session_lease.is_active(row)
 
 
 class _BoundedCapture:
@@ -384,7 +411,8 @@ def _reserve(root: Path, event_id: str, request: dict, digest: str) -> None:
 
 def execute(root: Path, *, event_id: str, workspace: Path, plan: dict,
             text: str = "", timeout: float = 120,
-            max_output_bytes: int = DEFAULT_MAX_OUTPUT_BYTES) -> dict:
+            max_output_bytes: int = DEFAULT_MAX_OUTPUT_BYTES,
+            session_lease_root: Path | None = None) -> dict:
     """Execute exactly one plan, returning only evidence the runner observed.
 
     Session busy/uncertain responses intentionally do not reserve a new event:
@@ -397,18 +425,27 @@ def execute(root: Path, *, event_id: str, workspace: Path, plan: dict,
     digest = _digest(request)
     binding = _session_binding(plan, workspace)
     root.mkdir(parents=True, exist_ok=True)
+    lease_root = _lease_root(root, session_lease_root)
+    # Existing v0/early-v1 external-runner records live beside receipts.  Keep
+    # them visible during the move to the coordination-wide lease directory.
+    legacy_lease_roots = (root,) if lease_root != root else ()
     lock = nullcontext()
     if binding:
-        lock = workspace_lock(root / "session_locks" / (_session_digest(binding) + ".lock"),
-                              timeout=min(SESSION_LOCK_SECONDS, float(timeout)))
+        # UIA and CLI execution now intentionally use the same durable lease
+        # namespace.  Do not replace this with an order-only lock: two routes
+        # can otherwise type into the same native chat concurrently.
+        lock = session_lease.acquire(lease_root, binding,
+                                     timeout=min(SESSION_LOCK_SECONDS, float(timeout)),
+                                     legacy_roots=legacy_lease_roots)
     try:
         with lock:
             existing = _existing(root, event_id, digest)
             if existing is not None:
                 return existing
             if binding:
-                state_path = _state_path(root, binding)
-                previous = _read_state(state_path)
+                state_path = _state_path(lease_root, binding)
+                previous = session_lease.read_state(lease_root, binding,
+                                                    legacy_roots=legacy_lease_roots)
                 if _active_session_state(previous):
                     return {"event_id": event_id, "state": "SESSION_UNCERTAIN",
                             "replay_allowed": False, "execution_started": False,
@@ -421,7 +458,7 @@ def execute(root: Path, *, event_id: str, workspace: Path, plan: dict,
                 return _existing(root, event_id, digest) or {"event_id": event_id,
                                                               "state": "UNKNOWN",
                                                               "replay_allowed": False}
-            state_path = _state_path(root, binding) if binding else None
+            state_path = _state_path(lease_root, binding) if binding else None
             if state_path:
                 _write_state(state_path, binding=binding, event_id=event_id,
                              request_sha256=digest, state="STARTING")
@@ -434,6 +471,11 @@ def execute(root: Path, *, event_id: str, workspace: Path, plan: dict,
             result = {"event_id": event_id, "workspace": request["workspace"],
                       "request_sha256": digest, "delivery_verified": False,
                       "replay_allowed": False, "execution_started": True}
+            if binding:
+                result["session_lease"] = {"binding": binding,
+                                           "lease_root": str(lease_root),
+                                           "state_file": str(state_path),
+                                           "transport_provider": plan.get("provider", "")}
             try:
                 if os.name == "nt":
                     execution = _run_windows_contained(root, event_id=event_id, workspace=workspace,
@@ -454,12 +496,31 @@ def execute(root: Path, *, event_id: str, workspace: Path, plan: dict,
                                  error="runner interrupted; inspect native session")
                 raise
             if state_path:
-                next_state = "UNCERTAIN" if result.get("state") == "UNKNOWN" else result["state"]
+                # A local process exit proves only that the local process
+                # exited.  Unless an adapter has produced a same-session,
+                # message-visible receipt, a second route must *not* type into
+                # the chat.  Keep the durable fence unresolved even when the
+                # process itself returned 0.
+                if result.get("state") == "UNKNOWN" or not result.get("delivery_verified"):
+                    next_state = "UNCERTAIN"
+                    lease_reason = "input-capable transport ended without verified original-session delivery"
+                else:
+                    next_state = result["state"]
+                    lease_reason = ""
                 _write_state(state_path, binding=binding, event_id=event_id,
                              request_sha256=digest, state=next_state,
-                             process_tree_stopped_verified=result.get("process_tree_stopped_verified", False))
+                              process_tree_stopped_verified=result.get("process_tree_stopped_verified", False),
+                              transport_provider=plan.get("provider", ""),
+                              session_provider=binding.get("provider", ""),
+                              reason=lease_reason)
             _atomic_json(root / (event_id + ".result.json"), result)
             return result
+    except session_lease.SessionLeaseBlocked as exc:
+        previous = exc.previous
+        return {"event_id": event_id, "state": "SESSION_UNCERTAIN",
+                "replay_allowed": False, "execution_started": False,
+                "previous_event_id": previous.get("event_id", ""),
+                "next": "reconcile the original session before any new input"}
     except LockTimeout:
         return {"event_id": event_id, "state": "SESSION_BUSY", "replay_allowed": False,
                 "execution_started": False,
@@ -467,32 +528,23 @@ def execute(root: Path, *, event_id: str, workspace: Path, plan: dict,
 
 
 def reconcile_session(root: Path, *, workspace: Path, provider: str, target_agent: str,
-                      session_id: str, evidence: str) -> dict:
+                      session_id: str, evidence: str, workspace_id: str = "",
+                      session_lease_root: Path | None = None) -> dict:
     """Explicitly clear an uncertain session fence after inspecting real evidence.
 
     This never retries or sends a message. It merely records the human or
     adapter evidence that makes a future *new* event eligible to acquire the
     session lock.
     """
-    if not isinstance(evidence, str) or not evidence.strip():
-        raise ValueError("reconciliation requires concrete evidence")
-    binding = _session_binding({"input_capable": True, "provider": provider,
-                                "target_agent": target_agent, "session_id": session_id},
-                               Path(workspace))
-    root = Path(root)
-    path = _state_path(root, binding)
-    lock = workspace_lock(root / "session_locks" / (_session_digest(binding) + ".lock"),
-                          timeout=SESSION_LOCK_SECONDS)
     try:
-        with lock:
-            previous = _read_state(path)
-            if not previous:
-                return {"state": "NO_SESSION_STATE", "reconciled": False}
-            _write_state(path, binding=binding, event_id=str(previous.get("event_id", "")),
-                         request_sha256=str(previous.get("request_sha256", "")), state="RECONCILED",
-                         evidence=evidence.strip())
-            return {"state": "RECONCILED", "reconciled": True,
-                    "previous_state": previous.get("state", "")}
+        receipt_root = Path(root)
+        lease_root = _lease_root(receipt_root, session_lease_root)
+        legacy_lease_roots = (receipt_root,) if lease_root != receipt_root else ()
+        return session_lease.reconcile(lease_root, workspace_id=workspace_id or str(Path(workspace).resolve()),
+                                       provider=provider, target_agent=target_agent,
+                                       session_id=session_id, evidence=evidence,
+                                       timeout=SESSION_LOCK_SECONDS,
+                                       legacy_roots=legacy_lease_roots)
     except LockTimeout:
         return {"state": "SESSION_BUSY", "reconciled": False}
 
@@ -502,6 +554,14 @@ def main() -> int:
     parser.add_argument("action", choices=["desktop-read", "t3-send", "worker-resume", "reconcile-session"])
     parser.add_argument("--root", required=True, type=Path)
     parser.add_argument("--workspace", required=True, type=Path)
+    parser.add_argument("--workspace-id",
+                        help="stable logical workspace identity shared with UIA/desktop routes")
+    parser.add_argument("--session-provider",
+                        help="verified canonical provider for the original session; may differ from transport")
+    parser.add_argument("--session-binding-evidence",
+                        help="evidence for --session-provider when it differs from transport")
+    parser.add_argument("--session-lease-root", type=Path,
+                        help="shared coordination/session_leases path used by every route to this chat")
     parser.add_argument("--event-id")
     parser.add_argument("--session-id")
     parser.add_argument("--agent-type")
@@ -519,7 +579,9 @@ def main() -> int:
             parser.error("reconcile-session needs --provider --target-agent --session-id --evidence")
         result = reconcile_session(args.root, workspace=args.workspace, provider=args.provider,
                                    target_agent=args.target_agent, session_id=args.session_id,
-                                   evidence=args.evidence)
+                                   evidence=args.evidence,
+                                   workspace_id=args.workspace_id or "",
+                                   session_lease_root=args.session_lease_root)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if result["state"] in {"RECONCILED", "NO_SESSION_STATE"} else 1
     if not args.event_id:
@@ -533,16 +595,33 @@ def main() -> int:
     elif args.action == "t3-send":
         if not args.target_agent:
             parser.error("t3-send needs --target-agent to bind the original session")
-        plan = message_plan("t3code", args.session_id, text, target_agent=args.target_agent)
+        plan = message_plan("t3code", args.session_id, text, target_agent=args.target_agent,
+                            workspace_id=args.workspace_id or "",
+                            session_provider=args.session_provider or "",
+                            session_binding_evidence=args.session_binding_evidence or "")
     else:
-        plan = local_worker_plan(args.agent_type, args.workspace, args.session_id)
+        plan = local_worker_plan(args.agent_type, args.workspace, args.session_id,
+                                 workspace_id=args.workspace_id or "",
+                                 session_provider=args.session_provider or "",
+                                 session_binding_evidence=args.session_binding_evidence or "")
         if not text.strip():
             parser.error("--text-file must contain a task")
+    if args.apply and plan.get("input_capable") and not args.session_lease_root:
+        parser.error("input-capable --apply requires --session-lease-root shared with the UIA/commander route")
     result = execute(args.root, event_id=args.event_id, workspace=args.workspace,
                      plan=plan, text=text, timeout=args.timeout,
-                     max_output_bytes=args.max_output_bytes) if args.apply else plan
+                      max_output_bytes=args.max_output_bytes,
+                      session_lease_root=args.session_lease_root) if args.apply else plan
     print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0 if not args.apply or result["state"] == "PROCESS_EXITED" else 1
+    if not args.apply:
+        return 0
+    # A shell exit code is frequently used as an orchestration signal.  Do not
+    # make an input-capable local process exiting 0 look like a verified chat
+    # delivery when its durable lease correctly remains UNCERTAIN.
+    if result["state"] == "PROCESS_EXITED" and (not plan.get("input_capable")
+                                                  or result.get("delivery_verified") is True):
+        return 0
+    return 1
 
 
 if __name__ == "__main__":

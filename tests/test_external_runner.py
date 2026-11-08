@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import pytest
 
-from agent_evolution_protocol.coordination.external_runner import execute, reconcile_session
+from agent_evolution_protocol.coordination.external_runner import execute, reconcile_session, main
 
 
 CTX = multiprocessing.get_context("spawn")
@@ -159,6 +159,25 @@ def test_input_plan_requires_bound_original_session_before_reservation(tmp_path)
         execute(tmp_path / "receipts", event_id="input", workspace=tmp_path,
                 plan={**_python_plan("print('x')"), "input_capable": True})
     assert not (tmp_path / "receipts").exists()
+
+
+def test_cli_input_apply_requires_explicit_shared_session_lease_root(tmp_path, monkeypatch):
+    """The CLI must not silently fence under external_runs instead of UIA root."""
+    text = tmp_path / "task.txt"
+    text.write_text("resume the verified original session", encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", [
+        "external_runner", "t3-send", "--root", str(tmp_path / "external_runs"),
+        "--workspace", str(tmp_path), "--event-id", "EVT-CLI-LEASE-ROOT",
+        "--target-agent", "qoder", "--session-id", "Original task chat",
+        "--text-file", str(text), "--apply",
+    ])
+    with patch("agent_evolution_protocol.coordination.external_runner.message_plan",
+               return_value={"argv": [sys.executable, "-c", "print('x')"],
+                             "input_capable": True, "provider": "t3code",
+                             "target_agent": "qoder", "session_id": "Original task chat"}):
+        with pytest.raises(SystemExit) as error:
+            main()
+    assert error.value.code == 2
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows Job Object containment")

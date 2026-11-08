@@ -7,7 +7,7 @@
 - 命令总数：**91**
 - 风险分布：read-only 21、mutating 55、irreversible 15
 - 用途已记录：**27** / 91（未记录 64，只允许减少）
-- 清单摘要：`sha256:f1e52ddccf2d3dc5f5ed09cef486dff0390ed75d5fa398000d5ed1141374f87a`
+- 清单摘要：`sha256:7eb3f9c26a973e6feb7dd6dc5edcb9f144c9898b0654d3ccd9480c9876e5fe33`
 
 风险分级是**声明**而不是推导：未登记的命令一律按 `mutating` 处理。
 把会写的命令标成 `read-only` 是这里唯一有代价的错误，所以默认值朝安全方向倒。

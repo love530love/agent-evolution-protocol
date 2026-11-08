@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-evolution-protocol"
-version = "0.6.26"
+version = "0.6.27"
 description = "Evidence-driven anti-collapse governance for multi-agent systems"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -45,3 +45,9 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "agent_evolution_protocol.coordination" = ["*.ps1", "*.html", "*.md", "wake_adapters/*.ps1"]
+
+[tool.pytest.ini_options]
+# Runtime acceptance creates miniature workspaces containing test_*.py files.
+# Limit normal discovery to the versioned suite so separate acceptance runs do
+# not collide through Python's module cache.
+testpaths = ["tests", "src/agent_evolution_protocol/coordination/test_realtime_collaboration.py"]

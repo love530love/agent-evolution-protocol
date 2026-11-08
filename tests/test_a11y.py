@@ -20,7 +20,7 @@ from pathlib import Path
 from unittest import mock
 
 from agent_evolution_protocol import cli
-from agent_evolution_protocol.coordination import a11y, ui_fallback
+from agent_evolution_protocol.coordination import a11y, session_lease, ui_fallback
 
 
 class PlatformTests(unittest.TestCase):
@@ -211,6 +211,15 @@ class OperatorCommandTests(unittest.TestCase):
         report = {"status": "transcript-captured", "pid": os.getpid()}
         completed = mock.Mock(returncode=0, stdout=json.dumps(report), stderr="")
         with tempfile.TemporaryDirectory() as folder:
+            # A write-capable direct UIA invocation now requires the same
+            # stable original-session marker as the profiled commander.  Do
+            # not make this UTF-8 transport test silently exercise a broad
+            # process-name fallback.
+            profile_dir = Path(folder) / "ui_profiles"
+            profile_dir.mkdir()
+            (profile_dir / "chatgpt.json").write_text(
+                json.dumps({"session_marker": "Original test conversation"}),
+                encoding="utf-8")
             args = cli.build_parser().parse_args(
                 ["--coord-root", folder, "coord-uia", "deliver", "--agent", "chatgpt",
                  "--event-id", "AEP-TEST-1", "--text", "验证 AEP-TEST-1"])
@@ -222,6 +231,56 @@ class OperatorCommandTests(unittest.TestCase):
                 kwargs = runner.run.call_args.kwargs
         self.assertEqual(kwargs.get("env", {}).get("AEP_SCROLL_COMPOSER"), None)
         self.assertIn("timeout", kwargs)
+
+    def test_direct_write_refuses_an_unsettled_original_session_lease(self):
+        """The raw operator CLI must not bypass the profiled commander fence."""
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            profile_dir = root / "ui_profiles"
+            profile_dir.mkdir()
+            marker = "Original test conversation"
+            (profile_dir / "chatgpt.json").write_text(
+                json.dumps({"session_marker": marker}), encoding="utf-8")
+            binding = session_lease.binding(workspace_id=str(root.resolve()), provider="uia",
+                                            target_agent="chatgpt", session_id=marker)
+            session_lease.write_state(root, binding, event_id="AEP-OLDER-1",
+                                      request_sha256="x", state="UNCERTAIN")
+            args = cli.build_parser().parse_args(
+                ["--coord-root", folder, "coord-uia", "deliver", "--agent", "chatgpt",
+                 "--event-id", "AEP-NEW-1", "--text", "验证 AEP-NEW-1"])
+            output = io.StringIO()
+            with mock.patch.object(cli, "uia_argv") as runner, \
+                    contextlib.redirect_stdout(output):
+                cli.coord_uia(args)
+            runner.run.assert_not_called()
+            self.assertEqual(json.loads(output.getvalue())["report"]["status"],
+                             "SESSION_UNCERTAIN")
+
+    def test_direct_write_releases_proven_preinput_failure(self):
+        """A raw NO_WINDOW receipt must not leave a fake uncertain-send fence."""
+        report = {"status": "NO_WINDOW", "task_delivered": False}
+        completed = mock.Mock(returncode=1, stdout=json.dumps(report), stderr="")
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            profile_dir = root / "ui_profiles"
+            profile_dir.mkdir()
+            marker = "Original test conversation"
+            (profile_dir / "chatgpt.json").write_text(
+                json.dumps({"session_marker": marker}), encoding="utf-8")
+            args = cli.build_parser().parse_args(
+                ["--coord-root", folder, "coord-uia", "deliver", "--agent", "chatgpt",
+                 "--event-id", "AEP-NO-WINDOW-1", "--text", "验证 AEP-NO-WINDOW-1"])
+            with mock.patch.object(cli, "uia_argv") as runner, \
+                    mock.patch.object(cli, "_pwsh", return_value="pwsh"), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                runner.run.return_value = completed
+                cli.coord_uia(args)
+            binding = session_lease.binding(workspace_id=str(root.resolve()), provider="uia",
+                                            target_agent="chatgpt", session_id=marker)
+            state = session_lease.read_state(session_lease.canonical_root(root), binding,
+                                             legacy_roots=(root,))
+            self.assertEqual(state["state"], "PROVEN_NOT_SENT")
+            self.assertFalse(session_lease.is_active(state))
 
     def test_an_undecodable_receipt_does_not_crash_the_command(self):
         # The reader thread can still lose a race and hand back None; the

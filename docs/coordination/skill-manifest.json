@@ -3943,6 +3943,42 @@
           "required": false
         },
         {
+          "dest": "workspace_id",
+          "flags": [
+            "--workspace-id"
+          ],
+          "help": "stable logical workspace identity for the original-session write lease",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "session_provider",
+          "flags": [
+            "--session-provider"
+          ],
+          "help": "verified canonical provider for the original chat when it differs from UIA",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "session_binding_evidence",
+          "flags": [
+            "--session-binding-evidence"
+          ],
+          "help": "evidence for --session-provider when it differs from UIA",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "session_lease_root",
+          "flags": [
+            "--session-lease-root"
+          ],
+          "help": "shared coordination/session_leases path used by every route to this chat",
+          "kind": "option",
+          "required": false
+        },
+        {
           "default": false,
           "dest": "allow_unknown_path",
           "flags": [
@@ -5435,7 +5471,7 @@
     }
   ],
   "count": 91,
-  "digest": "sha256:f1e52ddccf2d3dc5f5ed09cef486dff0390ed75d5fa398000d5ed1141374f87a",
+  "digest": "sha256:7eb3f9c26a973e6feb7dd6dc5edcb9f144c9898b0654d3ccd9480c9876e5fe33",
   "documented": 27,
   "generated_from": "agent_evolution_protocol.cli:build_parser",
   "global_arguments": [

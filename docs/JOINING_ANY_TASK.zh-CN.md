@@ -1,5 +1,10 @@
 # 新 Agent 如何接入协作机制与任意任务
 
+> **排障**：若某个 Agent 声称「无法加入协作区」「无项目成员资格」「需要讨论区 ID」，
+> 先读 `docs/AGENT_JOIN_TROUBLESHOOTING.zh-CN.md`。那通常是把宿主客户端的 SaaS 协作
+> 功能与本项目本地文件协作区混为一谈，或 `presence` 在线证据 TTL 过期，
+> 而不是真的缺少权限。
+
 `aep join` 是新 agent 的统一入口。它不会调用模型，也不会创建会话；它只生成接入包，告诉 agent 当前该读什么、能不能接续旧会话、是否能 claim 任务，以及哪些动作被禁止。
 
 如果希望更自然，先在共享工作区运行 `aep workspace-init --agents-md`。以后新 agent 只需要听懂一句话：“请加入这个工作区协作。” 详见 [自然语言接入](NATURAL_LANGUAGE_JOIN.zh-CN.md)。

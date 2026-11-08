@@ -66,7 +66,9 @@ def probe(provider: str, *, timeout: float = 15) -> dict:
     return result
 
 
-def message_plan(provider: str, session_id: str, text: str, *, target_agent: str = '') -> dict:
+def message_plan(provider: str, session_id: str, text: str, *, target_agent: str = '',
+                 workspace_id: str = '', session_provider: str = '',
+                 session_binding_evidence: str = '') -> dict:
     """Build an existing-session input plan with a complete session identity."""
     if (not isinstance(session_id, str) or not session_id or session_id.startswith('-')
             or not isinstance(text, str) or not text.strip()
@@ -85,12 +87,21 @@ def message_plan(provider: str, session_id: str, text: str, *, target_agent: str
         raise ValueError('LobeHub server integration disabled: local-only project policy')
     else:
         raise ValueError('desktop messages require a bound UI workflow')
-    return {'provider': provider, 'target_agent': target_agent, 'session_id': session_id,
-            'argv': [*prefix, *args], 'stdin': stdin,
-            'input_capable': True, 'execution_started': False, 'delivery_verified': False}
+    result = {'provider': provider, 'target_agent': target_agent, 'session_id': session_id,
+              'argv': [*prefix, *args], 'stdin': stdin,
+              'input_capable': True, 'execution_started': False, 'delivery_verified': False}
+    if workspace_id:
+        result['workspace_id'] = workspace_id
+    if session_provider:
+        result['session_provider'] = session_provider
+    if session_binding_evidence:
+        result['session_binding_evidence'] = session_binding_evidence
+    return result
 
 
-def local_worker_plan(agent_type: str, workspace: Path, session_id: str) -> dict:
+def local_worker_plan(agent_type: str, workspace: Path, session_id: str, *,
+                      workspace_id: str = '', session_provider: str = '',
+                      session_binding_evidence: str = '') -> dict:
     """Resume an explicitly bound native CLI session through LobeHub, offline."""
     if agent_type not in {'codex', 'qoder', 'codebuddy', 'claude-code', 'copilot'}:
         raise ValueError('unsupported worker type')
@@ -99,11 +110,18 @@ def local_worker_plan(agent_type: str, workspace: Path, session_id: str) -> dict
     prefix = resolve('lobehub')
     if not prefix:
         raise ValueError('LobeHub CLI not installed')
-    return {'provider': 'lobehub', 'target_agent': agent_type, 'session_id': session_id,
-            'argv': [*prefix, 'hetero', 'exec', '--type', agent_type,
-                     '--cwd', str(workspace.resolve()), '--resume', session_id,
-                     '--prompt', '-'], 'stdin_required': True,
-            'input_capable': True, 'server_ingest': False, 'execution_started': False}
+    result = {'provider': 'lobehub', 'target_agent': agent_type, 'session_id': session_id,
+              'argv': [*prefix, 'hetero', 'exec', '--type', agent_type,
+                       '--cwd', str(workspace.resolve()), '--resume', session_id,
+                       '--prompt', '-'], 'stdin_required': True,
+              'input_capable': True, 'server_ingest': False, 'execution_started': False}
+    if workspace_id:
+        result['workspace_id'] = workspace_id
+    if session_provider:
+        result['session_provider'] = session_provider
+    if session_binding_evidence:
+        result['session_binding_evidence'] = session_binding_evidence
+    return result
 
 
 def main() -> int:

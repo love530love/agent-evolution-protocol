@@ -1,6 +1,33 @@
 # Changelog
 
-## Unreleased — bounded external execution and original-session fencing
+## 0.6.27 — 会话租约与执行边界 + Agent 接入排障基线
+
+- Add `docs/AGENT_JOIN_TROUBLESHOOTING.zh-CN.md` as the diagnostic baseline
+  for Agents that claim they cannot join the coordination area. It separates
+  the FOUR independent online layers (directory trace / fresh presence
+  evidence / OS process / operable window), contrasts the host SaaS
+  collaboration system with AEP's local file-based area (no project
+  membership, no discussion-room id, `no_memberships` has zero matches
+  repo-wide), and names the five recurring pitfalls: host-side permission
+  errors, the expired 30-minute presence lease, cursor-ordered
+  `coord-chat-read --limit N`, default `room=workspace` instead of
+  `agent-legion`, and `DEPOSITED_UNCONFIRMED` not being an ACK. Includes a
+  forwardable reply template, a read-only-first procedure, and the
+  2026-11-08 qoder_cn case: no membership change was made; the Agent
+  self-reported presence at 17:24:42 and `fresh_online` moved from `[]` to
+  `['qoder_cn']`, which falsifies "no membership so I cannot join".
+- Add `tests/test_join_troubleshooting.py` (9 tests / 47 subtests) guarding
+  the four layers, the two-system comparison, the five pitfalls,
+  self-report-only repair, reproducible commands, the real case without
+  claiming the relay loop finished, and no membership claim.
+  `docs/JOINING_ANY_TASK.zh-CN.md` now points at the new document.
+- Verification: full suite `1561 passed, 3 skipped, 902 subtests passed
+  in 196.53s` (`PYTEST_EXIT=0`, `CODEBUDDY_SAFE_DELETE_ENABLED=0`, one clean
+  run with the version pinned BEFORE starting pytest). Targeted
+  `tests/test_join_troubleshooting.py`: `9 passed, 47 subtests`; targeted
+  check of the integrated Unreleased work
+  (`test_session_lease.py test_external_runner.py test_a11y.py`):
+  `68 passed, 2 skipped`.
 
 - Turn `coordination.external_runner` from a direct `subprocess.run` wrapper
   into a bounded execution boundary: validate input before reserving the event,
@@ -14,6 +41,21 @@
   plans. A cross-process per-session lock serializes the original conversation;
   timeout/interruption leaves `SESSION_UNCERTAIN` until an evidence-bearing
   reconciliation, rather than silently allowing a second send.
+- Introduce `coordination.session_lease` as the shared durable session fence
+  for the external runner, the commander’s profiled UIA relay, and direct
+  `coord-uia deliver|compose`. State and locks now live under one canonical
+  `<coord-root>/session_leases` root even when external artifacts live under
+  `external_runs`; legacy unresolved sidecars remain blocking across the
+  migration until an evidence-bearing reconciliation. Its canonical identity
+  is a stable logical workspace/session-provider/target/session marker (never
+  a transient PID); transport provider is separate, and a cross-transport
+  alias requires retained mapping evidence. Raw UIA writes without a bound
+  marker refuse rather than falling back to a process-name guess.
+- Treat an input-capable external `PROCESS_EXITED` as process evidence only:
+  without same-session message-visible proof its lease remains `UNCERTAIN`, so
+  a later UIA/CLI route cannot silently double-send. Direct UIA additionally
+  releases only adapter-proven pre-input outcomes; unparseable receipts become
+  durable uncertain fences rather than a route-local warning.
 - Add actual Windows containment, cross-process session-lock, bounded-output,
   invalid-pre-reservation and UTF-8 receipt coverage. Document both the
   successful read-only `agent-desktop list-apps` run and remaining production

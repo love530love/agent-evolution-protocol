@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from hashlib import sha256
 import json
 import os
 from pathlib import Path
@@ -17,6 +18,7 @@ from agent_evolution_protocol.coordination import a11y
 from agent_evolution_protocol.coordination import input_routing
 from agent_evolution_protocol.coordination import uia_argv
 from agent_evolution_protocol.coordination import vision_grounding
+from agent_evolution_protocol.coordination import session_lease
 import re
 import secrets
 import shutil
@@ -119,6 +121,24 @@ def load_profile(path: Path) -> dict:
     if ocr_language and not re.fullmatch(r"[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8}){0,3}", ocr_language):
         raise ValueError("ocr_language must be a BCP-47 language tag")
     profile["ocr_language"] = ocr_language
+    workspace_id = profile.get("workspace_id", "")
+    if workspace_id is None:
+        workspace_id = ""
+    if not isinstance(workspace_id, str) or "\0" in workspace_id:
+        raise ValueError("workspace_id must be a string when provided")
+    profile["workspace_id"] = workspace_id.strip()
+    session_provider = profile.get("session_provider", "")
+    if session_provider is None:
+        session_provider = ""
+    if not isinstance(session_provider, str) or "\0" in session_provider:
+        raise ValueError("session_provider must be a string when provided")
+    profile["session_provider"] = session_provider.strip()
+    session_binding_evidence = profile.get("session_binding_evidence", "")
+    if session_binding_evidence is None:
+        session_binding_evidence = ""
+    if not isinstance(session_binding_evidence, str) or "\0" in session_binding_evidence:
+        raise ValueError("session_binding_evidence must be a string when provided")
+    profile["session_binding_evidence"] = session_binding_evidence.strip()
     return profile
 
 
@@ -573,11 +593,215 @@ def _composer_ratios(region: dict | None,
     return round(ratio_x, 4), round(ratio_y, 4)
 
 
+def _lease_request_sha256(profile: dict, message: str, event_id: str) -> str:
+    """Bind an active UIA lease to exactly the text it is allowed to send."""
+    value = {
+        "agent": profile.get("agent", ""),
+        "session_marker": profile.get("session_marker", ""),
+        "event_id": event_id,
+        "message": message,
+    }
+    encoded = json.dumps(value, ensure_ascii=False, sort_keys=True,
+                         separators=(",", ":")).encode("utf-8")
+    return sha256(encoded).hexdigest()
+
+
+def session_binding_provider(profile: dict, *, transport_provider: str = "uia",
+                             explicit_provider: str = "",
+                             explicit_evidence: str = "") -> tuple[str, str]:
+    """Resolve a verified canonical session identity separate from transport.
+
+    ``uia`` and a native CLI are transport names, not necessarily chat
+    identities.  They may share a fence only after a profile/plan records the
+    evidence that they address the same original conversation.
+    """
+    transport_provider = str(transport_provider).strip()
+    provider = str(explicit_provider or profile.get("session_provider") or transport_provider).strip()
+    evidence = str(explicit_evidence or profile.get("session_binding_evidence") or "").strip()
+    if not provider or "\0" in provider:
+        raise ValueError("session_provider must be a nonempty string")
+    if provider != transport_provider and not evidence:
+        raise ValueError("session_provider alias requires session_binding_evidence")
+    return provider, evidence
+
+
 def run(profile: dict, message: str, *, event_id: str, receipt_path: Path,
         lock_path: Path, driver: Driver, allow_launch: bool = False,
         poll_seconds: float = 1.5, urgent: bool = False,
         grounder=None, reference_region: dict | None = None,
-        min_confidence: float = vision_grounding.DEFAULT_MIN_CONFIDENCE) -> dict:
+        min_confidence: float = vision_grounding.DEFAULT_MIN_CONFIDENCE,
+        session_root: Path | None = None, workspace_id: str | Path = "",
+        provider: str = "uia", session_provider: str = "",
+        session_binding_evidence: str = "", session_lock_seconds: float = 5.0) -> dict:
+    """Run a profiled desktop relay under a stable original-session lease.
+
+    ``desktop-input.lock`` remains necessary because two different windows can
+    fight over foreground focus.  It is not sufficient for a single original
+    conversation, however: a CLI adapter or a second scheduler can reach that
+    same conversation by a different route.  The lease therefore wraps the
+    full preflight/send/readback sequence and is keyed by the verified session
+    marker rather than the process PID.
+    """
+    if not EVENT.fullmatch(event_id) or not isinstance(message, str) or not message.strip():
+        raise ValueError("event_id and message required")
+    receipt_path = Path(receipt_path)
+    if session_root is None:
+        # A receipt directory is an artifact location, not proof that it is a
+        # shared coordination namespace.  The desktop lock is the one required
+        # coordination resource on every UIA call, so its parent is the only
+        # defensible backward-compatible inference.  It avoids the old bug
+        # where two receipt folders silently created two session namespaces.
+        coordination_root = Path(lock_path).parent
+    else:
+        coordination_root = Path(session_root)
+    lease_root = session_lease.canonical_root(coordination_root)
+    legacy_roots = (coordination_root,) if lease_root != coordination_root else ()
+    try:
+        binding_provider, binding_evidence = session_binding_provider(
+            profile, transport_provider=provider, explicit_provider=session_provider,
+            explicit_evidence=session_binding_evidence)
+    except ValueError as exc:
+        state = {"agent": profile.get("agent", ""), "event_id": event_id,
+                 "state": "SESSION_BINDING_REQUIRED", "task_delivered": False,
+                 "agent_accepted": False, "error": str(exc)}
+        _atomic(receipt_path, state)
+        return state
+    logical_workspace = workspace_id or profile.get("workspace_id") or str(coordination_root.resolve())
+    try:
+        binding = session_lease.binding(workspace_id=logical_workspace, provider=binding_provider,
+                                        target_agent=str(profile.get("agent", "")),
+                                        session_id=str(profile.get("session_marker", "")))
+    except ValueError as exc:
+        # No UI was touched.  Keep the refusal explicit instead of falling back
+        # to a PID or a broad process-name match.
+        state = {"agent": profile.get("agent", ""), "event_id": event_id,
+                 "state": "SESSION_BINDING_REQUIRED", "task_delivered": False,
+                 "agent_accepted": False, "error": str(exc)}
+        _atomic(receipt_path, state)
+        return state
+    request_sha256 = _lease_request_sha256(profile, message, event_id)
+    receipt_error = ""
+    existing = None
+    terminal_receipt: dict | None = None
+    if receipt_path.exists():
+        try:
+            existing = json.loads(receipt_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            receipt_error = "receipt unreadable; inspect original session before retry"
+        if not receipt_error and not isinstance(existing, dict):
+            receipt_error = "receipt was not a structured object; inspect original session before retry"
+        if not receipt_error and not _preinput_receipt_retryable(existing):
+            terminal_receipt = existing
+    if terminal_receipt is not None:
+        # Idempotent replay of the *same* prior uncertain event must return its
+        # original receipt, not rewrite or resend it.  We still take the lease
+        # to distinguish that case from a different event which owns the chat.
+        try:
+            with session_lease.acquire(lease_root, binding, timeout=session_lock_seconds,
+                                       allow_active=True, legacy_roots=legacy_roots) as lease:
+                previous = session_lease.read_state(lease_root, binding,
+                                                    legacy_roots=legacy_roots)
+                if session_lease.is_active(previous):
+                    if previous.get("event_id") == event_id:
+                        return terminal_receipt
+                    return {"agent": profile.get("agent", ""), "event_id": event_id,
+                            "state": "SESSION_UNCERTAIN", "task_delivered": False,
+                            "agent_accepted": False,
+                            "previous_event_id": previous.get("event_id", ""),
+                            "reason": "another route left this original session unresolved"}
+                # Older receipts predate the shared lease.  Preserve their
+                # result verbatim for the caller, but mirror the only safe
+                # state before allowing any later event on this session.
+                if terminal_receipt.get("task_delivered") is True:
+                    lease.write(event_id=event_id, request_sha256=request_sha256,
+                                state="SETTLED", delivery_state="LEGACY_MESSAGE_VISIBLE",
+                                receipt_file=str(receipt_path),
+                                transport_provider=provider,
+                                session_binding_evidence=binding_evidence)
+                else:
+                    lease.write(event_id=event_id, request_sha256=request_sha256,
+                                state="UNCERTAIN", reason="legacy terminal receipt lacks delivery proof",
+                                receipt_file=str(receipt_path),
+                                transport_provider=provider,
+                                session_binding_evidence=binding_evidence)
+                return terminal_receipt
+        except Exception as exc:
+            from agent_evolution_protocol.federation.locking import LockTimeout
+            if isinstance(exc, LockTimeout):
+                return {"agent": profile.get("agent", ""), "event_id": event_id,
+                        "state": "SESSION_BUSY", "task_delivered": False,
+                        "agent_accepted": False,
+                        "reason": "original session lease is currently held"}
+            raise
+    try:
+        with session_lease.acquire(lease_root, binding, timeout=session_lock_seconds,
+                                   legacy_roots=legacy_roots) as lease:
+            if receipt_error:
+                # Preserve the corrupt receipt for forensic inspection, but
+                # make its uncertainty visible to every other compliant route.
+                lease.write(event_id=event_id, request_sha256=request_sha256,
+                            state="UNCERTAIN", reason=receipt_error,
+                            receipt_file=str(receipt_path),
+                            transport_provider=provider,
+                            session_binding_evidence=binding_evidence)
+                return {"agent": profile.get("agent", ""), "event_id": event_id,
+                        "state": "SEND_UNCERTAIN", "task_delivered": False,
+                        "agent_accepted": False, "error": receipt_error,
+                        "session_lease": {"binding": binding,
+                                          "lease_root": str(lease_root),
+                                          "state_file": str(lease.state_file)}}
+            try:
+                return _run_impl(
+                    profile, message, event_id=event_id, receipt_path=receipt_path,
+                    lock_path=lock_path, driver=driver, allow_launch=allow_launch,
+                    poll_seconds=poll_seconds, urgent=urgent, grounder=grounder,
+                    reference_region=reference_region, min_confidence=min_confidence,
+                    lease=lease, lease_request_sha256=request_sha256,
+                    lease_root=lease_root, transport_provider=provider,
+                    session_binding_evidence=binding_evidence,
+                )
+            except BaseException:
+                # If the relay had already crossed into an active write/readback
+                # phase, a crash cannot be treated as a clean pre-input retry.
+                if lease.last_state in session_lease.ACTIVE_STATES:
+                    lease.write(event_id=event_id, request_sha256=request_sha256,
+                                state="UNCERTAIN",
+                                error="desktop relay interrupted; inspect original session",
+                                transport_provider=provider,
+                                session_binding_evidence=binding_evidence)
+                raise
+    except session_lease.SessionLeaseBlocked as exc:
+        previous = exc.previous
+        state = {"agent": profile.get("agent", ""), "event_id": event_id,
+                 "state": "SESSION_UNCERTAIN", "task_delivered": False,
+                 "agent_accepted": False,
+                 "previous_event_id": previous.get("event_id", ""),
+                 "reason": "another route left this original session unresolved"}
+        _atomic(receipt_path, state)
+        return state
+    except Exception as exc:
+        # Lock contention is proven pre-input.  The same event remains
+        # retryable after the current owner settles, so do not manufacture an
+        # uncertain-send receipt here.
+        from agent_evolution_protocol.federation.locking import LockTimeout
+        if isinstance(exc, LockTimeout):
+            state = {"agent": profile.get("agent", ""), "event_id": event_id,
+                     "state": "SESSION_BUSY", "task_delivered": False,
+                     "agent_accepted": False,
+                     "reason": "original session lease is currently held"}
+            _atomic(receipt_path, state)
+            return state
+        raise
+
+
+def _run_impl(profile: dict, message: str, *, event_id: str, receipt_path: Path,
+        lock_path: Path, driver: Driver, allow_launch: bool = False,
+        poll_seconds: float = 1.5, urgent: bool = False,
+        grounder=None, reference_region: dict | None = None,
+        min_confidence: float = vision_grounding.DEFAULT_MIN_CONFIDENCE,
+        lease: session_lease.SessionLease | None = None,
+        lease_request_sha256: str = "", lease_root: Path | None = None,
+        transport_provider: str = "uia", session_binding_evidence: str = "") -> dict:
     if not EVENT.fullmatch(event_id) or not message.strip():
         raise ValueError("event_id and message required")
     if poll_seconds < 0.1:
@@ -599,6 +823,12 @@ def run(profile: dict, message: str, *, event_id: str, receipt_path: Path,
                 return existing
         state = {"agent": profile["agent"], "event_id": event_id, "state": "PREFLIGHT",
                  "at": _utc(), "task_delivered": False, "agent_accepted": False}
+        if lease is not None:
+            state["session_lease"] = {"binding": lease.binding,
+                                      "lease_root": str(lease_root or lease.root),
+                                      "state_file": str(lease.state_file),
+                                      "transport_provider": transport_provider,
+                                      "session_binding_evidence": session_binding_evidence}
         observation = driver.observe(profile)
         if observation.get("status") == "NO_WINDOW":
             if not allow_launch:
@@ -765,9 +995,6 @@ def run(profile: dict, message: str, *, event_id: str, receipt_path: Path,
         if urgent:
             outgoing = ("【紧急插话｜保持当前任务继续运行】\n" + outgoing +
                         "\n这是非中断插话；不要点击停止、取消或中止。")
-        state.update(state="SEND_ATTEMPTED", session_marker=profile["session_marker"],
-                     model_marker=profile["model_marker"], challenge=nonce,
-                     expected_ack=expected_ack, outgoing_chars=len(outgoing))
         # A located region is only usable where the transport can act on one.
         # The OCR compose path accepts a bounded, profiled geometry fallback and
         # still verifies the paste before clicking send; the uia path has no
@@ -784,6 +1011,17 @@ def run(profile: dict, message: str, *, event_id: str, receipt_path: Path,
                 return state
             state["composer_ratios"] = list(composer_ratios)
             state["located_by"] = route["locate_source"]
+        state.update(state="SEND_ATTEMPTED", session_marker=profile["session_marker"],
+                     model_marker=profile["model_marker"], challenge=nonce,
+                     expected_ack=expected_ack, outgoing_chars=len(outgoing))
+        if lease is not None:
+            # This is the irreversible boundary.  If this process now dies,
+            # later routes must inspect the native chat rather than retype a
+            # superficially identical task.
+            lease.write(event_id=event_id, request_sha256=lease_request_sha256,
+                        state="SENDING", receipt_file=str(receipt_path),
+                        transport_provider=transport_provider,
+                        session_binding_evidence=session_binding_evidence)
         # Persist before touching the UI: after a crash, a retry may not send again.
         _atomic(receipt_path, state)
         try:
@@ -791,6 +1029,11 @@ def run(profile: dict, message: str, *, event_id: str, receipt_path: Path,
                             composer_ratios=composer_ratios)
         except Exception as exc:  # noqa: BLE001
             state.update(state="SEND_UNCERTAIN", error=str(exc)[:800])
+            if lease is not None:
+                lease.write(event_id=event_id, request_sha256=lease_request_sha256,
+                            state="UNCERTAIN", reason="desktop adapter raised during send",
+                            transport_provider=transport_provider,
+                            session_binding_evidence=session_binding_evidence)
             _atomic(receipt_path, state)
             return state
         state["send_report"] = sent
@@ -803,6 +1046,11 @@ def run(profile: dict, message: str, *, event_id: str, receipt_path: Path,
             state.update(state="COMPOSER_NOT_CONFIRMED",
                          reason="the message never appeared in the window; nothing was submitted",
                          send_report=sent)
+            if lease is not None:
+                lease.write(event_id=event_id, request_sha256=lease_request_sha256,
+                            state="PROVEN_NOT_SENT", receipt_file=str(receipt_path),
+                            transport_provider=transport_provider,
+                            session_binding_evidence=session_binding_evidence)
             _atomic(receipt_path, state)
             return state
         if sent.get("status") == "composer-region-unsupported":
@@ -812,6 +1060,11 @@ def run(profile: dict, message: str, *, event_id: str, receipt_path: Path,
             state.update(state="ROUTE_UNSUPPORTED_BY_DRIVER",
                          reason="the driver cannot type into a located region; nothing was sent",
                          located_by=route["locate_source"])
+            if lease is not None:
+                lease.write(event_id=event_id, request_sha256=lease_request_sha256,
+                            state="PROVEN_NOT_SENT", receipt_file=str(receipt_path),
+                            transport_provider=transport_provider,
+                            session_binding_evidence=session_binding_evidence)
             _atomic(receipt_path, state)
             return state
         accepted_statuses = {"message-visible", "submitted-unconfirmed"}
@@ -830,10 +1083,20 @@ def run(profile: dict, message: str, *, event_id: str, receipt_path: Path,
                 state.update(state="URGENT_INTERJECT_UNCERTAIN",
                              reason="send receipt did not prove a non-interrupting interject action",
                              send_report=sent)
+                if lease is not None:
+                    lease.write(event_id=event_id, request_sha256=lease_request_sha256,
+                                state="UNCERTAIN", reason="urgent interject receipt unresolved",
+                                transport_provider=transport_provider,
+                                session_binding_evidence=session_binding_evidence)
                 _atomic(receipt_path, state)
                 return state
         if sent.get("status") not in accepted_statuses:
             state.update(state="SEND_UNCERTAIN")
+            if lease is not None:
+                lease.write(event_id=event_id, request_sha256=lease_request_sha256,
+                            state="UNCERTAIN", reason="adapter returned an unclassified send state",
+                            transport_provider=transport_provider,
+                            session_binding_evidence=session_binding_evidence)
             _atomic(receipt_path, state)
             return state
         # A visible message is delivered whether or not the reply arrives.
@@ -843,6 +1106,12 @@ def run(profile: dict, message: str, *, event_id: str, receipt_path: Path,
         # token sets agent_accepted.
         state["task_delivered"] = sent.get("task_delivered") is True
         state["state"] = "WAITING_REPLY"
+        if lease is not None:
+            lease.write(event_id=event_id, request_sha256=lease_request_sha256,
+                        state="WAITING_REPLY", task_delivered=state["task_delivered"],
+                        receipt_file=str(receipt_path),
+                        transport_provider=transport_provider,
+                        session_binding_evidence=session_binding_evidence)
         _atomic(receipt_path, state)
         deadline = time.monotonic() + profile["reply_timeout_seconds"]
         while time.monotonic() < deadline:
@@ -875,6 +1144,25 @@ def run(profile: dict, message: str, *, event_id: str, receipt_path: Path,
             # arrived in time -- and leaves the delivery claim to
             # task_delivered, which the send receipt already proved.
             state.update(state="NO_REPLY_WITHIN_TIMEOUT")
+        if lease is not None:
+            if state["state"] == "AGENT_REPLY_VERIFIED":
+                lease.write(event_id=event_id, request_sha256=lease_request_sha256,
+                            state="SETTLED", delivery_state="AGENT_ACK",
+                            receipt_file=str(receipt_path),
+                            transport_provider=transport_provider,
+                            session_binding_evidence=session_binding_evidence)
+            elif state["state"] == "NO_REPLY_WITHIN_TIMEOUT" and state.get("task_delivered") is True:
+                lease.write(event_id=event_id, request_sha256=lease_request_sha256,
+                            state="SETTLED", delivery_state="MESSAGE_VISIBLE_NO_ACK",
+                            receipt_file=str(receipt_path),
+                            transport_provider=transport_provider,
+                            session_binding_evidence=session_binding_evidence)
+            else:
+                lease.write(event_id=event_id, request_sha256=lease_request_sha256,
+                            state="UNCERTAIN", reason=state["state"],
+                            receipt_file=str(receipt_path),
+                            transport_provider=transport_provider,
+                            session_binding_evidence=session_binding_evidence)
         _atomic(receipt_path, state)
         return state
 
@@ -886,6 +1174,14 @@ def main() -> int:
     parser.add_argument("--event-id", required=True)
     parser.add_argument("--receipt", type=Path, required=True)
     parser.add_argument("--lock", type=Path, default=Path.cwd() / "coordination" / "desktop-input.lock")
+    parser.add_argument("--session-root", type=Path,
+                        help="shared coordination root for durable original-session leases")
+    parser.add_argument("--workspace-id",
+                        help="stable logical workspace identity shared by every route to this chat")
+    parser.add_argument("--session-provider",
+                        help="verified canonical provider for this original session; may differ from UIA")
+    parser.add_argument("--session-binding-evidence",
+                        help="evidence for --session-provider when it differs from UIA")
     parser.add_argument("--allow-launch", action="store_true")
     parser.add_argument("--urgent-interject", action="store_true",
                         help="use a profiled non-interrupting interject action while the agent is busy")
@@ -916,7 +1212,11 @@ def main() -> int:
                      allow_launch=args.allow_launch,
                      urgent=args.urgent_interject, grounder=grounder,
                      reference_region=reference,
-                     min_confidence=args.route_min_confidence)
+                     min_confidence=args.route_min_confidence,
+                     session_root=args.session_root,
+                     workspace_id=args.workspace_id or "",
+                     session_provider=args.session_provider or "",
+                     session_binding_evidence=args.session_binding_evidence or "")
         if output["state"] == "AGENT_REPLY_VERIFIED":
             from .presence import signal
             signal(args.lock.parent, agent=profile["agent"], state="online",

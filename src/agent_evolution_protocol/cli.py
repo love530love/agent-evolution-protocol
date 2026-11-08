@@ -31,6 +31,7 @@ from agent_evolution_protocol.coordination import a11y
 from agent_evolution_protocol.coordination import process_info
 from agent_evolution_protocol.coordination import uia_argv
 from agent_evolution_protocol.coordination import ui_fallback
+from agent_evolution_protocol.coordination import session_lease
 from agent_evolution_protocol.coordination import evolution_gate
 from agent_evolution_protocol.coordination.volley_plan import plan as plan_volley
 from agent_evolution_protocol.coordination.battle_orders import issue as issue_battle_order, status as battle_order_status
@@ -2468,6 +2469,59 @@ def _uia_profile(root: Path, who: str) -> dict:
     return UIA_CLIENTS.get(who, {})
 
 
+def _uia_report(completed) -> dict | None:
+    """Extract the adapter's final structured receipt without trusting exit 0."""
+    for line in reversed((completed.stdout or "").splitlines()):
+        try:
+            candidate = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(candidate, dict):
+            return candidate
+    return None
+
+
+def _direct_uia_lease_settle(lease: session_lease.SessionLease, *, event_id: str,
+                             request_sha256: str, report: dict | None,
+                             receipt_file: str, transport_provider: str = "uia",
+                             session_binding_evidence: str = "") -> None:
+    """Map only adapter-proven outcomes to terminal lease states.
+
+    The raw ``coord-uia`` command does not wait for an Agent ACK.  It can
+    settle a lease only for a visible message; every ambiguous post-input
+    result remains fenced until a real session inspection/reconcile occurs.
+    """
+    if report and report.get("task_delivered") is True:
+        lease.write(event_id=event_id, request_sha256=request_sha256,
+                    state="SETTLED", delivery_state="MESSAGE_VISIBLE",
+                    receipt_file=receipt_file, transport_provider=transport_provider,
+                    session_binding_evidence=session_binding_evidence)
+        return
+    status = str((report or {}).get("status", "")).strip().lower()
+    # These are adapter-proven pre-input outcomes.  The direct route marks its
+    # lease SENDING just before invocation so a crash cannot double-send, but a
+    # known "nothing was typed/clicked" receipt must release the fence for a
+    # safe retry rather than forcing meaningless manual reconciliation.
+    proven_not_sent = {
+        "no_window", "no_input_control", "input-not-confirmed",
+        "send-control-not-found", "composer-not-confirmed",
+        "composer-confirmed-no-send", "composer-region-unsupported",
+        "session-not-found", "session-not-verified", "model-not-verified",
+        "window-or-input-ambiguous", "uia3-write-failed",
+        "transcript-captured", "window-focused-no-delivery",
+    }
+    if status in proven_not_sent:
+        lease.write(event_id=event_id, request_sha256=request_sha256,
+                    state="PROVEN_NOT_SENT", receipt_file=receipt_file,
+                    transport_provider=transport_provider,
+                    session_binding_evidence=session_binding_evidence)
+        return
+    lease.write(event_id=event_id, request_sha256=request_sha256,
+                state="UNCERTAIN", reason=(status or "no-valid-adapter-receipt"),
+                receipt_file=receipt_file, transport_provider=transport_provider,
+                session_binding_evidence=session_binding_evidence)
+
+
 def coord_uia(args: argparse.Namespace) -> None:
     """Desktop transport probe: observe/capture, or deliver/compose to an original window."""
     root = coord_root(args)
@@ -2523,25 +2577,96 @@ def coord_uia(args: argparse.Namespace) -> None:
     if getattr(args, "no_send", False):
         command += ["-NoSend"]
     command += ["-ReadBackTimeoutSeconds", str(max(1, min(args.timeout, 300)))]
-    try:
+    def invoke():
         # Same runner the driver uses, for the same two reasons: a non-ASCII
         # value such as -Text cannot survive the console code page, and the
         # adapter writes UTF-8 while an elevated process reports cp1252.  Going
         # around it made this command fail to find a window the scheduler found
         # and made `deliver --text 中文` arrive as "?".
-        completed = uia_argv.run(command, timeout=max(args.timeout + 60, 120),
-                                 env=ui_fallback.PowerShellUiaDriver._ui_env(profile))
-    except Exception as exc:  # noqa: BLE001
-        raise ProtocolError(f"uia adapter failed: {exc}") from exc
+        return uia_argv.run(command, timeout=max(args.timeout + 60, 120),
+                            env=ui_fallback.PowerShellUiaDriver._ui_env(profile))
+
     report = None
-    for line in reversed((completed.stdout or "").splitlines()):
+    if args.action not in WRITING_UIA_ACTIONS:
         try:
-            candidate = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(candidate, dict):
-            report = candidate
-            break
+            completed = invoke()
+        except Exception as exc:  # noqa: BLE001
+            raise ProtocolError(f"uia adapter failed: {exc}") from exc
+        report = _uia_report(completed)
+    else:
+        workspace_id = (getattr(args, "workspace_id", "") or
+                        profile.get("workspace_id") or str(Path(root).resolve()))
+        try:
+            binding_provider, binding_evidence = ui_fallback.session_binding_provider(
+                profile, transport_provider="uia",
+                explicit_provider=getattr(args, "session_provider", "") or "",
+                explicit_evidence=getattr(args, "session_binding_evidence", "") or "")
+            binding = session_lease.binding(workspace_id=workspace_id, provider=binding_provider,
+                                            target_agent=who,
+                                            session_id=str(profile.get("session_marker", "")))
+        except ValueError as exc:
+            raise ProtocolError(f"SESSION_BINDING_REQUIRED: {exc}") from exc
+        receipt_file = str(coord_file(root, "uia_receipts", f"{args.event_id}-{who}.json"))
+        request_sha256 = hashlib.sha256(json.dumps({
+            "event_id": args.event_id, "text": text, "binding": binding,
+        }, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+        coordination_root = Path(root)
+        lease_root = (Path(args.session_lease_root) if getattr(args, "session_lease_root", None)
+                      else session_lease.canonical_root(coordination_root))
+        legacy_lease_roots = (coordination_root,) if lease_root != coordination_root else ()
+        try:
+            with session_lease.acquire(lease_root, binding, timeout=5,
+                                       legacy_roots=legacy_lease_roots) as lease:
+                # Take the same focus lock used by the profiled commander
+                # before marking the session as SENDING.  Thus a busy desktop
+                # is a retryable pre-input condition, never a fake uncertainty.
+                with ui_fallback._desktop_lock(Path(root) / "desktop-input.lock"):
+                    lease.write(event_id=args.event_id, request_sha256=request_sha256,
+                                state="SENDING", receipt_file=receipt_file,
+                                route="coord-uia", transport_provider="uia",
+                                session_binding_evidence=binding_evidence)
+                    try:
+                        completed = invoke()
+                    except Exception as exc:  # noqa: BLE001
+                        lease.write(event_id=args.event_id, request_sha256=request_sha256,
+                                    state="UNCERTAIN",
+                                    reason="raw UIA adapter interrupted or timed out",
+                                    transport_provider="uia",
+                                    session_binding_evidence=binding_evidence)
+                        raise ProtocolError(f"uia adapter failed: {exc}") from exc
+                    report = _uia_report(completed)
+                    _direct_uia_lease_settle(lease, event_id=args.event_id,
+                                             request_sha256=request_sha256,
+                                             report=report, receipt_file=receipt_file,
+                                             transport_provider="uia",
+                                             session_binding_evidence=binding_evidence)
+        except session_lease.SessionLeaseBlocked as exc:
+            previous = exc.previous
+            print(json.dumps({"agent": who, "action": args.action,
+                              "event_id": args.event_id, "returncode": None,
+                              "report": {"status": "SESSION_UNCERTAIN",
+                                         "previous_event_id": previous.get("event_id", ""),
+                                         "task_delivered": False},
+                              "note": "no UI input was attempted; reconcile the original session first"},
+                             ensure_ascii=False, indent=2))
+            return
+        except Exception as exc:
+            from agent_evolution_protocol.federation.locking import LockTimeout
+            if isinstance(exc, LockTimeout):
+                print(json.dumps({"agent": who, "action": args.action,
+                                  "event_id": args.event_id, "returncode": None,
+                                  "report": {"status": "SESSION_BUSY", "task_delivered": False},
+                                  "note": "no UI input was attempted; wait for the active original-session operation"},
+                                 ensure_ascii=False, indent=2))
+                return
+            if isinstance(exc, ui_fallback.RelayError) and str(exc) == "DESKTOP_INPUT_BUSY":
+                print(json.dumps({"agent": who, "action": args.action,
+                                  "event_id": args.event_id, "returncode": None,
+                                  "report": {"status": "DESKTOP_INPUT_BUSY", "task_delivered": False},
+                                  "note": "no UI input was attempted; desktop focus is held by another operation"},
+                                 ensure_ascii=False, indent=2))
+                return
+            raise
     payload = {"agent": who, "action": args.action, "out_file": out_file,
                "returncode": completed.returncode,
                # The driver class annotates its own receipts, but this command
@@ -3507,7 +3632,7 @@ def build_parser() -> argparse.ArgumentParser:
     checkpoint = commands.add_parser("kernel-checkpoint"); checkpoint.add_argument("--task-id", required=True); checkpoint.add_argument("--executor", required=True); checkpoint_body = checkpoint.add_mutually_exclusive_group(required=True); checkpoint_body.add_argument("--payload-json"); checkpoint_body.add_argument("--payload-file"); checkpoint.set_defaults(func=kernel_checkpoint)
     legion = commands.add_parser("coord-legion"); legion.add_argument("action", choices=("record", "scoreboard", "slacking", "challenge", "chase", "adjudicate", "incentive-board")); legion.add_argument("--agent"); legion.add_argument("--kind"); legion.add_argument("--reporter"); legion.add_argument("--reviewer"); legion.add_argument("--verdict", choices=("accepted", "rejected")); legion.add_argument("--event-id"); legion.add_argument("--task"); legion.add_argument("--signature"); legion.add_argument("--evidence", nargs="*", default=[]); legion.add_argument("--note"); legion.add_argument("--reason"); legion.add_argument("--alternative"); legion.add_argument("--predicted-signature"); legion.add_argument("--cheapest-test"); legion.add_argument("--stop-condition"); legion.add_argument("--expected", nargs="*", default=[]); legion.add_argument("--window-hours", type=float, default=24); legion.add_argument("--min-productive", type=int, default=1); legion.set_defaults(func=coord_legion)
     digest = commands.add_parser("coord-chat-digest"); digest.add_argument("--agent", required=True); digest.add_argument("--since-hours", type=float, default=24); digest.add_argument("--per-actor", type=int, default=4); digest.add_argument("--chars", type=int, default=240); digest.add_argument("--markdown", action="store_true"); digest.set_defaults(func=coord_chat_digest)
-    uia = commands.add_parser("coord-uia"); uia.add_argument("action", choices=("observe", "capture", "deliver", "compose")); uia.add_argument("--agent", required=True); uia.add_argument("--process"); uia.add_argument("--exe"); uia.add_argument("--title"); uia.add_argument("--event-id"); uia.add_argument("--text"); uia.add_argument("--text-file", type=Path); uia.add_argument("--out-file"); uia.add_argument("--allow-unknown-path", action="store_true"); uia.add_argument("--allow-clipboard-paste", action="store_true"); uia.add_argument("--urgent-interject", action="store_true", help="reach the client through an exact profiled interject action while it is busy; refuses rather than clicking Stop"); uia.add_argument("--no-send", action="store_true", help="write the text and stop; the receipt reports what the client offers to do next"); uia.add_argument("--ocr", action="store_true"); uia.add_argument("--timeout", type=int, default=20); uia.set_defaults(func=coord_uia)
+    uia = commands.add_parser("coord-uia"); uia.add_argument("action", choices=("observe", "capture", "deliver", "compose")); uia.add_argument("--agent", required=True); uia.add_argument("--process"); uia.add_argument("--exe"); uia.add_argument("--title"); uia.add_argument("--event-id"); uia.add_argument("--text"); uia.add_argument("--text-file", type=Path); uia.add_argument("--out-file"); uia.add_argument("--workspace-id", help="stable logical workspace identity for the original-session write lease"); uia.add_argument("--session-provider", help="verified canonical provider for the original chat when it differs from UIA"); uia.add_argument("--session-binding-evidence", help="evidence for --session-provider when it differs from UIA"); uia.add_argument("--session-lease-root", type=Path, help="shared coordination/session_leases path used by every route to this chat"); uia.add_argument("--allow-unknown-path", action="store_true"); uia.add_argument("--allow-clipboard-paste", action="store_true"); uia.add_argument("--urgent-interject", action="store_true", help="reach the client through an exact profiled interject action while it is busy; refuses rather than clicking Stop"); uia.add_argument("--no-send", action="store_true", help="write the text and stop; the receipt reports what the client offers to do next"); uia.add_argument("--ocr", action="store_true"); uia.add_argument("--timeout", type=int, default=20); uia.set_defaults(func=coord_uia)
 
     vision = commands.add_parser("coord-vision", help="ask a grounder where a control is, and compare it with a known answer")
     vision.add_argument("action", choices=("ground", "providers"))
