@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.6.29 — 架构重构：commander 模块拆分与 foundation 基础层收敛
+
+- Split `commander` into three layers (`commander_base`, `commander_uia`, `commander` re-exports) to improve separation of concerns.
+  - `commander_base.py` holds constants, persistent state, order queue and retry logic (no desktop-transport dependency).
+  - `commander_uia.py` holds desktop-transport leaf functions (UIA/OCR/CDP/Profiled).
+  - `commander.py` keeps orchestration logic (`tick`, `dispatch`, `perceive`, `ack`), maintains 100% API compatibility via explicit re-exports.
+  - File size reduced from 72KB to ~39KB with clear responsibility boundaries.
+- Converge `foundation` layer (`foundation/io.py` + `foundation/ids.py`):
+  - Unify crash-safe atomic IO (`_atomic`) and deterministic timestamps (`_utc`/`iso_now`) from scattered modules into foundation.
+  - `ui_fallback.py` removes local duplicates, uses foundation aliases, eliminates maintenance risk from duplicate definitions.
+- Test synchronization (`test_unattended_resume.py`):
+  - Update `unittest.mock.patch.object` targets after module split (e.g., `commander.commander_base` → `commander_base`).
+  - Fix `_auto_resume_due` and `AUTO_RESUME_BACKOFF_SECONDS` patch targets from `commander` to `commander_base`.
+  - Fix `_profiled_readiness` patch target from `commander_uia` to `commander` (re-export).
+  - All 13 tests pass.
+- Add `docs/ARCHITECTURE_REVIEW_20261108.zh-CN.md`: layered dependency DAG, foundation/commander/federation diagram, remaining risks, upgrade roadmap, overall architecture health score 8/10.
+- Verification: full suite `1599 passed, 3 skipped, 949 subtests passed` (173.26s). Zero behavioral change.
+
 ## 0.6.28 — 离线验收夹具：把真机判定失败冻结成可复算证据
 
 - Add `coordination/delivery_acceptance_fixture.py`: four self-contained

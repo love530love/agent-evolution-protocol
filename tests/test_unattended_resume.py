@@ -14,6 +14,8 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from agent_evolution_protocol.coordination import commander
+from agent_evolution_protocol.coordination import commander_base
+from agent_evolution_protocol.coordination import commander_uia
 from agent_evolution_protocol.coordination import ui_fallback as ui
 
 
@@ -119,25 +121,25 @@ class AutoResumeTests(unittest.TestCase):
 
     def test_a_proven_pre_input_deferral_becomes_due(self):
         order = self._deferred_order(status="COMPOSER_NOT_CONFIRMED")
-        with patch.object(commander, "AUTO_RESUME_BACKOFF_SECONDS", 0):
-            self.assertTrue(commander._auto_resume_due(order))
+        with patch.object(commander_base, "AUTO_RESUME_BACKOFF_SECONDS", 0):
+            self.assertTrue(commander_base._auto_resume_due(order))
 
     def test_the_budget_is_bounded(self):
         order = self._deferred_order(status="COMPOSER_NOT_CONFIRMED",
-                                     deferrals=commander.AUTO_RESUME_LIMIT)
-        with patch.object(commander, "AUTO_RESUME_BACKOFF_SECONDS", 0):
-            self.assertFalse(commander._auto_resume_due(order))
+                                     deferrals=commander_base.AUTO_RESUME_LIMIT)
+        with patch.object(commander_base, "AUTO_RESUME_BACKOFF_SECONDS", 0):
+            self.assertFalse(commander_base._auto_resume_due(order))
 
     def test_an_uncertain_history_is_never_resumed(self):
-        order = commander.submit_order(self.root, target="workbuddy3", task="notice",
-                                       text="Read inbox", sender="codex")
+        order = commander_base.submit_order(self.root, target="workbuddy3", task="notice",
+                                            text="Read inbox", sender="codex")
         # WINDOW_FOUND with no later pre-input proof: the message may have been
         # typed, so the no-replay fence has to hold.
-        commander._record_attempt(self.root, order, state="WINDOW_FOUND")
-        commander._record_attempt(self.root, order, state="DEFERRED",
-                                  receipt={"status": "unknown-status", "task_delivered": False})
-        with patch.object(commander, "AUTO_RESUME_BACKOFF_SECONDS", 0):
-            self.assertFalse(commander._auto_resume_due(order))
+        commander_base._record_attempt(self.root, order, state="WINDOW_FOUND")
+        commander_base._record_attempt(self.root, order, state="DEFERRED",
+                                       receipt={"status": "unknown-status", "task_delivered": False})
+        with patch.object(commander_base, "AUTO_RESUME_BACKOFF_SECONDS", 0):
+            self.assertFalse(commander_base._auto_resume_due(order))
 
     def test_the_backoff_holds_a_fresh_deferral(self):
         order = self._deferred_order(status="COMPOSER_NOT_CONFIRMED")
@@ -145,20 +147,20 @@ class AutoResumeTests(unittest.TestCase):
 
     def test_tick_redeposits_a_pre_input_deferral_on_its_own(self):
         order = self._deferred_order(status="COMPOSER_NOT_CONFIRMED")
-        with patch.object(commander, "AUTO_RESUME_BACKOFF_SECONDS", 0), \
+        with patch.object(commander_base, "AUTO_RESUME_BACKOFF_SECONDS", 0), \
                 patch.object(commander, "dispatch",
                              return_value={"state": "DEPOSITED"}) as dispatch:
             commander.tick(self.root, perceive_first=False)
         dispatch.assert_called_once()
         self.assertEqual(dispatch.call_args.kwargs["order"]["event_id"], order["event_id"])
-        notes = [attempt.get("note", "") for attempt in commander._orders(self.root)[0]["attempts"]]
+        notes = [attempt.get("note", "") for attempt in commander_base._orders(self.root)[0]["attempts"]]
         self.assertTrue(any("AUTO_PREINPUT_RESUME" in note for note in notes))
 
     def test_a_busy_deferral_keeps_using_the_cheap_readiness_probe(self):
         # A busy client is polled read-only; retrying it would cost a full UI
         # attempt and fight the run it is waiting for.
         order = self._deferred_order(status="AGENT_BUSY")
-        with patch.object(commander, "AUTO_RESUME_BACKOFF_SECONDS", 0), \
+        with patch.object(commander_base, "AUTO_RESUME_BACKOFF_SECONDS", 0), \
                 patch.object(commander, "_profiled_readiness",
                              return_value={"status": "window-observed",
                                            "activity_state": "busy"}) as readiness, \
@@ -166,7 +168,7 @@ class AutoResumeTests(unittest.TestCase):
             commander.tick(self.root, perceive_first=False)
         readiness.assert_called_once()
         dispatch.assert_not_called()
-        self.assertEqual(order["event_id"], commander._orders(self.root)[0]["event_id"])
+        self.assertEqual(order["event_id"], commander_base._orders(self.root)[0]["event_id"])
 
 
 class ReplyProofTests(unittest.TestCase):

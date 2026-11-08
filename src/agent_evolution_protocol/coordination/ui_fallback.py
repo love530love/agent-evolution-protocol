@@ -19,6 +19,10 @@ from agent_evolution_protocol.coordination import input_routing
 from agent_evolution_protocol.coordination import uia_argv
 from agent_evolution_protocol.coordination import vision_grounding
 from agent_evolution_protocol.coordination import session_lease
+from agent_evolution_protocol.coordination.foundation import (
+    iso_now,
+    write_json_atomic,
+)
 import re
 import secrets
 import shutil
@@ -44,22 +48,9 @@ class RelayError(RuntimeError):
     pass
 
 
-def _atomic(path: Path, payload: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + "." + uuid4().hex + ".tmp")
-    try:
-        with temporary.open("x", encoding="utf-8") as stream:
-            json.dump(payload, stream, ensure_ascii=False, sort_keys=True, indent=2)
-            stream.write("\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
-
-
-def _utc() -> str:
-    return datetime.now(timezone.utc).isoformat()
+# Aliases keep call sites identical to the pre-convergence code.
+_atomic = write_json_atomic
+_utc = iso_now
 
 
 def load_profile(path: Path) -> dict:

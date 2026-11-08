@@ -40,601 +40,105 @@ from agent_evolution_protocol.coordination.overlay_detector import classify
 from agent_evolution_protocol.coordination.provider_readback import receipt as make_readback, accepted as readback_accepted
 from agent_evolution_protocol.coordination.workspace_identity import validate_workspace_id
 
-SAFE_AGENT = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
-ACK_TOKEN = "AEP-ACK"
-CEASE_AFTER_FAILURES = 3
-REINFORCE_AFTER_MINUTES = 20  # 主订单停火或久未ACK后，允许候选agent补位
+# The order state machine (constants + helpers) and the desktop-transport
+# surface now live in ``commander_base`` / ``commander_uia``.  They are
+# re-exported here so every existing ``from ...commander import <name>`` and
+# ``commander.<name>`` call site keeps working unchanged.
+from .commander_base import (
+    ACK_TOKEN,
+    AUTO_RESUME_BACKOFF_SECONDS,
+    AUTO_RESUME_LIMIT,
+    CEASE_AFTER_FAILURES,
+    ENVIRONMENTAL_DEFERRALS,
+    ORDER_STATES,
+    REINFORCE_AFTER_MINUTES,
+    SAFE_AGENT,
+    SURFACE_SWITCH_LIMIT,
+    _atomic,
+    _auto_resume_due,
+    _ceased,
+    _deferred_count,
+    _orders,
+    _parse_candidates,
+    _preinput_retryable,
+    _read,
+    _record_attempt,
+    _root,
+    _state_path,
+    now,
+    provider_readback,
+    submit_order,
+)
+from .commander_uia import (
+    _capture_uia,
+    _cdp_port_owned_by_anchor,
+    _continuation_surfaces,
+    _pick_transport,
+    _profiled_deliver,
+    _profiled_readiness,
+    _pwsh,
+    _uia_deliver,
+    _uia_observe,
+    perceive,
+)
+
 # A deferral that proves nothing was typed is a "not yet", not a failure.  The
 # scheduler retries those on its own, but only within a bounded budget and only
 # after a backoff, so an automatic retry can never turn into a blind replay.
-AUTO_RESUME_LIMIT = 6
-AUTO_RESUME_BACKOFF_SECONDS = 20
 
 # Deferrals caused by the *executor's environment* rather than the target's
 # readiness.  These prove nothing was typed, so retrying them cannot duplicate a
 # message, and they do not consume the retry budget: the condition clears when
 # the environment changes, not when we stop trying.
-ENVIRONMENTAL_DEFERRALS = frozenset({"EXECUTOR_TOO_LOW"})
 
 # One switch per order.  A second would mean the continuation surface failed for
 # the same reason, and bouncing between two surfaces forever is not retrying.
-SURFACE_SWITCH_LIMIT = 1
 
 # DEPOSITED -> WINDOW_FOUND -> INPUT_SUBMITTED -> MESSAGE_VISIBLE -> AGENT_ACK
-ORDER_STATES = ("DEPOSITED", "DEFERRED", "DISPATCHING", "WINDOW_FOUND", "INPUT_SUBMITTED", "MESSAGE_VISIBLE", "AGENT_ACK", "CEASED", "FAILED", "RETIRED")
 
 
-def provider_readback(provider: str, event_id: str, raw: dict) -> dict:
-    """Normalize adapter receipts; visibility never becomes an ACK.
-
-    The default is "not sent", not "sent".  This used to be a whitelist of
-    failure statuses with everything else falling through to
-    ``INPUT_SUBMITTED``, which meant every status nobody had taught it about --
-    ``urgent-interject-unavailable``, ``composer-not-confirmed``,
-    ``composer-confirmed-no-send``, ``LAUNCH_FORBIDDEN`` -- was recorded as
-    proof that input had been entered.  A receipt has to earn
-    ``INPUT_SUBMITTED``: either the adapter says the text was verified in the
-    composer, or it reports an unconfirmed submit.  Anything else is ``FAILED``
-    with the status kept as the error, so the reason survives.
-    """
-    if not isinstance(raw, dict):
-        return make_readback(provider=provider, event_id=event_id, state="UNKNOWN", observed=False, error="adapter receipt is not an object")
-    if raw.get("agent_accepted") is True:
-        state, ack = "AGENT_ACK", True
-    elif raw.get("task_delivered") is True:
-        state, ack = "MESSAGE_VISIBLE", False
-    elif raw.get("input_verified") is True or raw.get("composer_verified") is True \
-            or raw.get("status") == "submitted-unconfirmed":
-        state, ack = "INPUT_SUBMITTED", False
-    else:
-        state, ack = "FAILED", False
-    value = make_readback(provider=provider, event_id=event_id, state=state,
-                          observed=bool(raw.get("task_delivered") or raw.get("agent_accepted")),
-                          ack=ack, evidence=list(raw.get("evidence", [])) if isinstance(raw.get("evidence", []), list) else [],
-                          error=str(raw.get("error", "")) or (str(raw.get("status", "")) if state == "FAILED" else ""))
-    value["raw"] = raw
-    value["accepted"] = readback_accepted(value)
-    return value
 
 
-def _root(base: Path) -> Path:
-    return Path(base) / "commander"
 
 
-def _atomic(path: Path, payload: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + "." + uuid4().hex + ".tmp")
-    try:
-        with tmp.open("x", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=False, indent=1, sort_keys=True)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp, path)
-    finally:
-        tmp.unlink(missing_ok=True)
 
 
-def _read(path: Path) -> dict:
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
 
 
-def now() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
-def submit_order(root: Path, *, target: str, task: str, text: str, sender: str,
-                 priority: str = "normal", event_id: str = "", allow_launch: bool = False,
-                 transport: str = "auto", expires_minutes: int = 120,
-                 candidates: str = "", source_wake: dict | None = None,
-                 workspace_id: str = "", urgent_interject: bool = False) -> dict:
-    """Queue a directive for one client. Nothing is sent until a tick runs.
-
-    ``candidates`` is a comma/space separated list of backup agents. When the
-    primary order stalls (ceasefire or long-unacked), a tick may spawn a
-    differentiated "reinforcement" order for one of them instead of blindly
-    re-sending to the same target -- the fire-musket volley: one wave falls back
-    to reload while the next wave steps up.
-    """
-    if not SAFE_AGENT.fullmatch(target) or not SAFE_AGENT.fullmatch(sender):
-        raise ValueError("invalid agent name")
-    if not text.strip():
-        raise ValueError("text is required")
-    if source_wake is not None and not isinstance(source_wake, dict):
-        raise ValueError("source_wake must be an object")
-    if workspace_id:
-        validate_workspace_id(workspace_id)
-    order_id = now().replace(":", "").replace(".", "").replace("+", "") + "-" + uuid4().hex[:8]
-    event = event_id or ("EVT-" + uuid4().hex[:10].upper())
-    # A generic instruction such as "include AEP-ACK" is not an event
-    # acknowledgement.  Only skip augmentation when this exact event id is
-    # already present; otherwise the dispatch contract cannot prove that a
-    # reply belongs to this order.
-    body = text if event in text else f"{text.rstrip()}\n\n[{ACK_TOKEN}:{event}]"
-    created_at = now()
-    expires_at = datetime.fromtimestamp(time.time() + expires_minutes * 60, timezone.utc).isoformat()
-    dispatch = dispatch_contract.build(
-        order_id=order_id,
-        event_id=event,
-        workspace_id=workspace_id,
-        sender=sender,
-        target=target,
-        task=task or "GENERAL",
-        instruction=body,
-        priority=priority,
-        created_at=created_at,
-        expires_at=expires_at,
-        session_mode="sticky",
-        allow_new_session=False,
-        legacy_compat=not bool(workspace_id),
-    )
-    payload = {
-        "id": order_id, "event_id": event, "target": target, "sender": sender,
-        "task": task or "GENERAL", "priority": priority, "text": body, "allow_launch": allow_launch,
-        "transport": transport, "urgent_interject": bool(urgent_interject), "state": "DEPOSITED", "created_at": created_at,
-        "expires_at": expires_at,
-        "attempts": [], "ack": None,
-        "candidates": _parse_candidates(candidates), "children": [], "parent": None,
-        "dispatch": dispatch,
-    }
-    if event not in body:
-        raise ValueError("event id must appear in the message so read-back can verify it")
-    # Record the hash of the exact bytes that will be typed.  A gate that runs at
-    # send time but has nothing to compare against can only check the text
-    # against itself; this is what makes "the message was edited after it was
-    # queued" a detectable condition instead of an invisible one.
-    payload["content_sha256"] = dispatch_gate.content_sha256(body)
-    if source_wake is not None:
-        # Persist provenance with the first order write, not in a second update
-        # that could be lost if the wake ingress crashes between writes.
-        payload["source_wake"] = deepcopy(source_wake)
-    if workspace_id:
-        payload["workspace_id"] = workspace_id
-    _atomic(_root(root) / "inbox" / f"{order_id}.json", payload)
-    return payload
 
 
-def _orders(root: Path) -> list[dict]:
-    folder = _root(root) / "inbox"
-    if not folder.exists():
-        return []
-    return [_read(p) for p in sorted(folder.glob("*.json"))]
 
 
-def _state_path(root: Path, order_id: str) -> Path:
-    return _root(root) / "state" / f"{order_id}.json"
 
 
-def _record_attempt(root: Path, order: dict, *, state: str, transport: str = "",
-                    receipt: dict | None = None, note: str = "") -> dict:
-    if state in {"DEFERRED", "CEASED"} and (Path(root) / "desktop_providers").is_dir():
-        try:
-            alternatives = desktop_providers.plan(root, operation="locate", previous_state=(
-                "PROVEN_NOT_SENT" if state == "DEFERRED" else "UNKNOWN"))
-            receipt = {**(receipt or {}), "desktop_provider_plan": alternatives}
-        except (OSError, ValueError, KeyError, TypeError):
-            # An optional provider registry must not prevent storing the order receipt.
-            pass
-    attempt = {"at": now(), "state": state, "transport": transport,
-               "receipt": receipt or {}, "note": note}
-    raw = receipt or {}
-    # Adapters may provide a normalized overlay observation. Persist it in a
-    # separate append-only stream without making audit failure affect delivery.
-    if raw.get("overlay_type") or raw.get("overlay_title"):
-        try:
-            observed = classify(control_type=str(raw.get("overlay_type", "")),
-                                title=str(raw.get("overlay_title", "")),
-                                text=str(raw.get("overlay_text", "")),
-                                actions=raw.get("overlay_actions", []),
-                                source=str(raw.get("overlay_source", transport)))
-            overlay_audit.record(Path(root), observed, agent=order["target"],
-                                 action=str(raw.get("overlay_action", "")),
-                                 verified=bool(raw.get("overlay_verified", False)),
-                                 event_id=order.get("event_id", ""))
-        except (OSError, TypeError, ValueError):
-            pass
-    order.setdefault("attempts", []).append(attempt)
-    order["state"] = state
-    order["updated_at"] = now()
-    if state == "AGENT_ACK":
-        order["ack"] = {"at": now(), "evidence": (receipt or {}).get("evidence", "")}
-    _atomic(_state_path(root, order["id"]), order)
-    _atomic(_root(root) / "inbox" / f"{order['id']}.json", order)
-    return order
 
 
-def _ceased(root: Path, order: dict) -> bool:
-    failures = 0
-    for attempt in reversed(order.get("attempts", [])):
-        if attempt.get("state") in ("FAILED", "INPUT_SUBMITTED", "submitted-unconfirmed"):
-            failures += 1
-        elif attempt.get("state") in ("MESSAGE_VISIBLE", "AGENT_ACK"):
-            break
-        if failures >= CEASE_AFTER_FAILURES:
-            return True
-    return False
 
 
-def _deferred_count(order: dict) -> int:
-    """How many deferrals this order has accumulated in total.
-
-    Counting the tail would reset on every automatic retry -- the retry writes
-    a DEPOSITED attempt first -- and the budget would never be reached, which
-    turns a bounded retry into an unbounded loop.
-
-    Environmental deferrals are excluded.  ``EXECUTOR_TOO_LOW`` proves that
-    nothing was typed: UIPI refused the input before it reached the window.  It
-    is a fact about the executor's integrity level, not about the target's
-    readiness, so retrying it cannot duplicate a message and waiting on a person
-    is the wrong response -- a scheduler that gives up after six attempts at
-    60-second intervals declares failure eleven minutes into an outage that a
-    single elevation would have ended.  The order's ``expires_at`` is the real
-    bound, and it is the right one: it bounds "the environment might change",
-    which is what this is.
-    """
-    total = 0
-    for attempt in order.get("attempts", []):
-        if attempt.get("state") != "DEFERRED":
-            continue
-        if (attempt.get("receipt") or {}).get("status") in ENVIRONMENTAL_DEFERRALS:
-            continue
-        total += 1
-    return total
 
 
-def _auto_resume_due(order: dict) -> bool:
-    """Should the scheduler retry this deferred order without being asked?
-
-    Only ``wait_for_ready`` deferrals used to be re-examined, so every other
-    pre-input deferral parked the order until a person typed ``resume``.  That
-    is a queue, not a loop: measured on this workspace, a client that was busy
-    for ninety seconds left the order at DEFERRED forever even though the
-    target had gone idle.
-
-    Three conditions keep the automatic retry from becoming a blind replay:
-    the durable history must prove nothing was typed (``_preinput_retryable``),
-    the deferral count must stay under ``AUTO_RESUME_LIMIT``, and
-    ``AUTO_RESUME_BACKOFF_SECONDS`` must have elapsed since the last attempt.
-    """
-    if order.get("state") != "DEFERRED":
-        return False
-    if _deferred_count(order) >= AUTO_RESUME_LIMIT:
-        return False
-    if not _preinput_retryable(order):
-        return False
-    last = (order.get("attempts") or [{}])[-1]
-    try:
-        at = datetime.fromisoformat(str(last.get("at", "")))
-        elapsed = (datetime.now(timezone.utc) - at).total_seconds()
-    except (TypeError, ValueError):
-        # An unreadable timestamp is not evidence of a recent attempt; the
-        # pre-input proof above is what actually authorises the retry.
-        return True
-    return elapsed >= AUTO_RESUME_BACKOFF_SECONDS
 
 
-def _pwsh() -> str:
-    executable = shutil.which("pwsh.exe")
-    if not executable:
-        raise RuntimeError("PowerShell 7 (pwsh.exe) is required for desktop adapters")
-    return executable
 
 
-def _uia_deliver(root: Path, agent: str, text: str, event_id: str, *,
-                 timeout: int = 20, ocr: bool = True, expected_pid: int = 0) -> dict:
-    adapter = Path(__file__).resolve().parent / "wake_adapters" / "uia_session.ps1"
-    if not adapter.is_file():
-        return {"status": "ADAPTER_MISSING", "task_delivered": False}
-    profile = {}
-    try:
-        profile = registry.profile(root, agent)
-    except ValueError:
-        pass
-    out_file = str(_root(root) / "captures" / f"{agent}-{event_id}.txt")
-    receipt_file = str(_root(root) / "receipts" / f"{event_id}-{agent}.json")
-    cmd = [_pwsh(), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(adapter),
-           "-Agent", agent, "-ProcessName", profile.get("process") or agent,
-           "-Mode", "deliver", "-OutFile", out_file, "-ReceiptFile", receipt_file,
-           "-EventId", event_id, "-Text", text, "-ReadBackTimeoutSeconds", str(timeout)]
-    if profile.get("exe"):
-        cmd += ["-ExpectedPath", profile["exe"]]
-    if expected_pid:
-        # Elevated Electron clients may hide Process.Path from our token.
-        # The exact PID was selected from a unique/anchored visible window;
-        # permit unknown path only with that PID constraint in place.
-        # -AllowUnknownPath itself is added by the merge below, so it is named
-        # exactly once.
-        cmd += ["-ExpectedPid", str(expected_pid)]
-    if profile.get("session_label"):
-        cmd += ["-SessionLabel", str(profile["session_label"])]
-    if ocr:
-        cmd += ["-OcrVerify"]
-    # Same one copy the operator command uses: OCR language, session marker,
-    # send mode, composer hints, clipboard opt-in.  This path used to pass
-    # -OcrVerify without -OcrLanguage, so a Chinese UI was read by the en-US
-    # recognizer and no marker ever matched.
-    effective = dict(profile)
-    if expected_pid:
-        effective["allow_unknown_path"] = True
-    cmd = ui_fallback.merge_profile_args(cmd, effective)
-    try:
-        done = uia_argv.run(cmd, timeout=timeout + 90)
-    except Exception as exc:  # noqa: BLE001
-        return {"status": "ADAPTER_ERROR", "error": str(exc), "task_delivered": False}
-    report = None
-    for line in reversed(done.stdout.splitlines()):
-        try:
-            candidate = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(candidate, dict):
-            report = candidate
-            break
-    return report or {"status": "NO_RECEIPT", "returncode": done.returncode,
-                      "stderr": done.stderr[-800:], "task_delivered": False}
 
 
-def _uia_observe(root: Path, agent: str, *, expected_pid: int = 0,
-                 ocr: bool = True, timeout: int = 20) -> dict:
-    """Read-only readiness probe used immediately before any desktop input.
-
-    This is deliberately separate from ``_uia_deliver``.  A visible composer
-    can coexist with an active tool run; sending at that point can interrupt or
-    queue work in the wrong turn.  The probe therefore has to report a stable
-    ready state before the input lease is consumed.
-    """
-    adapter = Path(__file__).resolve().parent / "wake_adapters" / "uia_session.ps1"
-    if not adapter.is_file():
-        return {"status": "ADAPTER_MISSING", "activity_state": "unknown",
-                "task_delivered": False}
-    profile = {}
-    try:
-        profile = registry.profile(root, agent)
-    except ValueError:
-        pass
-    cmd = [_pwsh(), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(adapter),
-           "-Agent", agent, "-ProcessName", profile.get("process") or agent,
-           "-Mode", "observe"]
-    if profile.get("title"):
-        cmd += ["-ExpectedTitle", profile["title"]]
-    if profile.get("exe"):
-        cmd += ["-ExpectedPath", profile["exe"]]
-    if expected_pid:
-        cmd += ["-ExpectedPid", str(expected_pid)]
-    if ocr:
-        cmd += ["-OcrVerify"]
-    effective = dict(profile)
-    if expected_pid:
-        effective["allow_unknown_path"] = True
-    cmd = ui_fallback.merge_profile_args(cmd, effective)
-    try:
-        done = uia_argv.run(cmd, timeout=timeout + 45)
-    except Exception as exc:  # noqa: BLE001
-        return {"status": "ADAPTER_ERROR", "activity_state": "unknown",
-                "error": str(exc), "task_delivered": False}
-    for line in reversed(done.stdout.splitlines()):
-        try:
-            value = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(value, dict):
-            return value
-    return {"status": "NO_RECEIPT", "activity_state": "unknown",
-            "returncode": done.returncode, "stderr": done.stderr[-800:],
-            "task_delivered": False}
 
 
-def _profiled_deliver(root: Path, agent: str, text: str, event_id: str, *,
-                      allow_launch: bool = False, urgent_interject: bool = False,
-                      workspace_id: str = "") -> dict:
-    profile_path = Path(root) / "ui_profiles" / f"{agent}.json"
-    try:
-        profile = ui_fallback.load_profile(profile_path)
-        if profile["agent"] != agent:
-            raise ValueError("UI_PROFILE_AGENT_MISMATCH")
-        receipt_path = _root(root) / "receipts" / f"{event_id}-{agent}-profile.json"
-        from . import uia3
-        result = ui_fallback.run(
-            profile, text, event_id=event_id, receipt_path=receipt_path,
-            lock_path=Path(root) / "desktop-input.lock",
-            driver=uia3.driver_for(profile), allow_launch=allow_launch,
-            urgent=urgent_interject,
-            session_root=Path(root),
-            # A legacy order may not yet carry a logical workspace ID.  It is
-            # still fenced inside this coordination root; new cross-route
-            # callers should pass the same explicit ID to every adapter.
-            workspace_id=workspace_id or str(Path(root).resolve()),
-        )
-        receipt = {
-            "status": result.get("state", "UNKNOWN"),
-            "task_delivered": result.get("task_delivered") is True,
-            "agent_accepted": result.get("agent_accepted") is True,
-            "receipt_file": str(receipt_path),
-            "evidence": str(receipt_path),
-            "wait_for_ready": result.get("state") in {"AGENT_BUSY", "ACTIVITY_UNCONFIRMED"},
-        }
-        # Carry the integrity verdict into the durable order history.  Without
-        # it the receipt says "no input" and leaves the reader to work out that
-        # the reason was UIPI rather than a client that would not focus.
-        for key in ("drivable", "blocked_by", "target_elevation", "executor_elevation", "reason", "session_lease"):
-            if result.get(key) not in (None, ""):
-                receipt[key] = result[key]
-        return receipt
-    except Exception as exc:  # noqa: BLE001 - profile failures must never fall through to blind UI input
-        return {"status": "PROFILE_DELIVERY_FAILED", "task_delivered": False,
-                "error": str(exc)[:800]}
 
 
-def _profiled_readiness(root: Path, agent: str) -> dict:
-    """Read-only profile probe used to resume a busy desktop Agent.
-
-    It never selects a session, focuses a window, writes the clipboard or
-    clicks.  A supervisor may call it at its normal low-frequency tick without
-    perturbing the user's desktop.
-    """
-    profile_path = Path(root) / "ui_profiles" / f"{agent}.json"
-    if not profile_path.is_file():
-        return {"status": "NO_PROFILE", "activity_state": "unknown"}
-    try:
-        profile = ui_fallback.load_profile(profile_path)
-        from . import uia3
-        return uia3.driver_for(profile).observe(profile)
-    except Exception as exc:  # noqa: BLE001 - readiness is advisory and read-only
-        return {"status": "READINESS_PROBE_FAILED", "activity_state": "unknown",
-                "error": str(exc)[:800]}
 
 
-def _capture_uia(root: Path, agent: str, *, timeout: int = 20) -> tuple[str, str]:
-    adapter = Path(__file__).resolve().parent / "wake_adapters" / "uia_session.ps1"
-    if not adapter.is_file():
-        return "", "uia"
-    profile = {}
-    try:
-        profile = registry.profile(root, agent)
-    except ValueError:
-        pass
-    out_file = str(_root(root) / "captures" / f"{agent}-poll.txt")
-    cmd = [_pwsh(), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(adapter),
-           "-Agent", agent, "-ProcessName", profile.get("process") or agent,
-           "-Mode", "capture", "-OutFile", out_file, "-OcrVerify"]
-    if profile.get("exe"):
-        cmd += ["-ExpectedPath", profile["exe"]]
-    # Perception had the same missing -OcrLanguage as dispatch: the capture was
-    # taken with the en-US recognizer on a Chinese UI, so the text it published
-    # to the bus was Latin look-alikes and every marker lookup failed.
-    cmd = ui_fallback.merge_profile_args(cmd, profile)
-    try:
-        uia_argv.run(cmd, timeout=timeout + 90)
-    except Exception:  # noqa: BLE001
-        return "", "uia"
-    try:
-        return Path(out_file).read_text(encoding="utf-8", errors="ignore"), "screen-ocr"
-    except OSError:
-        return "", "uia"
 
 
-def perceive(root: Path, *, agents: list[str] | None = None) -> dict:
-    """Read every reachable client window into the shared bus."""
-    discovery = registry.discover(root)
-    results = []
-    for client in discovery["clients"]:
-        name = client["agent"]
-        if agents and name not in agents:
-            continue
-        if client.get("out_of_scope"):
-            # Perception is read-only, but it is not harmless: publishing a
-            # browser tab into the shared bus copies an unrelated human
-            # conversation into every agent's context.  Refuse at the source.
-            results.append({"agent": name, "status": "OUT_OF_SCOPE",
-                            "published": False, "reason": client["out_of_scope"]})
-            continue
-        if not client["windows"]:
-            results.append({"agent": name, "status": "NO_WINDOW", "published": False})
-            continue
-        if not client["unique"] and not client["anchored"]:
-            results.append({"agent": name, "status": "WINDOW_NOT_UNIQUE",
-                            "windows": len(client["windows"]), "published": False,
-                            "hint": "set an anchor pid with coord-client anchor to disambiguate"})
-            continue
-        window = next((w for w in client["windows"] if w.get("is_anchor")), client["windows"][0])
-        text, source = _capture_uia(root, name)
-        if not text.strip():
-            results.append({"agent": name, "status": "NOTHING_READABLE", "published": False})
-            continue
-        published = bus.publish(root, agent=name, text=text, source=source,
-                                session_id=str(window.get("pid", "")),
-                                window_title=str(window.get("title", "")))
-        results.append({"agent": name, "status": "PUBLISHED", "source": source,
-                        "pid": window.get("pid"), "added_line_count": published["added_line_count"]})
-    return {"at": now(), "perceived": results,
-            "note": "Perception is read-only. NOTHING_READABLE is a transport gap, not idleness."}
 
 
-def _pick_transport(root: Path, agent: str, preferred: str = "auto") -> tuple[str, dict]:
-    """Use CDP only when explicitly pinned to this client's anchored session."""
-    if preferred in ("auto", "cdp"):
-        profile = registry.profile(root, agent)
-        anchor = registry.load_anchor(root, agent)
-        port = profile.get("cdp_port")
-        target_id = profile.get("cdp_target_id")
-        if (port and target_id and anchor.get("pid")
-                and _cdp_port_owned_by_anchor(int(port), int(anchor["pid"]))
-                and cdp.probe(int(port), timeout=0.4).get("open")):
-            target = next((row for row in cdp.targets(int(port)) if row.get("id") == target_id), None)
-            if target and target.get("ws"):
-                return "cdp", {"port": int(port), "target": target, "anchor_pid": anchor["pid"]}
-    return "uia", {}
 
 
-def _cdp_port_owned_by_anchor(port: int, anchor_pid: int) -> bool:
-    """Fail closed unless the listening process is the anchor or its child."""
-    try:
-        import psutil  # optional: lack of process attribution disables CDP
-
-        for connection in psutil.net_connections(kind="tcp"):
-            if not connection.laddr or connection.laddr.port != port:
-                continue
-            if connection.status != psutil.CONN_LISTEN or not connection.pid:
-                continue
-            process = psutil.Process(connection.pid)
-            anchor = psutil.Process(anchor_pid)
-            if (process.pid == anchor_pid
-                    or any(parent.pid == anchor_pid for parent in process.parents())
-                    or any(parent.pid == process.pid for parent in anchor.parents())):
-                return True
-    except Exception:  # noqa: BLE001 - unavailable process attribution must fail closed
-        return False
-    return False
 
 
-def _continuation_surfaces(root: Path, order: dict, *, blocked_target: str) -> list[dict]:
-    """Other clients where this same conversation is open and can be driven.
-
-    The question ``continuity`` answers is "same conversation, different
-    surface", and it is the only question that makes an automatic switch safe:
-    the digest covers agent/exe/title, so the same conversation in another
-    client hashes differently and looks like a stranger.  ``continues is True``
-    means the conversation marker matches; ``None`` means there is nothing to
-    compare and is treated as a refusal, because two unlabelled threads are
-    indistinguishable and guessing is how a message lands in the wrong one.
-
-    Out-of-scope surfaces are never candidates, and neither is the blocked
-    target itself.
-    """
-    recorded = session_fingerprint.read(root, order.get("target", ""))
-    if not recorded:
-        return []
-    try:
-        discovery = registry.discover(root)
-    except Exception:  # noqa: BLE001 - a degraded enumeration is not a candidate list
-        return []
-    candidates = []
-    for row in discovery.get("clients", []):
-        name = row.get("agent")
-        if not name or name == blocked_target or row.get("out_of_scope"):
-            continue
-        windows = row.get("windows") or []
-        if not windows:
-            continue
-        if not row.get("unique") and not row.get("anchored"):
-            continue
-        window = next((item for item in windows if item.get("is_anchor")), windows[0])
-        try:
-            profile_row = session_fingerprint.merged_profile(
-                registry.profile(root, name), session_fingerprint.ui_profile(root, name))
-            observed = session_fingerprint.observe(agent=name, window=window,
-                                                   profile=profile_row)
-        except (OSError, ValueError, KeyError, TypeError):
-            continue
-        verdict = session_fingerprint.continuity(recorded, observed)
-        if verdict.get("continues") is True:
-            candidates.append({"agent": name, "pid": window.get("pid"),
-                               "window_title": window.get("title", ""),
-                               "continuity": verdict, "observed": observed})
-    return candidates
 
 
 def _switch_surface(root: Path, order: dict, *, blocked_target: str,
@@ -699,94 +203,6 @@ def _mark_dispatching(root: Path, order: dict) -> dict:
     return fenced
 
 
-def _preinput_retryable(order: dict) -> bool:
-    """Return True only when the durable history proves no input was sent.
-
-    ``WINDOW_FOUND`` is recorded immediately before the profiled adapter
-    performs its readiness check.  It is therefore retryable only when a
-    later attempt explicitly records a pre-input deferral.  A bare
-    ``WINDOW_FOUND`` remains uncertain and must not be replayed.
-    """
-    def _receipt_proves_preinput(receipt: dict) -> bool:
-        """Read a profiled relay receipt when the outer order only has a link.
-
-        A PowerShell parameter-binding error happens before the UI script can
-        focus, paste, or click.  Preserve the normal no-replay fence, but make
-        this one machine-verifiable class eligible for an explicit retry.
-        """
-        if not isinstance(receipt, dict) or receipt.get("task_delivered", False):
-            return False
-        error = str(receipt.get("error", ""))
-        markers = ("WINDOW_NOT_FULLY_VISIBLE", "COMPOSER_HINT_", "WINDOW_RECT_UNAVAILABLE",
-                   "WINDOW_FOCUS_DENIED", "SESSION_LABEL_", "MODEL_MARKER_",
-                   "ParameterBindingException", "multiple times specified the parameter 'ComposerHints'",
-                   "parameter 'ComposerHints'")
-        if (any(marker in error for marker in markers)
-                or ("ComposerHints" in error and ("绑定参数" in error or "指定了参数" in error))):
-            return True
-        receipt_file = receipt.get("receipt_file")
-        if not receipt_file:
-            return False
-        try:
-            detail = json.loads(Path(str(receipt_file)).read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError, TypeError, ValueError):
-            return False
-        if detail.get("task_delivered", False):
-            return False
-        report = detail.get("send_report") or {}
-        if report.get("status") == "composer-not-confirmed" and not report.get("task_delivered", False):
-            return True
-        detail_error = str(detail.get("error", ""))
-        return detail.get("state") == "SEND_UNCERTAIN" and (
-            any(marker in detail_error for marker in markers)
-            or ("ComposerHints" in detail_error and
-                ("绑定参数" in detail_error or "指定了参数" in detail_error))
-        )
-
-    attempts = order.get("attempts", [])
-    for index, attempt in enumerate(attempts):
-        state = attempt.get("state")
-        if state in {"DEPOSITED", "DEFERRED", "DISPATCHING"}:
-            continue
-        if state == "WINDOW_FOUND":
-            later = attempts[index + 1:]
-            proven_preinput = any(
-                row.get("state") in {"DEFERRED", "CEASED"}
-                and not row.get("receipt", {}).get("task_delivered", False)
-                and (
-                    row.get("receipt", {}).get("status") in {
-                    "AGENT_BUSY", "URGENT_INTERJECT_UNAVAILABLE", "ACTIVITY_UNCONFIRMED", "NO_WINDOW",
-                    "LAUNCH_UNVERIFIED", "WINDOW_OR_INPUT_AMBIGUOUS",
-                    "NO_SAFE_COMPOSER", "SESSION_NOT_VERIFIED", "MODEL_NOT_VERIFIED",
-                    "EXECUTOR_TOO_LOW", "COMPOSER_NOT_CONFIRMED",
-                    }
-                    or _receipt_proves_preinput(row.get("receipt", {}))
-                    or (
-                        row.get("receipt", {}).get("status") == "PROFILE_DELIVERY_FAILED"
-                        and any(marker in str(row.get("receipt", {}).get("error", ""))
-                                for marker in ("WINDOW_NOT_FULLY_VISIBLE", "COMPOSER_HINT_",
-                                               "WINDOW_RECT_UNAVAILABLE", "WINDOW_FOCUS_DENIED",
-                                               "SESSION_LABEL_", "MODEL_MARKER_"))
-                    )
-                )
-                for row in later
-            )
-            if proven_preinput:
-                continue
-        if state == "CEASED":
-            receipt = attempt.get("receipt", {})
-            error = str(receipt.get("error", ""))
-            if (_receipt_proves_preinput(receipt)
-                    or (receipt.get("status") == "PROFILE_DELIVERY_FAILED"
-                    and not receipt.get("task_delivered", False)
-                    and any(marker in error for marker in (
-                        "WINDOW_NOT_FULLY_VISIBLE", "COMPOSER_HINT_",
-                        "WINDOW_RECT_UNAVAILABLE", "WINDOW_FOCUS_DENIED",
-                        "SESSION_LABEL_", "MODEL_MARKER_",
-                    )))):
-                continue
-        return False
-    return True
 
 
 def _workspace_state(root: Path, order: dict) -> dict | None:
@@ -1173,12 +589,6 @@ def abandon(root: Path, order_id: str, *, reason: str, actor: str) -> dict:
     return value
 
 
-def _parse_candidates(raw: object) -> list[str]:
-    """Split a comma/space separated candidate string into safe agent names."""
-    if not raw:
-        return []
-    items = [a.strip().lower() for a in re.split(r"[,\s]+", str(raw)) if a.strip()]
-    return [a for a in items if SAFE_AGENT.fullmatch(a)]
 
 
 def _pick_reinforcement_candidate(order: dict, others: list[dict]) -> str | None:
