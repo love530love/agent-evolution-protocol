@@ -22,7 +22,9 @@
 
 ## 验证
 
-新增真实 Python 子进程 UTF-8 输入/输出及落盘结果、输出限额、跨进程同会话互斥、超时后会话不确定栅栏、非法输入预留前拒绝测试；Windows 真实 Job timeout → 目标 → 已知孙进程树终止测试。新增统一 lease 回归：不同 artifact root 仍必须进入同一 canonical lease root、已验证的 `t3code → uia` session alias 会阻断 UIA、CLI 正常退出但未证实消息可见仍会阻断、UIA 中断/损坏 receipt 必须 reconcile、旧版 sidecar 升级时不丢失、直投 `coord-uia` 不能绕过活跃原会话且 `NO_WINDOW` 等已证明未输入状态会安全释放。定向执行：`tests/test_session_lease.py tests/test_external_runner.py tests/test_external_tools.py tests/test_a11y.py tests/test_ui_fallback.py tests/test_commander_delivery_safety.py tests/test_uia_transcript_verdict.py` 为 **153 passed, 2 skipped, 9 subtests**（27.84s）。本轮全量：**1541 passed, 15 skipped, 855 subtests passed**（540.90s；后续仅增加 lease-root CLI 拒绝回归，待提交前重跑全量）。真实只读枚举事件 `EVT-DESKTOP-READ-20261107-002` 已通过新 Job bootstrap 列出本机 ChatGPT / Qoder CN / Qoder / WorkBuddy / WorkBuddyAI；该事件 `delivery_verified=false`，没有向任何第三方 Agent 发送任务。
+新增真实 Python 子进程 UTF-8 输入/输出及落盘结果、输出限额、跨进程同会话互斥、超时后会话不确定栅栏、非法输入预留前拒绝测试；Windows 真实 Job timeout → 目标 → 已知孙进程树终止测试。新增统一 lease 回归：不同 artifact root 仍必须进入同一 canonical lease root、已验证的 `t3code → uia` session alias 会阻断 UIA、CLI 正常退出但未证实消息可见仍会阻断、UIA 中断/损坏 receipt 必须 reconcile、旧版 sidecar 升级时不丢失、直投 `coord-uia` 不能绕过活跃原会话且 `NO_WINDOW` 等已证明未输入状态会安全释放。定向执行：`tests/test_session_lease.py tests/test_external_runner.py tests/test_external_tools.py tests/test_a11y.py tests/test_ui_fallback.py tests/test_commander_delivery_safety.py tests/test_uia_transcript_verdict.py` 为 **153 passed, 2 skipped, 9 subtests**（27.84s）。
+
+2026-11-09 本机复核：pytest 发现范围已显式限定为版本化的 `tests/` 与 in-package realtime 测试，因此 `coordination/acceptance_runs/` 产生的微型工作区不会再以同名 `test_*.py` 污染全量收集。执行 `python -m pytest -q`：**1587 passed, 15 skipped, 949 subtests passed**（216.08s，exit 0）。这证明现有源码与测试配置可回归；它不证明任何第三方 Agent 已被唤醒或接单。真实只读枚举事件 `EVT-DESKTOP-READ-20261107-002` 已通过新 Job bootstrap 列出本机 ChatGPT / Qoder CN / Qoder / WorkBuddy / WorkBuddyAI；该事件 `delivery_verified=false`，没有向任何第三方 Agent 发送任务。
 
 ## 尚未通过的生产门槛
 
