@@ -27,6 +27,7 @@ from uuid import uuid4
 from agent_evolution_protocol.coordination import client_registry as registry
 from agent_evolution_protocol.coordination import transcript_bus as bus
 from agent_evolution_protocol.coordination import transport_cdp as cdp
+from agent_evolution_protocol.coordination import cdp_session_delivery
 from agent_evolution_protocol.coordination import uia_argv
 from agent_evolution_protocol.coordination import ui_fallback
 from agent_evolution_protocol.coordination import desktop_providers
@@ -385,31 +386,59 @@ def _dispatch(root: Path, *, order: dict) -> dict:
     refused = _gate_refusal(root, order, profile_row=profile_row, window=window)
     if refused is not None:
         return refused
-    order["session_id"] = str(window["pid"])
+    # A PID identifies a disposable window, not the conversation.  It is only
+    # used above to bind a live CDP port to the selected process.  ACK and
+    # readback records must use the stable original-session marker instead.
+    profile_path = Path(root) / "ui_profiles" / f"{target}.json"
+    if not profile_path.is_file():
+        return _record_attempt(
+            root, order, state="DEFERRED",
+            note=("ORIGINAL_SESSION_PROFILE_REQUIRED: no verified UI profile; "
+                  "refusing raw UIA/CDP input into a guessed conversation"),
+        )
+    order["session_id"] = str(profile_row.get("session_marker") or "").strip()
     transport, info = _pick_transport(root, target, order.get("transport", "auto"))
     _record_attempt(root, order, state="WINDOW_FOUND", transport=transport,
                     receipt={**info, "session_fingerprint": identity})
 
     if transport == "cdp":
         try:
-            receipt = cdp.deliver(info["target"]["ws"], order["text"], event_id=order["event_id"], wait_seconds=8)
-        except cdp.CdpError as exc:
-            return _record_attempt(root, order, state="FAILED", transport=transport, note=f"CDP_ERROR {exc}")
+            cdp_profile = ui_fallback.load_profile(profile_path)
+            if cdp_profile.get("agent") != target:
+                raise ValueError("UI_PROFILE_AGENT_MISMATCH")
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            return _record_attempt(
+                root, order, state="DEFERRED", transport=transport,
+                note=f"ORIGINAL_SESSION_PROFILE_INVALID: {exc}; no CDP input attempted",
+            )
+        receipt = cdp_session_delivery.deliver(
+            coordination_root=root, profile=cdp_profile,
+            ws_url=str(info["target"]["ws"]), target_id=str(info["target"].get("id", "")),
+            text=order["text"], event_id=order["event_id"],
+            receipt_path=_root(root) / "receipts" / f"{order['event_id']}-{target}-cdp.json",
+            workspace_id=str(order.get("workspace_id", "")), wait_seconds=8,
+        )
         if receipt.get("task_delivered"):
             return _record_attempt(root, order, state="MESSAGE_VISIBLE", transport=transport, receipt=receipt)
+        if receipt.get("status") in {
+                "SESSION_BINDING_REQUIRED", "SESSION_NOT_VERIFIED", "MODEL_NOT_VERIFIED",
+                "NO_SAFE_COMPOSER", "CDP_PREFLIGHT_FAILED", "SESSION_BUSY",
+                "TARGET_ID_MISMATCH"}:
+            return _record_attempt(root, order, state="DEFERRED", transport=transport,
+                                   receipt=receipt,
+                                   note="PREINPUT_NOT_READY: CDP original-session preflight is incomplete")
+        if receipt.get("status") in {"SESSION_UNCERTAIN", "SEND_UNCERTAIN", "RECEIPT_COLLISION"}:
+            return _record_attempt(root, order, state="CEASED", transport=transport,
+                                   receipt=receipt,
+                                   note="ORIGINAL_SESSION_UNRESOLVED: inspect before any retry")
         return _record_attempt(root, order, state="INPUT_SUBMITTED", transport=transport, receipt=receipt,
                                note="typed into the composer but the event id never appeared; not a delivery")
 
-    profile_path = Path(root) / "ui_profiles" / f"{target}.json"
-    if profile_path.is_file():
-        receipt = _profiled_deliver(root, target, order["text"], order["event_id"],
-                                    allow_launch=bool(order.get("allow_launch")),
-                                    urgent_interject=bool(order.get("urgent_interject")),
-                                    workspace_id=str(order.get("workspace_id", "")))
-        transport = "profiled-ui"
-    else:
-        receipt = _uia_deliver(root, target, order["text"], order["event_id"],
-                               expected_pid=int(window["pid"]))
+    receipt = _profiled_deliver(root, target, order["text"], order["event_id"],
+                                allow_launch=bool(order.get("allow_launch")),
+                                urgent_interject=bool(order.get("urgent_interject")),
+                                workspace_id=str(order.get("workspace_id", "")))
+    transport = "profiled-ui"
     if transport == "profiled-ui" and receipt.get("agent_accepted") and receipt.get("task_delivered"):
         return _record_attempt(root, order, state="AGENT_ACK", transport=transport, receipt=receipt,
                                note="challenge-response verified by profiled original-session relay")

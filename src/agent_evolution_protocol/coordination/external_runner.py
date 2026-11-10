@@ -78,7 +78,7 @@ def _validate(event_id: str, workspace: Path, plan: dict, text: str,
     return argv
 
 
-def _session_binding(plan: dict, workspace: Path) -> dict | None:
+def _session_binding(plan: dict, workspace: Path, *, default_workspace_id: str = "") -> dict | None:
     """Return the mandatory identity for an input-capable plan.
 
     A provider-specific thread id alone is not enough in an execution receipt:
@@ -107,10 +107,12 @@ def _session_binding(plan: dict, workspace: Path) -> dict | None:
         evidence = plan.get("session_binding_evidence")
         if not isinstance(evidence, str) or not evidence.strip():
             raise ValueError("session_provider alias requires session_binding_evidence")
-    # An adapter that shares a native conversation with UIA can opt into the
-    # same logical workspace key.  The resolved working directory remains the
-    # conservative backward-compatible default for standalone CLI plans.
-    workspace_id = plan.get("workspace_id") or str(workspace.resolve())
+    # An adapter that shares a native conversation with UIA must use the same
+    # logical workspace key.  When an explicit key is absent, derive it from
+    # the *shared coordination root*, never from this route's working directory:
+    # UIA has no reason to know an external CLI's cwd, and the two values used
+    # to hash into independent fences for the same chat.
+    workspace_id = plan.get("workspace_id") or default_workspace_id or str(workspace.resolve())
     return session_lease.binding(workspace_id=workspace_id, provider=session_provider,
                                  target_agent=fields["target_agent"],
                                  session_id=fields["session_id"])
@@ -118,7 +120,12 @@ def _session_binding(plan: dict, workspace: Path) -> dict | None:
 
 def _lease_root(receipt_root: Path, explicit_root: Path | None) -> Path:
     """Return the one root that must be shared by all routes to this chat."""
-    return Path(explicit_root) if explicit_root is not None else session_lease.canonical_root(receipt_root)
+    # ``--session-lease-root coordination`` and
+    # ``--session-lease-root coordination/session_leases`` must mean the same
+    # thing.  Accepting the former verbatim previously recreated the original
+    # cross-route split (external ``coordination/session_state`` vs UIA
+    # ``coordination/session_leases/session_state``).
+    return session_lease.canonical_root(Path(explicit_root) if explicit_root is not None else receipt_root)
 
 
 def _session_digest(binding: dict) -> str:
@@ -423,12 +430,22 @@ def execute(root: Path, *, event_id: str, workspace: Path, plan: dict,
     argv = _validate(event_id, workspace, plan, text, timeout, max_output_bytes)
     request = {"argv": argv, "stdin": text, "workspace": str(workspace.resolve())}
     digest = _digest(request)
-    binding = _session_binding(plan, workspace)
-    root.mkdir(parents=True, exist_ok=True)
     lease_root = _lease_root(root, session_lease_root)
+    coordination_root = lease_root.parent
+    binding = _session_binding(plan, workspace,
+                               default_workspace_id=str(coordination_root.resolve()))
+    # Validate the original-session binding before materializing an output
+    # directory.  An invalid input-capable plan has not reserved or executed
+    # anything and must remain side-effect free for callers that retry with a
+    # corrected binding.
+    root.mkdir(parents=True, exist_ok=True)
     # Existing v0/early-v1 external-runner records live beside receipts.  Keep
     # them visible during the move to the coordination-wide lease directory.
-    legacy_lease_roots = (root,) if lease_root != root else ()
+    legacy_candidates = [root]
+    if session_lease_root is not None:
+        legacy_candidates.append(Path(session_lease_root))
+    legacy_lease_roots = tuple(candidate for candidate in legacy_candidates
+                               if candidate != lease_root)
     lock = nullcontext()
     if binding:
         # UIA and CLI execution now intentionally use the same durable lease
@@ -539,8 +556,13 @@ def reconcile_session(root: Path, *, workspace: Path, provider: str, target_agen
     try:
         receipt_root = Path(root)
         lease_root = _lease_root(receipt_root, session_lease_root)
-        legacy_lease_roots = (receipt_root,) if lease_root != receipt_root else ()
-        return session_lease.reconcile(lease_root, workspace_id=workspace_id or str(Path(workspace).resolve()),
+        legacy_candidates = [receipt_root]
+        if session_lease_root is not None:
+            legacy_candidates.append(Path(session_lease_root))
+        legacy_lease_roots = tuple(candidate for candidate in legacy_candidates
+                                   if candidate != lease_root)
+        return session_lease.reconcile(lease_root,
+                                       workspace_id=workspace_id or str(lease_root.parent.resolve()),
                                        provider=provider, target_agent=target_agent,
                                        session_id=session_id, evidence=evidence,
                                        timeout=SESSION_LOCK_SECONDS,

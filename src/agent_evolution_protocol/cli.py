@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from agent_evolution_protocol import __version__
 from agent_evolution_protocol.coordination.cluster_kernel import ClusterKernel
 from agent_evolution_protocol.isotime import parse_iso, parse_iso_or_none
 from agent_evolution_protocol.coordination.conversation_journal import append_event as append_chat_event, read_events as read_chat_events, cursor_for as chat_cursor_for, acknowledge as acknowledge_chat
@@ -63,6 +64,7 @@ from agent_evolution_protocol.coordination import session_fingerprint
 from agent_evolution_protocol.coordination import ack_protocol
 from agent_evolution_protocol.coordination import transcript_bus
 from agent_evolution_protocol.coordination import transport_cdp
+from agent_evolution_protocol.coordination import cdp_session_delivery
 from agent_evolution_protocol.coordination import commander
 from agent_evolution_protocol.coordination import wake_ingress
 from agent_evolution_protocol.coordination import orca_adapter
@@ -3107,15 +3109,30 @@ def coord_relay_drill(args: argparse.Namespace) -> None:
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 def coord_cdp(args: argparse.Namespace) -> None:
-    """Chrome DevTools Protocol transport: exact DOM read and composer write."""
+    """Chrome DevTools Protocol transport with lease-bound original-session writes."""
     action = args.action
+    # ``scan``, ``targets`` and ``read`` are observational commands.  They
+    # must stay usable before a coordination workspace exists: requiring the
+    # write-side root here turned a harmless discovery command into a hidden
+    # configuration dependency.  The root is only needed for a session-bound
+    # write, where it contains the verified profile, lease and receipt.
     if action == "scan":
         print(json.dumps({"endpoints": transport_cdp.scan()}, ensure_ascii=False, indent=2))
         return
     if action == "targets":
         print(json.dumps({"port": args.port, "targets": transport_cdp.targets(args.port)}, ensure_ascii=False, indent=2))
         return
-    target = transport_cdp.pick_target(args.port, title_contains=args.title or "")
+    if action == "send":
+        if not args.agent:
+            raise ProtocolError("coord-cdp send requires --agent with a verified original-session profile")
+        if not args.target_id:
+            raise ProtocolError("coord-cdp send requires exact --target-id; refuse fuzzy title selection")
+        targets = transport_cdp.targets(args.port)
+        target = next((row for row in targets if row.get("id") == args.target_id), None)
+        if not target or not target.get("ws"):
+            raise ProtocolError("CDP target-id is not an available page target")
+    else:
+        target = transport_cdp.pick_target(args.port, title_contains=args.title or "")
     if action == "read":
         ws = transport_cdp.connect(target["ws"])
         try:
@@ -3135,8 +3152,31 @@ def coord_cdp(args: argparse.Namespace) -> None:
     event_id = args.event_id or ("EVT-" + uuid4().hex[:10].upper())
     if event_id not in text:
         text = f"{text.rstrip()}\n\n[{commander.ACK_TOKEN}:{event_id}]"
-    receipt = transport_cdp.deliver(target["ws"], text, event_id=event_id, wait_seconds=args.timeout)
-    print(json.dumps({"port": args.port, "target": target.get("title"), "event_id": event_id, **receipt},
+    root = coord_root(args)
+    profile_path = root / "ui_profiles" / f"{valid_agent(args.agent)}.json"
+    if not profile_path.is_file():
+        raise ProtocolError("coord-cdp send requires ui_profiles/<agent>.json for the original session")
+    try:
+        profile = ui_fallback.load_profile(profile_path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise ProtocolError(f"invalid original-session profile: {exc}") from exc
+    if profile.get("agent") != valid_agent(args.agent):
+        raise ProtocolError("ui profile agent does not match --agent")
+    receipt = cdp_session_delivery.deliver(
+        coordination_root=root, profile=profile, ws_url=str(target["ws"]),
+        target_id=str(target["id"]), text=text, event_id=event_id,
+        receipt_path=root / "receipts" / f"{event_id}-{profile['agent']}-cdp.json",
+        # Keep the callable API compatible with programmatic callers created
+        # before the extra session-binding switches existed.  The delivery
+        # wrapper still rejects an unprovable identity; these empty defaults do
+        # not turn a legacy Namespace into authorization to send.
+        workspace_id=str(getattr(args, "workspace_id", "") or ""),
+        session_provider=str(getattr(args, "session_provider", "") or ""),
+        session_binding_evidence=str(getattr(args, "session_binding_evidence", "") or ""),
+        wait_seconds=args.timeout,
+    )
+    print(json.dumps({"port": args.port, "target": target.get("title"), "target_id": target.get("id"),
+                      "event_id": event_id, **receipt},
                      ensure_ascii=False, indent=2))
 
 
@@ -3369,6 +3409,7 @@ def federate(args: argparse.Namespace) -> None:
                                  heartbeat_timeout=args.heartbeat_timeout,
                                  dispatch=not args.no_dispatch,
                                  ack_policy=args.ack_policy,
+                                 completion_policy=args.completion_policy,
                                  hold_limit_seconds=hold_limit)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return
@@ -3378,6 +3419,7 @@ def federate(args: argparse.Namespace) -> None:
                                  heartbeat_timeout=args.heartbeat_timeout,
                                  dispatch=not args.no_dispatch, stream=sys.stdout,
                                  ack_policy=args.ack_policy,
+                                 completion_policy=args.completion_policy,
                                  hold_limit_seconds=hold_limit)
         print(json.dumps({"schema": "aep-federate-serve-v1", "workspace": args.workspace,
                           "ticks": ticks}, ensure_ascii=False, indent=2))
@@ -3487,6 +3529,12 @@ def coord_trajectory(args: argparse.Namespace) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"agent-evolution-protocol {__version__}",
+        help="print the installed Agent Evolution Protocol version and exit",
+    )
     parser.add_argument("--root", type=Path, default=Path(".agent-evolution"))
     parser.add_argument("--coord-root", type=Path, help="local coordination root for coord-* commands")
     parser.add_argument("--kernel-root", type=Path, help="local recovery kernel root for kernel-* commands")
@@ -3734,7 +3782,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     transcript = commands.add_parser("coord-transcript"); transcript.add_argument("action", choices=("publish", "read", "awareness", "digest")); transcript.add_argument("--agent"); transcript.add_argument("--text"); transcript.add_argument("--file"); transcript.add_argument("--source"); transcript.add_argument("--title"); transcript.add_argument("--after"); transcript.add_argument("--limit", type=int, default=100); transcript.add_argument("--tail", type=int, default=6); transcript.add_argument("--markdown", action="store_true"); transcript.set_defaults(func=coord_transcript)
 
-    cdp_cmd = commands.add_parser("coord-cdp"); cdp_cmd.add_argument("action", choices=("scan", "targets", "read", "send")); cdp_cmd.add_argument("--port", type=int, default=9222); cdp_cmd.add_argument("--title"); cdp_cmd.add_argument("--text"); cdp_cmd.add_argument("--text-file"); cdp_cmd.add_argument("--event-id"); cdp_cmd.add_argument("--out-file"); cdp_cmd.add_argument("--preview-chars", type=int, default=600); cdp_cmd.add_argument("--timeout", type=int, default=10); cdp_cmd.set_defaults(func=coord_cdp)
+    cdp_cmd = commands.add_parser("coord-cdp"); cdp_cmd.add_argument("action", choices=("scan", "targets", "read", "send")); cdp_cmd.add_argument("--port", type=int, default=9222); cdp_cmd.add_argument("--title"); cdp_cmd.add_argument("--target-id", help="exact CDP page target required for send"); cdp_cmd.add_argument("--agent", help="registered agent with a verified ui profile; required for send"); cdp_cmd.add_argument("--workspace-id", help="shared logical workspace identity for this original chat"); cdp_cmd.add_argument("--session-provider", help="canonical session provider shared with UIA/external routes"); cdp_cmd.add_argument("--session-binding-evidence", help="evidence required when the session provider differs from CDP"); cdp_cmd.add_argument("--text"); cdp_cmd.add_argument("--text-file"); cdp_cmd.add_argument("--event-id"); cdp_cmd.add_argument("--out-file"); cdp_cmd.add_argument("--preview-chars", type=int, default=600); cdp_cmd.add_argument("--timeout", type=int, default=10); cdp_cmd.set_defaults(func=coord_cdp)
     claw = commands.add_parser("coord-clawchat"); claw.add_argument("--host", default="127.0.0.1"); claw.add_argument("--port", type=int, default=0); claw.add_argument("--room", default="workspace"); claw.add_argument("--sender", required=True); claw.add_argument("--target", required=True); claw.add_argument("--task"); claw.add_argument("--event-id", required=True); claw.add_argument("--text"); claw.add_argument("--text-file"); claw.add_argument("--timeout", type=float, default=5); claw.add_argument("--execute", action="store_true"); claw.set_defaults(func=coord_clawchat)
 
     cmdr = commands.add_parser("coord-commander"); cmdr.add_argument("action", choices=("submit", "perceive", "tick", "ack", "status", "watch", "resume-deferred")); cmdr.add_argument("--target"); cmdr.add_argument("--order-id"); cmdr.add_argument("--sender", default="human"); cmdr.add_argument("--task"); cmdr.add_argument("--text"); cmdr.add_argument("--text-file"); cmdr.add_argument("--event-id"); cmdr.add_argument("--priority", choices=("urgent", "normal", "low"), default="normal"); cmdr.add_argument("--transport", default="auto"); cmdr.add_argument("--expires-minutes", type=int, default=120); cmdr.add_argument("--allow-launch", action="store_true"); cmdr.add_argument("--urgent-interject", action="store_true", help="send through an exact non-interrupting interject action while the agent is busy"); cmdr.add_argument("--no-perceive", action="store_true"); cmdr.add_argument("--agent"); cmdr.add_argument("--limit", type=int, default=20); cmdr.add_argument("--interval", type=float, default=30); cmdr.add_argument("--max-ticks", type=int, default=0);     cmdr.set_defaults(func=coord_commander)
@@ -3771,6 +3819,10 @@ def build_parser() -> argparse.ArgumentParser:
     fed.add_argument("--ack-policy", choices=("record", "enforce"), default="record",
                      help="what a sent-but-unacknowledged order does: record advances and "
                           "writes the verdict into the receipt, enforce holds the task")
+    fed.add_argument("--completion-policy", choices=("standard", "unattended-strict"),
+                     default="standard",
+                     help="standard records normal completion evidence; unattended-strict requires "
+                          "same-event target ACK plus a positive session-anchored result readback")
     fed.add_argument("--hold-limit-seconds", type=float, default=3600.0,
                      help="how long a hold may wait before a person is alerted (0 disables)")
     fed.add_argument("--federation-root", type=Path, default=Path(".agent-evolution"))

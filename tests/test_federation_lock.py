@@ -12,6 +12,7 @@ import multiprocessing
 import os
 from pathlib import Path
 import tempfile
+import threading
 import time
 import unittest
 from unittest import mock
@@ -97,6 +98,46 @@ class ReentrancyTests(unittest.TestCase):
         with locking.workspace_lock(self.lock_file):
             with locking.workspace_lock(self.lock_file, timeout=0.1):
                 pass
+        self.assertEqual(locking._HELD, {})
+
+    def test_second_thread_cannot_use_the_owner_thread_reentrancy(self):
+        """A sibling scheduler thread must not enter an original-session lock.
+
+        File locks are process-scoped on some platforms, so this regression
+        exercises the in-process reservation rather than relying on the OS to
+        reject a second file descriptor from the same interpreter.
+        """
+        held = threading.Event()
+        release = threading.Event()
+        contender_done = threading.Event()
+        outcomes = []
+
+        def owner():
+            with locking.workspace_lock(self.lock_file, timeout=1.0):
+                held.set()
+                self.assertTrue(release.wait(2.0))
+
+        def contender():
+            self.assertTrue(held.wait(2.0))
+            try:
+                with locking.workspace_lock(self.lock_file, timeout=0.1):
+                    outcomes.append("entered")
+            except locking.LockTimeout:
+                outcomes.append("timed-out")
+            finally:
+                contender_done.set()
+
+        first = threading.Thread(target=owner)
+        second = threading.Thread(target=contender)
+        first.start()
+        second.start()
+        self.assertTrue(contender_done.wait(2.0))
+        self.assertEqual(outcomes, ["timed-out"])
+        release.set()
+        first.join(2.0)
+        second.join(2.0)
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
         self.assertEqual(locking._HELD, {})
 
     def test_lock_is_released_after_an_exception(self):

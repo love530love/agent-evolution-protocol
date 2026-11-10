@@ -45,6 +45,18 @@ ACK_POLICIES = ("record", "enforce")
 #: report an ACK -- and the fact survives either way in ``closed[].ack``.
 DEFAULT_ACK_POLICY = "record"
 
+#: How much evidence an unattended worker needs before it may close a DAG node.
+#: ``"standard"`` retains the historical, deliberately practical behaviour:
+#: completion evidence is recorded even when a transport cannot expose every
+#: transcript detail.  ``"unattended-strict"`` is for campaigns where there is
+#: no person supervising the next hop.  It requires both a target-generated
+#: same-event acknowledgement and a positive, session-anchored result readback.
+#: It is intentionally separate from ``ack_policy``: the latter describes what
+#: to do with a missing ACK in the normal workflow, whereas this policy makes a
+#: stronger end-to-end completion claim.
+COMPLETION_POLICIES = ("standard", "unattended-strict")
+DEFAULT_COMPLETION_POLICY = "standard"
+
 
 def build_adapters(*, coord_root, agents, capabilities=None, sender="kernel",
                    transport="auto", allow_launch=False, workspace_id="",
@@ -77,7 +89,8 @@ def build_adapters(*, coord_root, agents, capabilities=None, sender="kernel",
 
 def step(root, coord_root, workspace_id, adapters, *, now=None,
          heartbeat_timeout=900, dispatch=True, perceive_first=False,
-         moment=None, hold_limit_seconds=3600, ack_policy=DEFAULT_ACK_POLICY):
+         moment=None, hold_limit_seconds=3600, ack_policy=DEFAULT_ACK_POLICY,
+         completion_policy=DEFAULT_COMPLETION_POLICY):
     """Advance one bounded step.  Returns what changed and why.
 
     ``ack_policy`` decides what an unacknowledged order does to the DAG, and it
@@ -96,6 +109,15 @@ def step(root, coord_root, workspace_id, adapters, *, now=None,
     a deployment where a missing ACK really does mean "do not proceed" needs to
     be able to say so, and because deleting the strict path would make the
     relaxation impossible to measure against.
+
+    ``completion_policy="unattended-strict"`` changes the completion bar rather
+    than merely the handling of a missing ACK.  A task may close only when the
+    target generated a same-event ACK *and* the result claim positively matches
+    an incoming transcript entry from the dispatched session.  Missing,
+    unanchored, unreadable, or contradictory evidence remains in ``held``.  It
+    exists for unattended hand-offs, where treating a local task-state write as
+    a completed external action would otherwise let the next DAG node run on a
+    guess.  The default remains ``"standard"`` for backwards compatibility.
 
     ``hold_limit_seconds`` does not advance anything under ``"enforce"``.  A hold
     that turns into progress on a timer is not "no ACK, no progress" any more; it
@@ -121,6 +143,9 @@ def step(root, coord_root, workspace_id, adapters, *, now=None,
 
     if ack_policy not in ACK_POLICIES:
         raise ValueError(f"ack_policy must be one of {ACK_POLICIES}, got {ack_policy!r}")
+    if completion_policy not in COMPLETION_POLICIES:
+        raise ValueError("completion_policy must be one of "
+                         f"{COMPLETION_POLICIES}, got {completion_policy!r}")
 
     now = now or datetime.now(timezone.utc)
     state = engine.load(root, workspace_id)
@@ -132,7 +157,8 @@ def step(root, coord_root, workspace_id, adapters, *, now=None,
     closed, held, released = _settle(root, coord_root, workspace_id, adapters, moment=moment,
                                      actions=actions, now=now,
                                      hold_limit_seconds=hold_limit_seconds,
-                                     ack_policy=ack_policy)
+                                     ack_policy=ack_policy,
+                                     completion_policy=completion_policy)
 
     # 2. tell a person about a hold that has outlived its limit.  This is a
     #    message, never a transition: `held` rows are still held afterwards.
@@ -169,7 +195,8 @@ def step(root, coord_root, workspace_id, adapters, *, now=None,
             "claims": claims, "closed": closed, "held": held,
             # Tasks that completed without an acknowledgement.  Empty under
             # ``enforce`` by construction, because those never leave ``held``.
-            "released": released, "ack_policy": ack_policy, "alerts": alerts,
+            "released": released, "ack_policy": ack_policy,
+            "completion_policy": completion_policy, "alerts": alerts,
             "tasks": {task_id: {"state": row["state"], "owner": row["owner"],
                                 "attempts": row["attempts"]}
                       for task_id, row in sorted(state["tasks"].items())}}
@@ -221,7 +248,8 @@ def _result_blocks(task_id, report, coord_root, task):
 
 
 def _settle(root, coord_root, workspace_id, adapters, *, moment, actions,
-            now=None, hold_limit_seconds=None, ack_policy=DEFAULT_ACK_POLICY):
+            now=None, hold_limit_seconds=None, ack_policy=DEFAULT_ACK_POLICY,
+            completion_policy=DEFAULT_COMPLETION_POLICY):
     """Close every running task whose assignee produced evidence, or died.
 
     Returns ``(closed, held, released)``.  ``released`` exists because the two
@@ -267,10 +295,20 @@ def _settle(root, coord_root, workspace_id, adapters, *, moment, actions,
                 closed.append({"task": task_id, "action": "abandoned",
                                "by": verdict.get("by", ""), "ack": verdict})
                 continue
+            mismatch, result_verdict = _result_blocks(task_id, report, coord_root, task)
+            strict_blockers = _unattended_strict_blockers(verdict, result_verdict)
+            if completion_policy == "unattended-strict" and strict_blockers:
+                # Strict unattended operation does not use ``ack_policy`` as an
+                # escape hatch.  The caller explicitly selected a closed loop:
+                # proof of delivery/acceptance and a positive session-bound
+                # result must both exist before a downstream task starts.
+                held.append({"task": task_id, "action": "hold_unattended_strict",
+                             "reasons": strict_blockers, "ack": verdict,
+                             "result": _result_receipt(result_verdict)})
+                continue
             if verdict.get("verdict") == "hold" and ack_policy == "enforce":
                 held.append({"task": task_id, "action": "hold_unacked", **verdict})
                 continue
-            mismatch, result_verdict = _result_blocks(task_id, report, coord_root, task)
             if mismatch is not None:
                 # The agent named an artifact and the transcript names a
                 # different one.  That is a contradiction, not a missing detail,
@@ -325,6 +363,46 @@ def _settle(root, coord_root, workspace_id, adapters, *, moment, actions,
                              moment=moment, actions=actions)
             closed.append({"task": task_id, "action": "fail", "signal": signal})
     return closed, held, released
+
+
+def _result_receipt(value):
+    """Return the stable, small result proof written into supervisor receipts."""
+    evidence = (value or {}).get("evidence") or {}
+    return {
+        "match": (value or {}).get("match"),
+        "reason": (value or {}).get("reason", ""),
+        "session_checked": bool(evidence.get("session_checked")),
+        "session_unknown": bool(evidence.get("session_unknown")),
+    }
+
+
+def _unattended_strict_blockers(ack_verdict, result_verdict):
+    """Name every missing fact required by the strict unattended contract.
+
+    ``ack_protocol.may_advance`` is already represented by ``reason ==
+    "acked"`` in :func:`_ack_blocks`.  No other ``clear`` reason is enough:
+    ``not_sent`` and ``no_ack_support`` are useful diagnostics in standard
+    mode, but are not proof that the target agent received this event.
+
+    ``result_readback.may_complete`` deliberately accepts only a positive
+    artifact comparison.  Strict mode additionally requires the comparison to
+    have been anchored to the dispatched session and free of unknown-session
+    rows, so a valid path from an unrelated or ambiguous conversation cannot
+    close an unattended hand-off.
+    """
+    from agent_evolution_protocol.coordination import result_readback
+
+    blockers = []
+    if not isinstance(ack_verdict, dict) or ack_verdict.get("reason") != "acked":
+        blockers.append("target_ack_missing")
+    if not result_readback.may_complete(result_verdict):
+        blockers.append("result_not_verified")
+    evidence = (result_verdict or {}).get("evidence") or {}
+    if not evidence.get("session_checked"):
+        blockers.append("result_session_unanchored")
+    if evidence.get("session_unknown"):
+        blockers.append("result_session_ambiguous")
+    return blockers
 
 
 def _seconds_since(value, now):
@@ -460,7 +538,8 @@ def _first_existing(paths):
 
 def serve(root, coord_root, workspace_id, adapters, *, interval=30.0, max_ticks=0,
           heartbeat_timeout=900, dispatch=True, perceive_first=False, stream=None,
-          sleep=time.sleep, hold_limit_seconds=3600, ack_policy=DEFAULT_ACK_POLICY):
+          sleep=time.sleep, hold_limit_seconds=3600, ack_policy=DEFAULT_ACK_POLICY,
+          completion_policy=DEFAULT_COMPLETION_POLICY):
     """Run :func:`step` until ``max_ticks`` or until every task is settled.
 
     Returns the number of steps taken.  A caller that wants one shot should call
@@ -473,12 +552,16 @@ def serve(root, coord_root, workspace_id, adapters, *, interval=30.0, max_ticks=
         raise ValueError("interval below one second is a busy loop, not a heartbeat")
     if ack_policy not in ACK_POLICIES:
         raise ValueError(f"ack_policy must be one of {ACK_POLICIES}, got {ack_policy!r}")
+    if completion_policy not in COMPLETION_POLICIES:
+        raise ValueError("completion_policy must be one of "
+                         f"{COMPLETION_POLICIES}, got {completion_policy!r}")
     ticks = 0
     while True:
         result = step(root, coord_root, workspace_id, adapters,
                       heartbeat_timeout=heartbeat_timeout, dispatch=dispatch,
                       perceive_first=perceive_first,
-                      hold_limit_seconds=hold_limit_seconds, ack_policy=ack_policy)
+                      hold_limit_seconds=hold_limit_seconds, ack_policy=ack_policy,
+                      completion_policy=completion_policy)
         ticks += 1
         if stream is not None:
             stream.write(json.dumps(result, ensure_ascii=False) + "\n")

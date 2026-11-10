@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.6.30 — 原会话执行面围栏与严格无人值守闭环
+
+- Harden original-session write fencing across profiled UIA, external runners,
+  the commander and CDP:
+  - lease re-entrancy is now scoped to one owning thread, so sibling scheduler
+    threads cannot concurrently enter the same original conversation;
+  - external routes canonicalize the shared `session_leases` root and derive a
+    shared workspace identity instead of splitting by their current directory;
+  - CDP writes require an exact page target, a verified original-session
+    profile, preflight session/model/composer evidence, and the same durable
+    lease as UIA; a mismatched endpoint is a no-send deferral, never an input
+    success;
+  - no-profile commander paths refuse raw UIA/CDP fallback rather than typing
+    into a guessed chat.
+- Preserve forensic evidence on CDP failures: conflicting, unreadable or
+  pre-input receipts are not overwritten; a request-hashed sidecar records the
+  new diagnostic. Post-input ambiguity remains a durable `UNCERTAIN` fence.
+- Make delivery state honest throughout the routing layer: generic transport
+  `ok`/`sent`/`DELIVERED` claims no longer become target acceptance without
+  same-event original-session visibility and an explicit matching Agent ACK.
+- Add `federate --completion-policy unattended-strict`. It prevents a DAG node
+  from closing unless a target-generated same-event ACK and a positive,
+  session-anchored result readback both exist. The historical `standard` policy
+  remains the compatibility default, so unattended deployments must opt in.
+- Update `coord-cdp` to require `--agent` and exact `--target-id` for sends;
+  discovery/read commands remain read-only and workspace-independent. Regenerate
+  the coordination skill manifest from the live CLI.
+- Add execution-plane regression coverage for cross-thread leases, shared
+  identity/root derivation, CDP target binding and receipt preservation,
+  commander status mapping, false-success routing, and strict completion.
+- Make `python -m agent_evolution_protocol --version` a supported release
+  smoke path, so version checks do not require a subcommand.
+
+**Evidence boundary:** these are local implementation and regression
+improvements. They do not claim a new live Qoder/Qoder CN/WorkBuddy/CodeBuddy
+original-session `MESSAGE_VISIBLE → AGENT_ACK → TASK_RESULT_READBACK` run, and
+Browser Bridge is not yet a live execution adapter.
+
 ## 0.6.29 — 架构重构：commander 模块拆分与 foundation 基础层收敛
 
 - Split `commander` into three layers (`commander_base`, `commander_uia`, `commander` re-exports) to improve separation of concerns.

@@ -7,7 +7,7 @@
 - 命令总数：**91**
 - 风险分布：read-only 21、mutating 55、irreversible 15
 - 用途已记录：**27** / 91（未记录 64，只允许减少）
-- 清单摘要：`sha256:7eb3f9c26a973e6feb7dd6dc5edcb9f144c9898b0654d3ccd9480c9876e5fe33`
+- 清单摘要：`sha256:8c511f2a4ec8278ad927cd8ebb0f520c31687574a0fdfdc0152285d399be0408`
 
 风险分级是**声明**而不是推导：未登记的命令一律按 `mutating` 处理。
 把会写的命令标成 `read-only` 是这里唯一有代价的错误，所以默认值朝安全方向倒。
@@ -53,7 +53,7 @@
 | `coord-bootstrap` | mutating | `—` | *未记录* |
 | `coord-capabilities` | mutating | `ACTION` | *未记录* |
 | `coord-capability-plan` | read-only | `--intent --operation` | *未记录* |
-| `coord-cdp` | irreversible | `ACTION` | Chrome DevTools Protocol transport: exact DOM read and composer write. |
+| `coord-cdp` | irreversible | `ACTION` | Chrome DevTools Protocol transport with lease-bound original-session writes. |
 | `coord-chat-ack` | mutating | `--agent --through` | *未记录* |
 | `coord-chat-digest` | mutating | `--agent` | What has the rest of the legion said recently, for an agent just joining. |
 | `coord-chat-publish` | irreversible | `--source --role` | *未记录* |
@@ -131,6 +131,7 @@
 
 | 参数 | 默认 | 用途 |
 | --- | --- | --- |
+| `--version` | `—` | print the installed Agent Evolution Protocol version and exit |
 | `--root` | `.agent-evolution` | — |
 | `--coord-root` | `—` | local coordination root for coord-* commands |
 | `--kernel-root` | `—` | local recovery kernel root for kernel-* commands |

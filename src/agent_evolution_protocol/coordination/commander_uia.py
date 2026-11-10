@@ -254,11 +254,24 @@ def perceive(root: Path, *, agents: list[str] | None = None) -> dict:
         if not text.strip():
             results.append({"agent": name, "status": "NOTHING_READABLE", "published": False})
             continue
+        # A process ID says which window happened to be captured, not which
+        # conversation produced the reply.  Publishing it as ``session_id``
+        # let an ACK from a replaced/restarted window look like an ACK for an
+        # order that had used that PID.  Preserve a stable marker when the
+        # profile supplies one; an empty value is honestly "unknown" and the
+        # ACK/readback layer will hold rather than infer identity.
+        try:
+            identity_profile = session_fingerprint.merged_profile(
+                registry.profile(root, name), session_fingerprint.ui_profile(root, name))
+            session_id = str(identity_profile.get("session_marker") or "").strip()
+        except (OSError, ValueError, KeyError, TypeError):
+            session_id = ""
         published = bus.publish(root, agent=name, text=text, source=source,
-                                session_id=str(window.get("pid", "")),
+                                session_id=session_id,
                                 window_title=str(window.get("title", "")))
         results.append({"agent": name, "status": "PUBLISHED", "source": source,
-                        "pid": window.get("pid"), "added_line_count": published["added_line_count"]})
+                        "pid": window.get("pid"), "session_id": session_id,
+                        "added_line_count": published["added_line_count"]})
     return {"at": now(), "perceived": results,
             "note": "Perception is read-only. NOTHING_READABLE is a transport gap, not idleness."}
 

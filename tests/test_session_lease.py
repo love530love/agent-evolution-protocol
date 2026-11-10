@@ -141,6 +141,62 @@ class UiLeaseTests(unittest.TestCase):
         self.assertEqual(result["state"], "SESSION_UNCERTAIN")
         self.assertEqual(driver.sent, 0)
 
+    def test_explicit_coordination_root_is_canonicalized_before_external_send(self):
+        """A raw ``coordination`` argument must not recreate a second state tree.
+
+        CLI users naturally supply the coordination directory while a UIA
+        profile supplies the canonical ``coordination/session_leases`` root.
+        They still refer to the same original chat, so the second route must
+        be fenced before it can inject any input.
+        """
+        coordination = self.root / "coordination"
+        external_root = coordination / "external_runs"
+        plan = {
+            "argv": [__import__("sys").executable, "-c", "import time; time.sleep(10)"],
+            "input_capable": True,
+            "provider": "uia",
+            "target_agent": "fake_agent",
+            "session_id": "Original task chat",
+            "workspace_id": "flaggems-sglang",
+        }
+        external = execute(external_root, event_id="EVT-RAW-COORDINATION", workspace=self.root,
+                           plan=plan, timeout=.05, session_lease_root=coordination)
+        self.assertEqual(external["state"], "UNKNOWN")
+        self.assertEqual(Path(external["session_lease"]["lease_root"]),
+                         session_lease.canonical_root(coordination))
+
+        driver = Driver()
+        result = _run_ui(coordination, coordination / "uia.json", driver,
+                         event="EVT-UI-CANONICAL")
+        self.assertEqual(result["state"], "SESSION_UNCERTAIN")
+        self.assertEqual(driver.sent, 0)
+
+    def test_missing_workspace_id_uses_shared_coordination_identity(self):
+        """External cwd must not split a lease from UIA's default workspace key."""
+        coordination = self.root / "coordination"
+        external_root = coordination / "external_runs"
+        plan = {
+            "argv": [__import__("sys").executable, "-c", "import time; time.sleep(10)"],
+            "input_capable": True,
+            "provider": "uia",
+            "target_agent": "fake_agent",
+            "session_id": "Original task chat",
+            # Deliberately omit workspace_id: it must resolve from the shared
+            # coordination root, not ``workspace`` / external runner cwd.
+        }
+        external = execute(external_root, event_id="EVT-DEFAULT-WORKSPACE", workspace=self.root,
+                           plan=plan, timeout=.05, session_lease_root=coordination)
+        self.assertEqual(external["state"], "UNKNOWN")
+        self.assertEqual(external["session_lease"]["binding"]["workspace_id"],
+                         str(coordination.resolve()))
+
+        driver = Driver()
+        result = _run_ui(coordination, coordination / "uia.json", driver,
+                         event="EVT-UI-DEFAULT-WORKSPACE",
+                         workspace_id=str(coordination.resolve()))
+        self.assertEqual(result["state"], "SESSION_UNCERTAIN")
+        self.assertEqual(driver.sent, 0)
+
     def test_normal_external_process_exit_without_delivery_proof_remains_fenced(self):
         coordination = self.root / "coordination"
         external_root = coordination / "external_runs"

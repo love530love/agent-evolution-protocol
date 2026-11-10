@@ -97,7 +97,7 @@ class CapabilityCardTests(unittest.TestCase):
 
     def test_global_flags_used_in_cards_are_declared(self):
         known = _manifest_global_flags()
-        self.assertEqual({"--root", "--coord-root", "--kernel-root"}, known,
+        self.assertEqual({"--version", "--root", "--coord-root", "--kernel-root"}, known,
                          "the generated global argument table changed")
         scanned = 0
         for card in _cards():

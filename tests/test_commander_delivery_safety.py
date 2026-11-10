@@ -1,12 +1,13 @@
 """Regression tests for wrong-client sends and self-acknowledgement."""
 
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from agent_evolution_protocol.coordination import commander, transcript_bus, transport_cdp
+from agent_evolution_protocol.coordination import commander, commander_uia, transcript_bus, transport_cdp
 
 
 class CommanderDeliverySafetyTests(unittest.TestCase):
@@ -185,18 +186,101 @@ class CommanderDeliverySafetyTests(unittest.TestCase):
         self.assertFalse(receipt["task_delivered"])
         read.assert_not_called()
 
-    def test_failed_uia_adapter_is_not_counted_as_input_submitted(self):
+    def test_failed_profiled_adapter_is_not_counted_as_input_submitted(self):
+        order = commander.submit_order(self.root, target="qoder", task="notice",
+                                       text="Read this warning", sender="codex")
+        profile = self.root / "ui_profiles" / "qoder.json"
+        profile.parent.mkdir(parents=True)
+        profile.write_text("{}", encoding="utf-8")
+        client = {"agent": "qoder", "windows": [{"pid": 123}],
+                  "unique": True, "anchored": False}
+        with (patch.object(commander.registry, "discover", return_value={"clients": [client]}),
+              patch.object(commander, "_pick_transport", return_value=("uia", {})),
+              patch.object(commander, "_profiled_deliver", return_value={
+                  "status": "NO_RECEIPT", "returncode": 1, "task_delivered": False})):
+            result = commander.dispatch(self.root, order=order)
+        self.assertEqual(result["state"], "CEASED")
+        self.assertIn("DELIVERY_UNPROVEN", result["attempts"][-1]["note"])
+
+    def test_missing_original_session_profile_refuses_raw_uia_fallback(self):
         order = commander.submit_order(self.root, target="qoder", task="notice",
                                        text="Read this warning", sender="codex")
         client = {"agent": "qoder", "windows": [{"pid": 123}],
                   "unique": True, "anchored": False}
         with (patch.object(commander.registry, "discover", return_value={"clients": [client]}),
-              patch.object(commander, "_pick_transport", return_value=("uia", {})),
-              patch.object(commander, "_uia_deliver", return_value={
-                  "status": "NO_RECEIPT", "returncode": 1, "task_delivered": False})):
+              patch.object(commander, "_pick_transport") as pick,
+              patch.object(commander, "_uia_deliver") as raw):
             result = commander.dispatch(self.root, order=order)
-        self.assertEqual(result["state"], "CEASED")
-        self.assertIn("DELIVERY_UNPROVEN", result["attempts"][-1]["note"])
+        self.assertEqual(result["state"], "DEFERRED")
+        self.assertIn("ORIGINAL_SESSION_PROFILE_REQUIRED", result["attempts"][-1]["note"])
+        pick.assert_not_called()
+        raw.assert_not_called()
+
+    def test_perception_publishes_stable_chat_marker_not_disposable_pid(self):
+        client = {"agent": "qoder", "windows": [{"pid": 123, "title": "Qoder"}],
+                  "unique": True, "anchored": False}
+        with (patch.object(commander_uia.registry, "discover", return_value={"clients": [client]}),
+              patch.object(commander_uia.registry, "profile", return_value={"agent": "qoder"}),
+              patch.object(commander_uia.session_fingerprint, "ui_profile",
+                           return_value={"session_marker": "FlagGems original chat"}),
+              patch.object(commander_uia, "_capture_uia",
+                           return_value=("FlagGems original chat\nready", "uia"))):
+            result = commander.perceive(self.root)
+        self.assertEqual(result["perceived"][0]["session_id"], "FlagGems original chat")
+        snapshot = json.loads((self.root / "transcript_bus" / "snapshots" / "qoder.json").read_text(encoding="utf-8"))
+        self.assertEqual(snapshot["session_id"], "FlagGems original chat")
+
+    def test_commander_cdp_uses_lease_bound_wrapper_not_raw_transport(self):
+        order = commander.submit_order(self.root, target="qoder", task="notice",
+                                       text="Read this warning", sender="codex")
+        profile = self.root / "ui_profiles" / "qoder.json"
+        profile.parent.mkdir(parents=True)
+        profile.write_text('{"session_marker": "FlagGems original chat"}', encoding="utf-8")
+        client = {"agent": "qoder", "windows": [{"pid": 123}],
+                  "unique": True, "anchored": False}
+        full_profile = {
+            "agent": "qoder", "session_marker": "FlagGems original chat",
+            "model_marker": "DeepSeek Flash", "session_provider": "native-qoder",
+            "session_binding_evidence": "verified original-session binding",
+        }
+        receipt = {"status": "MESSAGE_VISIBLE", "task_delivered": True,
+                   "agent_accepted": False}
+        with (patch.object(commander.registry, "discover", return_value={"clients": [client]}),
+              patch.object(commander, "_pick_transport", return_value=("cdp", {
+                  "target": {"id": "exact-tab", "ws": "ws://127.0.0.1:9222/devtools/page/exact-tab"}})),
+              patch.object(commander.ui_fallback, "load_profile", return_value=full_profile),
+              patch.object(commander.cdp_session_delivery, "deliver", return_value=receipt) as wrapped,
+              patch.object(commander.cdp, "deliver") as raw):
+            result = commander.dispatch(self.root, order=order)
+        self.assertEqual(result["state"], "MESSAGE_VISIBLE")
+        self.assertEqual(result["session_id"], "FlagGems original chat")
+        wrapped.assert_called_once()
+        raw.assert_not_called()
+
+    def test_cdp_target_binding_mismatch_is_deferred_not_misreported_as_input(self):
+        order = commander.submit_order(self.root, target="qoder", task="notice",
+                                       text="Read this warning", sender="codex")
+        profile = self.root / "ui_profiles" / "qoder.json"
+        profile.parent.mkdir(parents=True)
+        profile.write_text('{"session_marker": "FlagGems original chat"}', encoding="utf-8")
+        client = {"agent": "qoder", "windows": [{"pid": 123}],
+                  "unique": True, "anchored": False}
+        full_profile = {
+            "agent": "qoder", "session_marker": "FlagGems original chat",
+            "model_marker": "DeepSeek Flash", "session_provider": "native-qoder",
+            "session_binding_evidence": "verified original-session binding",
+        }
+        with (patch.object(commander.registry, "discover", return_value={"clients": [client]}),
+              patch.object(commander, "_pick_transport", return_value=("cdp", {
+                  "target": {"id": "exact-tab", "ws": "ws://127.0.0.1:9222/devtools/page/exact-tab"}})),
+              patch.object(commander.ui_fallback, "load_profile", return_value=full_profile),
+              patch.object(commander.cdp_session_delivery, "deliver", return_value={
+                  "status": "TARGET_ID_MISMATCH", "task_delivered": False,
+                  "agent_accepted": False,
+              })):
+            result = commander.dispatch(self.root, order=order)
+        self.assertEqual(result["state"], "DEFERRED")
+        self.assertIn("PREINPUT_NOT_READY", result["attempts"][-1]["note"])
 
     def test_profiled_original_session_route_precedes_raw_uia(self):
         order = commander.submit_order(self.root, target="qoder", task="notice",

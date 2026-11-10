@@ -167,6 +167,9 @@ class WiringTests(unittest.TestCase):
         self.order = _order(self.root)
 
     def _dispatch_with(self, receipt):
+        profile = self.root / "ui_profiles" / f"{BLOCKED}.json"
+        profile.parent.mkdir(parents=True, exist_ok=True)
+        profile.write_text("{}", encoding="utf-8")
         window = {"pid": 4242, "title": "WorkBuddy", "is_anchor": True}
         discovery = {"clients": [{"agent": BLOCKED, "windows": [window],
                                   "unique": True, "anchored": True, "out_of_scope": ""}]}
@@ -180,7 +183,7 @@ class WiringTests(unittest.TestCase):
             mock.patch.object(session_fingerprint, "compare", return_value={"match": True}),
             mock.patch.object(commander, "_gate_refusal", return_value=None),
             mock.patch.object(commander, "_pick_transport", return_value=("uia", {})),
-            mock.patch.object(commander, "_uia_deliver", return_value=receipt),
+            mock.patch.object(commander, "_profiled_deliver", return_value=receipt),
             mock.patch.object(commander, "_switch_surface", switch),
         ]
         for patch in patches:

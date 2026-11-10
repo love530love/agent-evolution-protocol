@@ -619,5 +619,119 @@ class ResultReadbackTests(unittest.TestCase):
         self.assertTrue(done["result"]["match"])
 
 
+class UnattendedStrictCompletionTests(unittest.TestCase):
+    """A hands-off campaign may only advance on a fully evidenced hand-off.
+
+    This is deliberately stricter than ``ack_policy="enforce"``: enforce
+    protects the delivery acknowledgement, while unattended-strict also
+    requires the result claim to be positively observed in that same session.
+    """
+
+    def setUp(self):
+        self._temp = TemporaryDirectory()
+        self.root = Path(self._temp.name) / "state"
+        self.coord = str(Path(self._temp.name) / "coordination")
+        self.addCleanup(self._temp.cleanup)
+
+    def _intake(self):
+        receipt = intake.intake(self.root, self.coord, text="跑通 README",
+                                agents=["alpha", "beta"], shape="reviewed", sender="kernel")
+        adapters = supervisor.build_adapters(coord_root=self.coord, agents=["alpha", "beta"],
+                                             workspace_id=receipt["workspace"])
+        return receipt, adapters
+
+    def _prepared_order(self):
+        receipt, adapters = self._intake()
+        order = commander._orders(self.coord)[0]
+        _set_order(self.coord, order["id"], "MESSAGE_VISIBLE", session_id="4242")
+        return receipt, adapters, order
+
+    def test_missing_target_ack_holds_even_when_record_policy_would_normally_advance(self):
+        from agent_evolution_protocol.coordination import transcript_bus
+        receipt, adapters, _ = self._prepared_order()
+        transcript_bus.publish(self.coord, agent="alpha", text="wrote docs/claimed.md",
+                               session_id="4242", role="assistant", direction="incoming")
+        _report(self.coord, "execute", "alpha", evidence=["docs/claimed.md"])
+
+        result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
+                                 dispatch=False, ack_policy="record",
+                                 completion_policy="unattended-strict")
+
+        self.assertEqual(result["closed"], [])
+        self.assertEqual(result["tasks"]["execute"]["state"], "running")
+        held = result["held"][0]
+        self.assertEqual(held["action"], "hold_unattended_strict")
+        self.assertEqual(held["reasons"], ["target_ack_missing"])
+        self.assertTrue(held["result"]["session_checked"])
+        self.assertIs(held["result"]["match"], True)
+
+    def test_missing_or_unverifiable_result_holds_after_a_real_ack(self):
+        from agent_evolution_protocol.coordination import transcript_bus
+        receipt, adapters, order = self._prepared_order()
+        transcript_bus.publish(self.coord, agent="alpha",
+                               text="AEP-ACK:" + order["event_id"],
+                               session_id="4242", role="assistant", direction="incoming")
+        _report(self.coord, "execute", "alpha", evidence=["done"])
+
+        result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
+                                 dispatch=False, completion_policy="unattended-strict")
+
+        self.assertEqual(result["closed"], [])
+        held = result["held"][0]
+        self.assertEqual(held["action"], "hold_unattended_strict")
+        self.assertEqual(held["reasons"], ["result_not_verified"])
+        self.assertEqual(held["ack"]["reason"], "acked")
+        self.assertIsNone(held["result"]["match"])
+
+    def test_ambiguous_session_result_cannot_complete_after_a_real_ack(self):
+        from agent_evolution_protocol.coordination import transcript_bus
+        receipt, adapters, order = self._prepared_order()
+        transcript_bus.publish(self.coord, agent="alpha",
+                               text="AEP-ACK:" + order["event_id"],
+                               session_id="4242", role="assistant", direction="incoming")
+        # The output text cannot be attributed to the original conversation.
+        transcript_bus.publish(self.coord, agent="alpha", text="wrote docs/claimed.md",
+                               role="assistant", direction="incoming")
+        _report(self.coord, "execute", "alpha", evidence=["docs/claimed.md"])
+
+        result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
+                                 dispatch=False, completion_policy="unattended-strict")
+
+        self.assertEqual(result["closed"], [])
+        held = result["held"][0]
+        self.assertEqual(held["action"], "hold_unattended_strict")
+        self.assertIn("result_not_verified", held["reasons"])
+        self.assertIn("result_session_ambiguous", held["reasons"])
+        self.assertEqual(held["ack"]["reason"], "acked")
+
+    def test_acknowledged_positive_session_bound_result_completes(self):
+        from agent_evolution_protocol.coordination import transcript_bus
+        receipt, adapters, order = self._prepared_order()
+        transcript_bus.publish(self.coord, agent="alpha",
+                               text="AEP-ACK:" + order["event_id"] + "\nwrote docs/claimed.md",
+                               session_id="4242", role="assistant", direction="incoming")
+        _report(self.coord, "execute", "alpha", evidence=["docs/claimed.md"])
+
+        result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
+                                 dispatch=False, completion_policy="unattended-strict")
+
+        done = [row for row in result["closed"] if row["action"] == "complete"]
+        self.assertEqual(len(done), 1)
+        self.assertEqual(done[0]["ack"]["reason"], "acked")
+        self.assertIs(done[0]["result"]["match"], True)
+        self.assertTrue(done[0]["result"]["session_checked"])
+        self.assertEqual(result["completion_policy"], "unattended-strict")
+
+    def test_unknown_completion_policy_is_refused(self):
+        receipt, adapters = self._intake()
+        with self.assertRaises(ValueError):
+            supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
+                            dispatch=False, completion_policy="optimistic")
+        with self.assertRaises(ValueError):
+            supervisor.serve(self.root, self.coord, receipt["workspace"], adapters,
+                             interval=1.0, max_ticks=1, dispatch=False,
+                             completion_policy="optimistic")
+
+
 if __name__ == "__main__":
     unittest.main()

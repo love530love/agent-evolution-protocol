@@ -786,6 +786,51 @@
           "required": false
         },
         {
+          "dest": "target_id",
+          "flags": [
+            "--target-id"
+          ],
+          "help": "exact CDP page target required for send",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "agent",
+          "flags": [
+            "--agent"
+          ],
+          "help": "registered agent with a verified ui profile; required for send",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "workspace_id",
+          "flags": [
+            "--workspace-id"
+          ],
+          "help": "shared logical workspace identity for this original chat",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "session_provider",
+          "flags": [
+            "--session-provider"
+          ],
+          "help": "canonical session provider shared with UIA/external routes",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "session_binding_evidence",
+          "flags": [
+            "--session-binding-evidence"
+          ],
+          "help": "evidence required when the session provider differs from CDP",
+          "kind": "option",
+          "required": false
+        },
+        {
           "dest": "text",
           "flags": [
             "--text"
@@ -838,7 +883,7 @@
       ],
       "documented": true,
       "name": "coord-cdp",
-      "purpose": "Chrome DevTools Protocol transport: exact DOM read and composer write.",
+      "purpose": "Chrome DevTools Protocol transport with lease-bound original-session writes.",
       "risk": "irreversible"
     },
     {
@@ -4675,6 +4720,20 @@
           "required": false
         },
         {
+          "choices": [
+            "standard",
+            "unattended-strict"
+          ],
+          "default": "standard",
+          "dest": "completion_policy",
+          "flags": [
+            "--completion-policy"
+          ],
+          "help": "standard records normal completion evidence; unattended-strict requires same-event target ACK plus a positive session-anchored result readback",
+          "kind": "option",
+          "required": false
+        },
+        {
           "default": 3600.0,
           "dest": "hold_limit_seconds",
           "flags": [
@@ -5471,10 +5530,20 @@
     }
   ],
   "count": 91,
-  "digest": "sha256:7eb3f9c26a973e6feb7dd6dc5edcb9f144c9898b0654d3ccd9480c9876e5fe33",
+  "digest": "sha256:8c511f2a4ec8278ad927cd8ebb0f520c31687574a0fdfdc0152285d399be0408",
   "documented": 27,
   "generated_from": "agent_evolution_protocol.cli:build_parser",
   "global_arguments": [
+    {
+      "dest": "version",
+      "flags": [
+        "--version"
+      ],
+      "help": "print the installed Agent Evolution Protocol version and exit",
+      "kind": "option",
+      "nargs": 0,
+      "required": false
+    },
     {
       "default": ".agent-evolution",
       "dest": "root",

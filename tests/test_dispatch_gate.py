@@ -281,10 +281,13 @@ class FingerprintGateTests(unittest.TestCase):
 
     def test_without_a_recorded_fingerprint_the_send_proceeds_and_says_so(self):
         order = _order(self.root)
+        profile = self.root / "ui_profiles" / "qoder.json"
+        profile.parent.mkdir(parents=True, exist_ok=True)
+        profile.write_text('{"agent": "qoder"}', encoding="utf-8")
         from unittest.mock import patch
         with (patch.object(commander.registry, "discover", return_value={"clients": [self._client()]}),
               patch.object(commander, "_pick_transport", return_value=("uia", {})),
-              patch.object(commander, "_uia_deliver", return_value={"status": "NO_RECEIPT"})):
+              patch.object(commander, "_profiled_deliver", return_value={"status": "NO_RECEIPT"})):
             result = commander.dispatch(self.root, order=order)
         found = next(attempt for attempt in result["attempts"]
                      if attempt["state"] == "WINDOW_FOUND")
