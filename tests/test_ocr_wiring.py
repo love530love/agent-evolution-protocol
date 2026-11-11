@@ -79,9 +79,13 @@ class LanguageWiringTests(unittest.TestCase):
 
     def test_observe_reports_where_the_transcript_came_from(self):
         # An Electron window has no UIA text, so "0 characters" used to mean
-        # "nothing to read" when it actually meant "I could not see".
+        # "nothing to read" when it actually meant "I could not see".  A
+        # background probe must not focus-steal merely to make OCR possible;
+        # distinguish a foreground OCR result from deliberately unreadable
+        # background state.
         self.assertIn("transcript_source", SESSION)
-        self.assertIn("$transcriptSource = 'ocr'", SESSION)
+        self.assertIn("$transcriptSource = 'ocr-foreground'", SESSION)
+        self.assertIn("BACKGROUND_CAPTURE_UNVERIFIED", SESSION)
 
 
 class OutputEncodingTests(unittest.TestCase):

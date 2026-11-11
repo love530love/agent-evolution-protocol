@@ -34,6 +34,24 @@
 
 2026-11-10 版本化复核：v0.6.30 元数据、生成的 skill manifest、模块入口版本冒烟与新增 CDP endpoint/receipt preservation 回归已纳入全量测试；`python -m pytest -q` 为 **1632 passed, 2 skipped**（205.64s，exit 0）。此数值仅证明本机源码回归，不改变下述真实目标会话生产门槛。
 
+2026-11-11 v0.6.31 补充审计：Qoder/Qoder CN 的 versioned-updater executable 不再靠“同名
+exe”隐式放行；仅在各自 profile 显式配置的绝对 `allowed_exe_roots` 内，才可把实际版本路径认作
+受信任的同一客户端。session fingerprint 以配置的逻辑 exe 保持稳定，同时记录 `actual_exe` 与
+`exe_match_mode`；越出根目录仍会失配。窗口 anchor 也改为 `CURRENT` / `STALE` /
+`PID_TITLE_MISMATCH` / `UNCONFIGURED`，不会把 title 比较伪称成 fingerprint verdict。后台巡检切为
+不抢前台的 observe 模式，无法可靠 OCR 时明确写 `BACKGROUND_CAPTURE_UNVERIFIED`。本版新增的
+elevated worker 只处理一个已经 DEPOSITED 的精确 order，默认 preview、`-Apply` 才需交互式管理员
+令牌；其 `EXECUTOR_STARTED` 回执不是送达、ACK 或结果。`session_attestation` 是短租约的前置证明
+基础件；因现有整窗 OCR 尚不能严格证明“活跃原会话”，它**尚未**接入生产发送闸门。新增或修改的
+回归随后由本版全量测试复核；这仍不是任何第三方原会话已经接单的实机结论。
+
+同日发布前只读实机枚举：Qoder（PID 43000）在
+`D:\Programs\Qoder\.qoder-versions\0.5.7\Qoder.exe`，被识别为 `exe-trusted-root`；其
+window anchor 为 `CURRENT`，已保存 fingerprint 与当前观测一致。Qoder CN（PID 40388）在自己的
+`D:\Programs\QoderCN\Qoder CN\.qoder-versions\0.5.7\Qoder CN.exe`，同样仅由其独立 root
+认可；它的旧 anchor 是 `STALE`，且没有已保存 fingerprint，故保持未锚定。两次命令都是只读
+`coord-client discover/fingerprint --show`，未聚焦窗口、未输入、未发送，也不构成 ACK 或业务结果。
+
 2026-11-09 本机复核：pytest 发现范围已显式限定为版本化的 `tests/` 与 in-package realtime 测试，因此 `coordination/acceptance_runs/` 产生的微型工作区不会再以同名 `test_*.py` 污染全量收集。执行 `python -m pytest -q`：**1587 passed, 15 skipped, 949 subtests passed**（216.08s，exit 0）。这证明现有源码与测试配置可回归；它不证明任何第三方 Agent 已被唤醒或接单。真实只读枚举事件 `EVT-DESKTOP-READ-20261107-002` 已通过新 Job bootstrap 列出本机 ChatGPT / Qoder CN / Qoder / WorkBuddy / WorkBuddyAI；该事件 `delivery_verified=false`，没有向任何第三方 Agent 发送任务。
 
 ## 尚未通过的生产门槛

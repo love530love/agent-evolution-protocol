@@ -34,6 +34,12 @@ class SplitArgsTests(unittest.TestCase):
         self.assertEqual(overrides["InterjectHints"],
                          ["插话", "继续执行并发送", "Send while running"])
 
+    def test_version_roots_are_also_serialized_as_an_array(self):
+        _, overrides = uia_argv.split_args(
+            ["-AllowedExeRoots", "D:\\应用\\Qoder\\.qoder-versions,D:\\备用\\Qoder"])
+        self.assertEqual(overrides["AllowedExeRoots"],
+                         ["D:\\应用\\Qoder\\.qoder-versions", "D:\\备用\\Qoder"])
+
     def test_switch_is_never_mistaken_for_a_value(self):
         kept, overrides = uia_argv.split_args(["-OcrVerify", "-Mode", "observe"])
         self.assertEqual(overrides, {})

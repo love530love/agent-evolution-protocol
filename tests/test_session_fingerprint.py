@@ -5,6 +5,7 @@ A fingerprint asks "is this the same conversation I sent to last time", and the
 difference is what stops a message landing in the right client's wrong session.
 """
 
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -59,6 +60,26 @@ class FingerprintTests(unittest.TestCase):
     def test_path_case_and_separators_do_not_change_the_identity(self):
         observed = self._observe(exe="d:/programs/qoder/.qoder-versions/0.5.1/qoder.exe")
         self.assertTrue(session_fingerprint.compare(self._observe(), observed)["match"])
+
+    def test_explicit_version_root_survives_a_same_binary_updater_move(self):
+        profile = {
+            **PROFILE,
+            "exe": r"D:\Programs\Qoder\Qoder.exe",
+            "allowed_exe_roots": [r"D:\Programs\Qoder\.qoder-versions"],
+        }
+        before = session_fingerprint.observe(
+            agent="qoder",
+            window={**WINDOW, "exe": r"D:\Programs\Qoder\.qoder-versions\0.5.1\Qoder.exe"},
+            profile=profile)
+        after = session_fingerprint.observe(
+            agent="qoder",
+            window={**WINDOW, "exe": r"D:\Programs\Qoder\.qoder-versions\0.5.7\Qoder.exe"},
+            profile=profile,
+        )
+        self.assertEqual(before["exe"], profile["exe"])
+        self.assertEqual(after["exe_match_mode"], "trusted-root")
+        self.assertNotEqual(before["actual_exe"], after["actual_exe"])
+        self.assertTrue(session_fingerprint.compare(before, after)["match"])
 
     def test_nothing_recorded_is_unknown_not_a_match(self):
         result = session_fingerprint.compare(None, self._observe())
@@ -119,6 +140,18 @@ class MarkerSourceTests(unittest.TestCase):
         self.assertEqual(row["model_marker"], "DeepSeek-V4.1-Flash")
         # The client record's own fields survive the merge.
         self.assertEqual(row["window_titles"], ["WorkBuddy"])
+
+    def test_version_roots_are_taken_from_the_ui_profile_too(self):
+        client = {"agent": "wb", "exe": r"D:\Programs\WorkBuddy\WorkBuddy.exe"}
+        ui = {"allowed_exe_roots": [r"D:\Programs\WorkBuddy\.versions"]}
+        row = session_fingerprint.merged_profile(client, ui)
+        self.assertEqual(row["allowed_exe_roots"], [r"D:\Programs\WorkBuddy\.versions"])
+
+    def test_malformed_ui_profile_root_is_not_accepted_as_identity_policy(self):
+        path = self.root / "ui_profiles" / "wb.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"allowed_exe_roots": ["D:\\"]}), encoding="utf-8")
+        self.assertEqual(session_fingerprint.ui_profile(self.root, "wb"), {})
 
     def test_a_switched_conversation_changes_the_digest(self):
         window = {"pid": 1, "title": "WorkBuddy",

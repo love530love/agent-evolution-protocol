@@ -374,6 +374,13 @@ class ProfileArgTests(unittest.TestCase):
         merged = ui_fallback.merge_profile_args(["pwsh"], profile)
         self.assertEqual(merged[merged.index("-SessionMarker") + 1], "赛事夺冠执行")
 
+    def test_explicit_version_roots_travel_to_the_adapter_once(self):
+        profile = {"allowed_exe_roots": [r"D:\Programs\Qoder\.qoder-versions"]}
+        merged = ui_fallback.merge_profile_args(["pwsh"], profile)
+        self.assertEqual(merged.count("-AllowedExeRoots"), 1)
+        self.assertEqual(merged[merged.index("-AllowedExeRoots") + 1],
+                         r"D:\Programs\Qoder\.qoder-versions")
+
     def test_the_input_is_left_alone(self):
         argv = ["pwsh", "-File", "a.ps1"]
         ui_fallback.merge_profile_args(argv, {"send_mode": "enter"})
@@ -394,6 +401,17 @@ class InterjectSafetyTests(unittest.TestCase):
 
     SOURCE = (Path(__file__).resolve().parents[1] / "src" / "agent_evolution_protocol"
               / "coordination" / "wake_adapters" / "uia_session.ps1").read_text(encoding="utf-8")
+
+    def test_every_native_target_gate_uses_the_shared_boundary_aware_matcher(self):
+        adapter_dir = Path(__file__).resolve().parents[1] / "src" / "agent_evolution_protocol" / "coordination" / "wake_adapters"
+        matcher = (adapter_dir / "uia_path_match.ps1").read_text(encoding="utf-8")
+        self.assertIn("function Test-AepExecutablePath", matcher)
+        self.assertIn("[IO.Path]::GetFileName($actual)", matcher)
+        self.assertIn("$actual.StartsWith($prefix", matcher)
+        for name in ("uia_session.ps1", "existing_window.ps1", "uia_select_session.ps1"):
+            source = (adapter_dir / name).read_text(encoding="utf-8")
+            self.assertIn("uia_path_match.ps1", source)
+            self.assertIn("[string[]]$AllowedExeRoots", source)
 
     @classmethod
     def _function(cls, name: str) -> str:
@@ -474,6 +492,43 @@ class InterjectSafetyTests(unittest.TestCase):
         second_enter = deliver.index("'enter-again'")
         repaste = deliver.index("Invoke-AepPasteClipboard -Value $Text -Replace")
         self.assertLess(second_enter, repaste)
+
+
+@unittest.skipUnless(sys.platform == "win32", "Windows path matching belongs to the native adapter")
+class ExecutablePathMatcherTests(unittest.TestCase):
+    MATCHER = (Path(__file__).resolve().parents[1] / "src" / "agent_evolution_protocol"
+               / "coordination" / "wake_adapters" / "uia_path_match.ps1")
+
+    def _match(self, actual: str, expected: str, roots: list[str]) -> dict:
+        pwsh = shutil.which("pwsh.exe") or shutil.which("pwsh")
+        if not pwsh:
+            self.skipTest("pwsh is required to evaluate the adapter's own matcher")
+        root_literal = ", ".join(f"'{root}'" for root in roots)
+        script = (
+            f". '{self.MATCHER}'; "
+            f"Test-AepExecutablePath -ActualPath '{actual}' -ExpectedPath '{expected}' "
+            f"-AllowedRoots @({root_literal}) | ConvertTo-Json -Compress"
+        )
+        completed = subprocess.run([pwsh, "-NoProfile", "-Command", script],
+                                   capture_output=True, text=True, timeout=60, check=False)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return json.loads(completed.stdout)
+
+    def test_adapter_accepts_only_a_same_named_binary_under_the_explicit_root(self):
+        verdict = self._match(
+            r"D:\Programs\Qoder\.qoder-versions\0.5.7\Qoder.exe",
+            r"D:\Programs\Qoder\.qoder-versions\0.5.3\Qoder.exe",
+            [r"D:\Programs\Qoder\.qoder-versions"])
+        self.assertTrue(verdict["Match"])
+        self.assertEqual(verdict["Mode"], "trusted-root")
+
+    def test_adapter_rejects_qoder_cn_sibling_even_when_the_binary_name_matches(self):
+        verdict = self._match(
+            r"D:\Programs\QoderCN\.qoder-versions\0.5.7\Qoder.exe",
+            r"D:\Programs\Qoder\.qoder-versions\0.5.3\Qoder.exe",
+            [r"D:\Programs\Qoder"])
+        self.assertFalse(verdict["Match"])
+        self.assertEqual(verdict["Mode"], "path-mismatch")
 
 
 if __name__ == "__main__":

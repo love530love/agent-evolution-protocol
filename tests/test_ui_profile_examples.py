@@ -33,7 +33,7 @@ LOCAL = ROOT / "coordination" / "ui_profiles"
 # A drive letter or a POSIX home directory: neither belongs in a template.
 ABSOLUTE_PATH = re.compile(r"(?:^|[\\s\"'])(?:[A-Za-z]:[\\/]|/Users/|/home/)")
 PID = re.compile(r"\bpid \d+")
-PLACEHOLDER = re.compile(r"^<REPLACE:")
+PLACEHOLDER = re.compile(r"^<(?:OPTIONAL_)?REPLACE:")
 
 
 def _templates() -> dict[str, dict]:
@@ -117,8 +117,12 @@ class TemplatePrivacyTests(unittest.TestCase):
                     self.assertRegex(value, PLACEHOLDER,
                                      f"{name}: {key} must still be a placeholder")
             with self.subTest(template=name):
-                self.assertEqual(sorted(profile.get("_fill_in_locally", [])),
-                                 ["exe", "session_marker"])
+                expected = ["exe", "session_marker"]
+                if "allowed_exe_roots" in profile:
+                    expected.append("allowed_exe_roots")
+                    self.assertEqual(len(profile["allowed_exe_roots"]), 1)
+                    self.assertRegex(str(profile["allowed_exe_roots"][0]), PLACEHOLDER)
+                self.assertEqual(sorted(profile.get("_fill_in_locally", [])), sorted(expected))
 
     def test_no_template_carries_an_absolute_path(self):
         for name, profile in self.templates.items():

@@ -2681,7 +2681,8 @@ def coord_uia(args: argparse.Namespace) -> None:
     # an elevated client, so it is skipped exactly where it matters.  Compare
     # here instead, with an API that works at any integrity level.
     payload["profile_path_check"] = process_info.path_check(
-        exe, (report or {}).get("pid"))
+        exe, (report or {}).get("pid"),
+        allowed_roots=profile.get("allowed_exe_roots", []))
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
@@ -2947,7 +2948,8 @@ def coord_client(args: argparse.Namespace) -> None:
                 process=args.process or "", exe=args.exe or "",
                 window_titles=args.window_titles, electron=not args.no_electron,
                 transports=args.transports or None, launch_args=args.launch_args,
-                notes=args.notes or "", session_label=args.session_label or "")
+                notes=args.notes or "", session_label=args.session_label or "",
+                allowed_exe_roots=args.allowed_exe_root or None)
         except ValueError as exc:
             raise ProtocolError(str(exc)) from exc
         print(json.dumps(payload, ensure_ascii=False, indent=2))
@@ -3778,7 +3780,7 @@ def build_parser() -> argparse.ArgumentParser:
     acc.add_argument("--persist", action="store_true", help="write the user profile so the setting survives a reboot")
     acc.set_defaults(func=coord_a11y)
 
-    client = commands.add_parser("coord-client"); client.add_argument("action", choices=("register", "list", "discover", "anchor", "launch", "fingerprint", "continuity")); client.add_argument("--agent"); client.add_argument("--display"); client.add_argument("--process"); client.add_argument("--exe"); client.add_argument("--window-titles", nargs="*", default=[]); client.add_argument("--transports", nargs="*", default=[]); client.add_argument("--launch-args", nargs="*", default=[]); client.add_argument("--notes"); client.add_argument("--session-label", default=""); client.add_argument("--no-electron", action="store_true"); client.add_argument("--pid", type=int); client.add_argument("--title"); client.add_argument("--session-id"); client.add_argument("--allow-launch", action="store_true"); client.add_argument("--debug-port", type=int); client.add_argument("--target-agent", help="the other surface to compare against, for action=continuity"); client.add_argument("--show", action="store_true", help="show the fingerprint without recording it"); client.set_defaults(func=coord_client)
+    client = commands.add_parser("coord-client"); client.add_argument("action", choices=("register", "list", "discover", "anchor", "launch", "fingerprint", "continuity")); client.add_argument("--agent"); client.add_argument("--display"); client.add_argument("--process"); client.add_argument("--exe"); client.add_argument("--allowed-exe-root", action="append", default=[], help="explicit versioned executable root; same executable basename only"); client.add_argument("--window-titles", nargs="*", default=[]); client.add_argument("--transports", nargs="*", default=[]); client.add_argument("--launch-args", nargs="*", default=[]); client.add_argument("--notes"); client.add_argument("--session-label", default=""); client.add_argument("--no-electron", action="store_true"); client.add_argument("--pid", type=int); client.add_argument("--title"); client.add_argument("--session-id"); client.add_argument("--allow-launch", action="store_true"); client.add_argument("--debug-port", type=int); client.add_argument("--target-agent", help="the other surface to compare against, for action=continuity"); client.add_argument("--show", action="store_true", help="show the fingerprint without recording it"); client.set_defaults(func=coord_client)
 
     transcript = commands.add_parser("coord-transcript"); transcript.add_argument("action", choices=("publish", "read", "awareness", "digest")); transcript.add_argument("--agent"); transcript.add_argument("--text"); transcript.add_argument("--file"); transcript.add_argument("--source"); transcript.add_argument("--title"); transcript.add_argument("--after"); transcript.add_argument("--limit", type=int, default=100); transcript.add_argument("--tail", type=int, default=6); transcript.add_argument("--markdown", action="store_true"); transcript.set_defaults(func=coord_transcript)
 

@@ -21,7 +21,7 @@ from pathlib import Path
 
 #: Parameters the UI script declares as ``[string[]]``.  They are stored as
 #: JSON arrays so PowerShell binds them without a comma-splitting guess.
-LIST_FLAGS = frozenset({"InterjectHints", "ComposerHints"})
+LIST_FLAGS = frozenset({"AllowedExeRoots", "InterjectHints", "ComposerHints"})
 PARAM_FILE_FLAG = "-ParamFile"
 
 

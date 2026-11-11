@@ -17,6 +17,7 @@ elevated target as well.
 from __future__ import annotations
 
 import ctypes
+import ntpath
 import os
 import sys
 from ctypes import wintypes
@@ -62,15 +63,106 @@ def _normalise(value: str) -> str:
     return os.path.normcase(os.path.normpath(value)) if value else ""
 
 
-def path_check(expected: str, pid) -> dict:
+def _uses_windows_path(value: str) -> bool:
+    """Whether a value needs Windows path semantics even under Linux CI."""
+    return (len(value) >= 3 and value[1:3] in (":\\", ":/")) or value.startswith(("\\\\", "//"))
+
+
+def _path_module(*values: str):
+    """Pick a path implementation without making Windows-only tests flaky."""
+    return ntpath if any(_uses_windows_path(str(value or "")) for value in values) else os.path
+
+
+def normalise_allowed_exe_roots(roots) -> list[str]:
+    """Validate the narrow version-directory policy used for executable trust.
+
+    A permitted updater root is intentionally broader than a pinned executable,
+    so it must never be a whole volume or UNC share.  Keeping this validation
+    next to :func:`executable_match` ensures discovery, UI profiles,
+    fingerprints and future attestation gates cannot each invent a looser
+    spelling of the policy.
+    """
+    if roots is None:
+        return []
+    if not isinstance(roots, (list, tuple)):
+        raise ValueError("allowed_exe_roots must be a list of absolute directories")
+    clean: list[str] = []
+    seen: set[str] = set()
+    for item in roots:
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError("allowed_exe_roots must contain non-empty absolute directories")
+        value = item.strip()
+        paths = _path_module(value)
+        if not paths.isabs(value):
+            raise ValueError("allowed_exe_roots must contain absolute directories")
+        normalized = paths.normcase(paths.normpath(value))
+        drive, tail = paths.splitdrive(normalized)
+        # ``dirname`` catches POSIX and drive roots.  The explicit splitdrive
+        # check covers a UNC share root, where the share itself is the drive.
+        if (paths.dirname(normalized) == normalized or
+                (drive and tail in ("\\", "/"))):
+            raise ValueError("allowed_exe_roots must not be a filesystem root")
+        if normalized in seen:
+            raise ValueError("allowed_exe_roots must not contain duplicate directories")
+        seen.add(normalized)
+        clean.append(value)
+    return clean
+
+
+def executable_match(expected: str, actual: str, *, allowed_roots=()) -> dict:
+    """Compare a process image to a profile, permitting explicit version roots.
+
+    A desktop client often replaces ``...\\versions\\0.5.3\\Client.exe`` with
+    a newer version directory.  Treating that as an automatic path match is
+    unsafe: two products can have overlapping display names (for example
+    Qoder and Qoder CN).  A root is therefore opt-in, boundary-aware, and is
+    accepted only when the executable file name is still exactly the one the
+    profile named.
+    """
+    result = {"match": False, "mode": "mismatch", "allowed_root": "", "reason": ""}
+    if not expected or not actual:
+        result["reason"] = "expected and actual executable paths are required"
+        return result
+    try:
+        roots = tuple(normalise_allowed_exe_roots(allowed_roots))
+    except ValueError as exc:
+        result["reason"] = f"invalid allowed executable roots: {exc}"
+        return result
+    paths = _path_module(expected, actual, *roots)
+    expected_normal = paths.normcase(paths.normpath(expected))
+    actual_normal = paths.normcase(paths.normpath(actual))
+    if actual_normal == expected_normal:
+        return {"match": True, "mode": "exact", "allowed_root": "", "reason": ""}
+    if paths.normcase(paths.basename(actual)) != paths.normcase(paths.basename(expected)):
+        result["reason"] = "the running executable name differs from the profile executable"
+        return result
+    for root in roots:
+        if not isinstance(root, str) or not root.strip():
+            continue
+        root_normal = paths.normcase(paths.normpath(root.strip()))
+        try:
+            within_root = paths.commonpath([actual_normal, root_normal]) == root_normal
+        except ValueError:
+            # Different drives or incompatible path flavours cannot form a
+            # containment relationship.
+            within_root = False
+        if within_root:
+            return {"match": True, "mode": "trusted-root", "allowed_root": root,
+                    "reason": ""}
+    result["reason"] = "the running executable is not the path this profile names or an allowed version root"
+    return result
+
+
+def path_check(expected: str, pid, *, allowed_roots=()) -> dict:
     """Does the running process match the path a profile claims?
 
-    ``match: None`` means "not checked", and ``reason`` says why.  A profile
-    that points at an old version directory keeps working only because
-    ``allow_unknown_path`` lets it through, so the drift has to be visible
-    somewhere instead of being inferred from a missing warning.
+    ``match: None`` means "not checked", and ``reason`` says why.  Exact path
+    identity is the default; an explicit version root may deliberately admit
+    a same-named binary beneath it and is recorded as ``trusted-root``.
     """
-    result = {"expected": expected or "", "actual": "", "match": None, "reason": ""}
+    result = {"expected": expected or "", "actual": "", "match": None,
+              "match_mode": "", "allowed_roots": list(allowed_roots or ()),
+              "allowed_root": "", "reason": ""}
     if not expected:
         result["reason"] = "no expected path configured"
         return result
@@ -85,7 +177,9 @@ def path_check(expected: str, pid) -> dict:
     if not actual:
         result["reason"] = "the image path could not be read"
         return result
-    result["match"] = _normalise(actual) == _normalise(expected)
-    if not result["match"]:
-        result["reason"] = "the running executable is not the path this profile names"
+    verdict = executable_match(expected, actual, allowed_roots=allowed_roots)
+    result["match"] = verdict["match"]
+    result["match_mode"] = verdict["mode"]
+    result["allowed_root"] = verdict["allowed_root"]
+    result["reason"] = verdict["reason"]
     return result

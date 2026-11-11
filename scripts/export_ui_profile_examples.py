@@ -47,6 +47,10 @@ TARGET = ROOT / "examples" / "ui_profiles"
 PLACEHOLDERS = {
     "exe": "<REPLACE: absolute path to the client executable, read from the "
            "running process rather than guessed from the install layout>",
+    "allowed_exe_roots": [
+        "<OPTIONAL_REPLACE: absolute updater root for the same executable name; "
+        "delete this key when the client has no versioned updater directory>"
+    ],
     "session_marker": "<REPLACE: a phrase that exists only in the target "
                       "conversation, never in any other chat of this client>",
 }
@@ -73,6 +77,9 @@ def scrub_value(value):
 
 
 def scrub(profile: dict) -> dict:
+    fill_in = list(FILL_IN)
+    if "allowed_exe_roots" in profile:
+        fill_in.append("allowed_exe_roots")
     out: dict = {
         "_note": (
             "Template, not a working profile. Replace the values named in "
@@ -82,7 +89,7 @@ def scrub(profile: dict) -> dict:
             "titles. Everything else here is a measured fact about the client "
             "and is safe to share."
         ),
-        "_fill_in_locally": FILL_IN,
+        "_fill_in_locally": fill_in,
     }
     for key, value in profile.items():
         if key in DROP:

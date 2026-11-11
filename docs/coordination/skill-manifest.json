@@ -1298,6 +1298,16 @@
         },
         {
           "default": [],
+          "dest": "allowed_exe_root",
+          "flags": [
+            "--allowed-exe-root"
+          ],
+          "help": "explicit versioned executable root; same executable basename only",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": [],
           "dest": "window_titles",
           "flags": [
             "--window-titles"
@@ -5530,7 +5540,7 @@
     }
   ],
   "count": 91,
-  "digest": "sha256:8c511f2a4ec8278ad927cd8ebb0f520c31687574a0fdfdc0152285d399be0408",
+  "digest": "sha256:b2b46a8912c66266c29ea1c54ab716014ed2b701c7d8b052410f88f8ad360877",
   "documented": 27,
   "generated_from": "agent_evolution_protocol.cli:build_parser",
   "global_arguments": [

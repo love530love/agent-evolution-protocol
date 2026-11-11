@@ -49,6 +49,45 @@ class WindowIdentityTests(unittest.TestCase):
         self.assertEqual(client_registry.identity(profile, _window(1, "Qoder", QODER_EXE)), "exe")
         self.assertEqual(client_registry.identity(profile, _window(1, "Qoder", "")), "process-substring")
 
+    def test_versioned_update_is_explicitly_identified_as_trusted_root(self):
+        profile = {
+            "process": "Qoder",
+            "exe": r"D:\Programs\Qoder\Qoder.exe",
+            "allowed_exe_roots": [r"D:\Programs\Qoder\.qoder-versions"],
+        }
+        self.assertEqual(
+            client_registry.identity(profile, _window(1, "Qoder", QODER_EXE)),
+            "exe-trusted-root",
+        )
+
+    def test_trusted_root_never_accepts_the_nested_qoder_cn_install(self):
+        profile = {
+            "process": "Qoder",
+            "exe": r"D:\Programs\Qoder\Qoder.exe",
+            "allowed_exe_roots": [r"D:\Programs\Qoder\.qoder-versions"],
+        }
+        self.assertEqual(
+            client_registry.identity(profile, _window(1, "Qoder CN", QODER_CN_EXE)),
+            "process-substring",
+        )
+
+    def test_registered_roots_must_be_absolute_nonroot_and_unique(self):
+        with self.assertRaisesRegex(ValueError, "absolute"):
+            client_registry.register(
+                self.root, agent="agent_one", process="Agent", window_titles=["Agent"],
+                allowed_exe_roots=["versions"],
+            )
+        with self.assertRaisesRegex(ValueError, "filesystem root"):
+            client_registry.register(
+                self.root, agent="agent_one", process="Agent", window_titles=["Agent"],
+                allowed_exe_roots=["D:\\"],
+            )
+        with self.assertRaisesRegex(ValueError, "duplicate"):
+            client_registry.register(
+                self.root, agent="agent_one", process="Agent", window_titles=["Agent"],
+                allowed_exe_roots=[r"D:\Programs\Agent", r"d:/programs/agent"],
+            )
+
     def test_the_legacy_matcher_still_matches_the_nested_title(self):
         # This is the behaviour that caused the wrong send; the test pins it so
         # the fix is understood as arbitration, not as a stricter substring.
@@ -88,6 +127,32 @@ class WindowIdentityTests(unittest.TestCase):
         # The rejection is reported even when the right window is also present:
         # a silent arbitration is indistinguishable from no arbitration.
         self.assertEqual([item["title"] for item in discovered["rejected"]], ["Qoder CN"])
+
+    def test_discovery_never_claims_a_fingerprint_verdict_from_a_title(self):
+        client_registry.set_anchor(self.root, agent="qoder", pid=22, title="Qoder")
+        with patch.object(client_registry, "visible_windows", return_value=[
+                _window(22, "Qoder", QODER_EXE)]):
+            discovered = client_registry.discover(self.root, "qoder")
+        hit = discovered["clients"][0]["windows"][0]
+        self.assertTrue(hit["is_anchor"])
+        self.assertEqual(hit["anchor_status"], "CURRENT")
+        self.assertIsNone(hit["fingerprint_match"])
+        self.assertEqual(hit["fingerprint_status"], "NOT_OBSERVED_IN_DISCOVERY")
+
+    def test_matching_pid_with_changed_title_is_not_an_anchor(self):
+        client_registry.set_anchor(self.root, agent="qoder", pid=22, title="Qoder")
+        # Matching this profile by its broad legacy process rule models PID reuse
+        # closely enough to prove the extra title fence is effective.
+        row = {"agent": "qoder", "process": "Qoder", "exe": QODER_EXE}
+        hit = _window(22, "Qoder: settings", QODER_EXE)
+        self.assertTrue(client_registry.matches(row, hit))
+        with patch.object(client_registry, "profile", return_value=row), \
+             patch.object(client_registry, "known", return_value=["qoder"]), \
+             patch.object(client_registry, "visible_windows", return_value=[hit]):
+            discovered = client_registry.discover(self.root, "qoder")
+        observed = discovered["clients"][0]["windows"][0]
+        self.assertFalse(observed["is_anchor"])
+        self.assertEqual(observed["anchor_status"], "PID_TITLE_MISMATCH")
 
     def test_discover_refuses_a_window_that_belongs_to_the_other_product(self):
         # Only the CN client is running.  Before arbitration, `qoder` claimed it

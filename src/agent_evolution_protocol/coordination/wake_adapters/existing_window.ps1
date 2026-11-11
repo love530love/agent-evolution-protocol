@@ -3,23 +3,39 @@ param(
   [Parameter(Mandatory = $true)][string]$ProcessName,
   [Parameter(Mandatory = $true)][string]$ExpectedPath,
   [Parameter(Mandatory = $true)][string]$ExpectedTitle,
+  [string[]]$AllowedExeRoots = @(),
   [switch]$AllowUnknownPath,
   [switch]$AllowAnyPath,
-  [switch]$ObserveOnly
+  [switch]$ObserveOnly,
+  [string]$ParamFile = ''
 )
 
 $ErrorActionPreference = 'Stop'
-$resolvedExpected = [IO.Path]::GetFullPath($ExpectedPath)
+if ($ParamFile -and (Test-Path -LiteralPath $ParamFile)) {
+  $overrides = [IO.File]::ReadAllText($ParamFile, [Text.Encoding]::UTF8) | ConvertFrom-Json
+  foreach ($property in $overrides.PSObject.Properties) {
+    Set-Variable -Name $property.Name -Value $property.Value -Scope Script
+  }
+}
+. (Join-Path $PSScriptRoot 'uia_path_match.ps1')
 $candidates = @(Get-Process -Name $ProcessName -ErrorAction SilentlyContinue | Where-Object {
-  $_.MainWindowHandle -ne [IntPtr]::Zero -and
-  [string]::Equals($_.MainWindowTitle, $ExpectedTitle, [StringComparison]::Ordinal) -and
-  ($AllowAnyPath -or ($_.Path -and [string]::Equals([IO.Path]::GetFullPath($_.Path), $resolvedExpected, [StringComparison]::OrdinalIgnoreCase)) -or
-   ($AllowUnknownPath -and -not $_.Path))
+  if ($_.MainWindowHandle -eq [IntPtr]::Zero -or
+      -not [string]::Equals($_.MainWindowTitle, $ExpectedTitle, [StringComparison]::Ordinal)) { return $false }
+  $path = ''
+  try { if ($_.Path) { $path = [string]$_.Path } } catch { }
+  if ($AllowAnyPath) { return $true }
+  $pathMatch = Test-AepExecutablePath -ActualPath $path -ExpectedPath $ExpectedPath -AllowedRoots $AllowedExeRoots
+  return [bool]($pathMatch.Match -or ($AllowUnknownPath -and -not $path))
 })
 if ($candidates.Count -ne 1) {
   throw "WINDOW_NOT_UNIQUE: $Agent has $($candidates.Count) matching visible windows; no input dispatched"
 }
 $target = $candidates[0]
+$targetPath = ''
+try { if ($target.Path) { $targetPath = [string]$target.Path } } catch { }
+$targetPathMatch = if ($AllowAnyPath) { $null } else {
+  Test-AepExecutablePath -ActualPath $targetPath -ExpectedPath $ExpectedPath -AllowedRoots $AllowedExeRoots
+}
 $wincli = $env:AEP_WINCLI_PATH
 $wincliObserved = $false
 if ($wincli) {
@@ -87,7 +103,9 @@ public static class AepWindowFocus {
   agent = $Agent
   pid = $target.Id
   title = $target.MainWindowTitle
-  executable = $target.Path
+  executable = $targetPath
+  path_match_mode = if ($AllowAnyPath) { 'any-path' } else { $targetPathMatch.Mode }
+  path_matched_root = if ($AllowAnyPath) { '' } else { $targetPathMatch.Root }
   wincli_observed = $wincliObserved
   foreground_request_accepted = $activated
   task_delivered = $false

@@ -2,12 +2,16 @@
   "_note": "Template, not a working profile. Replace the values named in _fill_in_locally, then copy this file to coordination/ui_profiles/<agent>.json -- that directory is gitignored because it holds machine paths and conversation titles. Everything else here is a measured fact about the client and is safe to share.",
   "_fill_in_locally": [
     "exe",
-    "session_marker"
+    "session_marker",
+    "allowed_exe_roots"
   ],
   "agent": "qoder",
   "process": "Qoder",
   "title": "Qoder",
   "exe": "<REPLACE: absolute path to the client executable, read from the running process rather than guessed from the install layout>",
+  "allowed_exe_roots": [
+    "<OPTIONAL_REPLACE: absolute updater root for the same executable name; delete this key when the client has no versioned updater directory>"
+  ],
   "session_marker": "<REPLACE: a phrase that exists only in the target conversation, never in any other chat of this client>",
   "session_evidence_markers": [
     "FlagGems-sglang"

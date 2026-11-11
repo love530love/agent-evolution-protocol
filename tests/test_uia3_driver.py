@@ -10,6 +10,8 @@ next).
 """
 
 import unittest
+import sys
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from agent_evolution_protocol.coordination import uia3
@@ -134,6 +136,28 @@ class ComposerSelectionTests(unittest.TestCase):
                            rect=FakeRect(0, 900, 1200, 950))
         driver = uia3.Uia3Driver()
         self.assertEqual(driver.composer_candidates(FakeWindow([disabled, unfocusable, pane])), [])
+
+
+class ProcessIdentityTests(unittest.TestCase):
+    @staticmethod
+    def _pids(profile, rows):
+        fake_psutil = SimpleNamespace(
+            process_iter=lambda _fields: [SimpleNamespace(info=row) for row in rows])
+        with patch.dict(sys.modules, {"psutil": fake_psutil}):
+            return uia3._pids_for(profile)
+
+    def test_version_root_accepts_the_right_qoder_updater_binary_only(self):
+        profile = _profile(
+            exe=r"D:\Programs\Qoder\.qoder-versions\0.5.3\Qoder.exe",
+            allowed_exe_roots=[r"D:\Programs\Qoder\.qoder-versions"],
+        )
+        pids = self._pids(profile, [
+            {"pid": 1, "name": "Qoder.exe",
+             "exe": r"D:\Programs\Qoder\.qoder-versions\0.5.7\Qoder.exe"},
+            {"pid": 2, "name": "Qoder.exe",
+             "exe": r"D:\Programs\QoderCN\.qoder-versions\0.5.7\Qoder.exe"},
+        ])
+        self.assertEqual(pids, [1])
 
 
 class ObserveTests(unittest.TestCase):

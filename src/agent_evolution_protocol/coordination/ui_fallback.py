@@ -12,10 +12,11 @@ from datetime import datetime, timezone
 from hashlib import sha256
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from agent_evolution_protocol.coordination import a11y
 from agent_evolution_protocol.coordination import input_routing
+from agent_evolution_protocol.coordination import process_info
 from agent_evolution_protocol.coordination import uia_argv
 from agent_evolution_protocol.coordination import vision_grounding
 from agent_evolution_protocol.coordination import session_lease
@@ -39,6 +40,11 @@ EVENT = re.compile(r"^[A-Za-z0-9_-]{4,96}$")
 BASE = Path(__file__).resolve().parent
 UIA = BASE / "wake_adapters" / "uia_session.ps1"
 SELECT_SESSION = BASE / "wake_adapters" / "uia_select_session.ps1"
+
+
+def _absolute_profile_path(value: str) -> bool:
+    """Accept native absolute paths plus Windows paths while CI runs elsewhere."""
+    return Path(value).is_absolute() or PureWindowsPath(value).is_absolute()
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -64,8 +70,10 @@ def load_profile(path: Path) -> dict:
         raise ValueError("transport must be uia or ocr")
     if profile["transport"] == "ocr" and not str(profile.get("composer_hint", "")).strip():
         raise ValueError("OCR transport requires an exact composer_hint")
-    if not Path(profile["exe"]).is_absolute():
+    if not _absolute_profile_path(profile["exe"]):
         raise ValueError("exe must be an absolute path")
+    profile["allowed_exe_roots"] = process_info.normalise_allowed_exe_roots(
+        profile.get("allowed_exe_roots", []))
     profile["reply_timeout_seconds"] = int(profile.get("reply_timeout_seconds", 120))
     if not 5 <= profile["reply_timeout_seconds"] <= 300:
         raise ValueError("reply timeout must be 5..300 seconds")
@@ -239,6 +247,7 @@ def profile_args(profile: dict) -> list[str]:
         args += ["-SendMode", str(profile["send_mode"])]
     if profile.get("allow_unknown_path"):
         args.append("-AllowUnknownPath")
+    args += executable_root_args(profile)
     strict_ocr = profile.get("transport") == "ocr" and profile.get("strict_composer_hint", False)
     if profile.get("composer_hint") and not strict_ocr:
         args += ["-ComposerHint", str(profile["composer_hint"])]
@@ -272,6 +281,13 @@ def profile_args(profile: dict) -> list[str]:
     if profile.get("settle_timeout_seconds"):
         args += ["-SettleTimeoutSeconds", str(int(profile["settle_timeout_seconds"]))]
     return args
+
+
+def executable_root_args(profile: dict) -> list[str]:
+    """Target-only arguments shared by send, focus, and session selection."""
+    allowed_exe_roots = [str(root) for root in profile.get("allowed_exe_roots", [])
+                         if str(root).strip()]
+    return ["-AllowedExeRoots", ",".join(allowed_exe_roots)] if allowed_exe_roots else []
 
 
 def merge_profile_args(argv: list[str], profile: dict) -> list[str]:
@@ -376,6 +392,7 @@ class PowerShellUiaDriver:
         focus = BASE / "wake_adapters" / "existing_window.ps1"
         args = ["-Agent", profile["agent"], "-ProcessName", profile["process"],
                 "-ExpectedTitle", profile["title"], "-ExpectedPath", profile["exe"]]
+        args += executable_root_args(profile)
         if profile.get("allow_unknown_path"):
             args.append("-AllowUnknownPath")
         self._run(focus, args)
@@ -391,7 +408,11 @@ class PowerShellUiaDriver:
             return self._run(UIA, self._target(profile) + ["-Mode", "select-ocr",
                                                          "-SessionLabel", profile["session_marker"]], timeout=75,
                               env=self._ui_env(profile))
-        args = self._target(profile) + ["-SessionLabel", profile["session_marker"]]
+        args = ["-Agent", profile["agent"], "-ProcessName", profile["process"],
+                "-ExpectedTitle", profile["title"], "-ExpectedPath", profile["exe"],
+                *executable_root_args(profile), "-SessionLabel", profile["session_marker"]]
+        if profile.get("allow_unknown_path"):
+            args.append("-AllowUnknownPath")
         return self._run(SELECT_SESSION, args)
 
     def launch(self, profile: dict) -> None:
@@ -404,8 +425,7 @@ class PowerShellUiaDriver:
                 composer_ratios: tuple[float, float] | None = None) -> dict:
         args = self._target(profile) + [
             "-Mode", "compose" if profile["transport"] == "ocr" else "deliver",
-            "-Text", message, "-EventId", event_id, "-ReadBackTimeoutSeconds", "5",
-            "-SendMode", profile.get("send_mode", "enter")]
+            "-Text", message, "-EventId", event_id, "-ReadBackTimeoutSeconds", "5"]
         if composer_ratios is not None:
             # Authorised by the router, not by the profile: the bounded geometry
             # fallback only runs because something outside the adapter produced

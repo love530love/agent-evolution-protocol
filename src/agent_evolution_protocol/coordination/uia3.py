@@ -33,6 +33,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from agent_evolution_protocol.coordination import process_info
+
 # A Chromium window without renderer accessibility exposes its window chrome
 # only: eight panes and a title bar.  Forty is comfortably above that and far
 # below any real page, so it separates "no tree" from "a small tree".
@@ -102,16 +104,18 @@ def _pids_for(profile: dict) -> list[int]:
     """Pids whose executable or image name matches the profile."""
     import psutil
 
-    wanted_exe = str(profile.get("exe") or "").strip().casefold()
+    wanted_exe = str(profile.get("exe") or "").strip()
+    allowed_roots = profile.get("allowed_exe_roots") or []
     wanted_name = str(profile.get("process") or "").strip().casefold()
     if wanted_name and not wanted_name.endswith(".exe"):
         wanted_name += ".exe"
     found: list[int] = []
     for proc in psutil.process_iter(["pid", "name", "exe"]):
         info = proc.info
-        exe = str(info.get("exe") or "").casefold()
+        exe = str(info.get("exe") or "")
         name = str(info.get("name") or "").casefold()
-        if wanted_exe and exe and exe == wanted_exe:
+        if wanted_exe and exe and process_info.executable_match(
+                wanted_exe, exe, allowed_roots=allowed_roots).get("match"):
             found.append(int(info["pid"]))
         elif not wanted_exe and wanted_name and name == wanted_name:
             found.append(int(info["pid"]))

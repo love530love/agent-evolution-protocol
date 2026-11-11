@@ -192,6 +192,78 @@ class UiFallbackTests(unittest.TestCase):
                                             "composer_hint": "Ask anything"}), encoding="utf-8")
         self.assertEqual(ui.load_profile(profile_path)["composer_hint"], "Ask anything")
 
+    def test_profile_accepts_explicit_version_roots_and_forwards_them(self):
+        profile_path = self.folder / "version-roots.json"
+        roots = [str((self.folder / "versions").resolve())]
+        profile_path.write_text(json.dumps({**PROFILE, "allowed_exe_roots": roots}),
+                                encoding="utf-8")
+        profile = ui.load_profile(profile_path)
+        self.assertEqual(profile["allowed_exe_roots"], roots)
+        args = ui.profile_args(profile)
+        self.assertEqual(args[args.index("-AllowedExeRoots") + 1], roots[0])
+
+    def test_profile_accepts_windows_version_roots_under_non_windows_ci(self):
+        profile_path = self.folder / "windows-version-roots.json"
+        roots = [r"D:\Programs\Qoder\.qoder-versions"]
+        profile_path.write_text(json.dumps({**PROFILE,
+                                            "exe": r"D:\Programs\Qoder\.qoder-versions\0.5.3\Qoder.exe",
+                                            "allowed_exe_roots": roots}), encoding="utf-8")
+        self.assertEqual(ui.load_profile(profile_path)["allowed_exe_roots"], roots)
+
+    def test_profile_rejects_a_relative_duplicate_or_filesystem_root(self):
+        profile_path = self.folder / "bad-version-roots.json"
+        profile_path.write_text(json.dumps({**PROFILE, "allowed_exe_roots": ["versions"]}),
+                                encoding="utf-8")
+        with self.assertRaises(ValueError):
+            ui.load_profile(profile_path)
+        absolute = str((self.folder / "versions").resolve())
+        profile_path.write_text(json.dumps({**PROFILE, "allowed_exe_roots": [absolute, absolute]}),
+                                encoding="utf-8")
+        with self.assertRaises(ValueError):
+            ui.load_profile(profile_path)
+        for root in ("D:\\", "\\\\server\\share\\"):
+            with self.subTest(root=root):
+                profile_path.write_text(json.dumps({**PROFILE, "allowed_exe_roots": [root]}),
+                                        encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "filesystem root"):
+                    ui.load_profile(profile_path)
+
+    def test_version_roots_reach_capture_focus_and_native_session_select(self):
+        profile = {**PROFILE, "allowed_exe_roots": [r"D:\Programs\Qoder\.qoder-versions"]}
+        driver = object.__new__(ui.PowerShellUiaDriver)
+        calls = []
+
+        def fake_run(script, args, **_kwargs):
+            calls.append((script, args))
+            if script == ui.UIA and "-OutFile" in args:
+                Path(args[args.index("-OutFile") + 1]).write_text("transcript", encoding="utf-8")
+            return {"status": "ok"}
+
+        driver._run = fake_run
+        self.assertEqual(driver.capture(profile), "transcript")
+        driver.select_session(profile)
+        self.assertEqual(len(calls), 3)
+        for _script, args in calls:
+            self.assertIn("-AllowedExeRoots", args)
+            self.assertEqual(args[args.index("-AllowedExeRoots") + 1],
+                             r"D:\Programs\Qoder\.qoder-versions")
+        selector_args = calls[-1][1]
+        self.assertNotIn("-SendMode", selector_args)
+
+    def test_native_delivery_declares_send_mode_once(self):
+        driver = object.__new__(ui.PowerShellUiaDriver)
+        calls = []
+
+        def fake_run(script, args, **_kwargs):
+            calls.append((script, args))
+            return {"status": "submitted-unconfirmed", "task_delivered": False}
+
+        driver._run = fake_run
+        driver.deliver(PROFILE, "message", "EVT-SEND-MODE")
+        args = calls[-1][1]
+        self.assertEqual(args.count("-SendMode"), 1)
+        self.assertEqual(args[args.index("-SendMode") + 1], "enter")
+
     def test_busy_agent_is_deferred_before_any_input(self):
         profile = {**PROFILE, "require_activity_ready": True}
         driver = FakeDriver(activity_state="busy")

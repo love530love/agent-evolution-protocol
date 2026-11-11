@@ -4,10 +4,19 @@ param(
   [Parameter(Mandatory = $true)][string]$ExpectedTitle,
   [Parameter(Mandatory = $true)][string]$ExpectedPath,
   [Parameter(Mandatory = $true)][string]$SessionLabel,
-  [switch]$AllowUnknownPath
+  [string[]]$AllowedExeRoots = @(),
+  [switch]$AllowUnknownPath,
+  [string]$ParamFile = ''
 )
 
 $ErrorActionPreference = 'Stop'
+if ($ParamFile -and (Test-Path -LiteralPath $ParamFile)) {
+  $overrides = [IO.File]::ReadAllText($ParamFile, [Text.Encoding]::UTF8) | ConvertFrom-Json
+  foreach ($property in $overrides.PSObject.Properties) {
+    Set-Variable -Name $property.Name -Value $property.Value -Scope Script
+  }
+}
+. (Join-Path $PSScriptRoot 'uia_path_match.ps1')
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 Add-Type -TypeDefinition @'
@@ -19,13 +28,12 @@ public static class AepSessionFocus {
 }
 '@
 
-$expected = [IO.Path]::GetFullPath($ExpectedPath)
 $windows = @(Get-Process -Name $ProcessName -ErrorAction SilentlyContinue | Where-Object {
   if ($_.MainWindowHandle -eq [IntPtr]::Zero -or $_.MainWindowTitle -cne $ExpectedTitle) { return $false }
-  $path = $null
-  try { $path = $_.Path } catch { }
-  if ($path) { return [string]::Equals([IO.Path]::GetFullPath($path), $expected, [StringComparison]::OrdinalIgnoreCase) }
-  return [bool]$AllowUnknownPath
+  $path = ''
+  try { if ($_.Path) { $path = [string]$_.Path } } catch { }
+  $pathMatch = Test-AepExecutablePath -ActualPath $path -ExpectedPath $ExpectedPath -AllowedRoots $AllowedExeRoots
+  return [bool]($pathMatch.Match -or ($AllowUnknownPath -and -not $path))
 })
 if ($windows.Count -ne 1) { throw "WINDOW_NOT_UNIQUE: $Agent has $($windows.Count) matching windows" }
 $window = $windows[0]
@@ -59,11 +67,16 @@ for ($depth = 0; $depth -le 3 -and $target; $depth++) {
   $target = $walker.GetParent($target)
 }
 if (-not $method) { throw 'SESSION_CONTROL_NOT_ACTIONABLE: no SelectionItem or Invoke pattern' }
+$selectedPath = ''
+try { if ($window.Path) { $selectedPath = [string]$window.Path } } catch { }
+$selectedPathMatch = Test-AepExecutablePath -ActualPath $selectedPath -ExpectedPath $ExpectedPath -AllowedRoots $AllowedExeRoots
 [pscustomobject]@{
   status = 'session-selection-attempted'
   agent = $Agent
   pid = $window.Id
   label = $SessionLabel
   method = $method
+  path_match_mode = $selectedPathMatch.Mode
+  path_matched_root = $selectedPathMatch.Root
   verified = $false
 } | ConvertTo-Json -Compress

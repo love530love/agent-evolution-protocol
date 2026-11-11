@@ -20,6 +20,8 @@ from pathlib import Path
 import re
 from uuid import uuid4
 
+from agent_evolution_protocol.coordination import process_info
+
 SAFE_NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 
 # Known desktop agent clients. `window_titles` is matched as a case-insensitive
@@ -38,6 +40,10 @@ BUILTIN: dict[str, dict] = {
         "display": "Qoder",
         "process": "Qoder",
         "exe": r"D:\Programs\Qoder\Qoder.exe",
+        # Qoder's updater places the running image below a versioned directory.
+        # This is an opt-in boundary, never a fuzzy prefix match: see
+        # ``process_info.executable_match``.
+        "allowed_exe_roots": [r"D:\Programs\Qoder\.qoder-versions"],
         "window_titles": ["Qoder"],
         "window_titles_exact": True,
         "electron": True,
@@ -47,6 +53,7 @@ BUILTIN: dict[str, dict] = {
         "display": "Qoder CN",
         "process": "Qoder CN",
         "exe": r"D:\Programs\QoderCN\Qoder CN\.qoder-versions\0.4.11\Qoder CN.exe",
+        "allowed_exe_roots": [r"D:\Programs\QoderCN\Qoder CN\.qoder-versions"],
         "window_titles": ["Qoder CN"],
         "window_titles_exact": True,
         "electron": True,
@@ -126,11 +133,49 @@ def _exe_for(pid: int) -> str:
         return ""
 
 
-def _same_path(left: str, right: str) -> bool:
-    if not left or not right:
-        return False
-    return (os.path.normcase(os.path.normpath(left))
-            == os.path.normcase(os.path.normpath(right)))
+def _executable_verdict(profile_row: dict, actual: str) -> dict:
+    """Apply the same executable policy in discovery and in the UI adapter.
+
+    Desktop clients commonly update beneath a versioned directory.  Discovery
+    must recognise a deliberately trusted replacement, but it must never turn
+    `Qoder` into a loose prefix that claims `Qoder CN`.
+    """
+    return process_info.executable_match(
+        str(profile_row.get("exe", "")), str(actual or ""),
+        allowed_roots=profile_row.get("allowed_exe_roots", ()),
+    )
+
+
+def _same_path(left: str, right: str, *, allowed_roots=()) -> bool:
+    return _executable_verdict({"exe": left, "allowed_exe_roots": allowed_roots}, right)["match"]
+
+
+def _runtime_profile(root: Path, agent: str, row: dict) -> dict:
+    """Add explicit UI-profile roots to the registered client identity.
+
+    Client records name the application; ui profiles describe one conversation
+    inside it.  The latter may be the first place an operator records an
+    updater root, so discovery consumes both while preserving a single
+    executable policy for every later layer.
+    """
+    merged = dict(row)
+    roots: list[str] = list(_normalise_allowed_exe_roots(row.get("allowed_exe_roots", ())))
+    ui_path = Path(root) / "ui_profiles" / f"{agent}.json"
+    if ui_path.is_file():
+        try:
+            ui_row = json.loads(ui_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            ui_row = {}
+        source = ui_row.get("allowed_exe_roots", ()) if isinstance(ui_row, dict) else ()
+        roots.extend(_normalise_allowed_exe_roots(source))
+    # Keep declaration order for audit readability while eliminating repeated
+    # roots that would otherwise make profile digests drift pointlessly.
+    unique: list[str] = []
+    for root_path in roots:
+        if root_path not in unique:
+            unique.append(root_path)
+    merged["allowed_exe_roots"] = _normalise_allowed_exe_roots(unique)
+    return merged
 
 
 def visible_windows(*, probe_exe: bool = True) -> list[dict]:
@@ -184,11 +229,16 @@ def _validate(agent: str) -> str:
     return agent
 
 
+def _normalise_allowed_exe_roots(roots: list[str] | tuple[str, ...] | None) -> list[str]:
+    """Compatibility wrapper for the single executable-trust policy."""
+    return process_info.normalise_allowed_exe_roots(roots)
+
+
 def register(root: Path, *, agent: str, display: str = "", process: str = "",
              exe: str = "", window_titles: list[str] | None = None,
              electron: bool = True, transports: list[str] | None = None,
              launch_args: list[str] | None = None, notes: str = "",
-             session_label: str = "") -> dict:
+              session_label: str = "", allowed_exe_roots: list[str] | None = None) -> dict:
     _validate(agent)
     titles = [item for item in (window_titles or []) if item.strip()]
     if not titles and not process:
@@ -198,6 +248,7 @@ def register(root: Path, *, agent: str, display: str = "", process: str = "",
         "display": display or agent,
         "process": process,
         "exe": exe,
+        "allowed_exe_roots": _normalise_allowed_exe_roots(allowed_exe_roots),
         "window_titles": titles,
         "electron": bool(electron),
         "transports": transports or ["uia", "ocr-paste"],
@@ -267,8 +318,9 @@ def identity(profile_row: dict, window: dict) -> str:
     ``process-substring`` are progressively weaker guesses, and a dispatcher is
     entitled to demand better than the last one before typing into a window.
     """
-    if _same_path(str(profile_row.get("exe", "")), str(window.get("exe", ""))):
-        return "exe"
+    verdict = _executable_verdict(profile_row, str(window.get("exe", "")))
+    if verdict["match"]:
+        return "exe" if verdict["mode"] == "exact" else "exe-trusted-root"
     title = str(window.get("title", "")).lower()
     exact = bool(profile_row.get("window_titles_exact"))
     for wanted in profile_row.get("window_titles", []):
@@ -278,21 +330,21 @@ def identity(profile_row: dict, window: dict) -> str:
     return "process-substring"
 
 
-def _executable_owners(root: Path, names: list[str]) -> dict[str, str]:
-    """Map every registered profile's executable to the agent that claims it."""
-    owners: dict[str, str] = {}
+def _executable_owners(root: Path, names: list[str]) -> list[dict]:
+    """Profiles that explicitly claim executable identities or version roots."""
+    owners: list[dict] = []
     for name in names:
         try:
             row = profile(root, name)
         except (ValueError, OSError):
             continue
-        path = str(row.get("exe", ""))
-        if path:
-            owners[os.path.normcase(os.path.normpath(path))] = name
+        row = _runtime_profile(root, name, row)
+        if str(row.get("exe", "")):
+            owners.append(row)
     return owners
 
 
-def _settle_by_executable(found: list[dict], owners: dict[str, str] | None = None) -> list[dict]:
+def _settle_by_executable(found: list[dict], owners: list[dict] | None = None) -> list[dict]:
     """Take a window away from every agent whose claim another profile refutes.
 
     Title matching cannot separate two products whose names nest: measured on
@@ -313,14 +365,16 @@ def _settle_by_executable(found: list[dict], owners: dict[str, str] | None = Non
     who was not asked about.
     """
     if owners is None:
-        owners = {os.path.normcase(os.path.normpath(str(row.get("exe", "")))): row["agent"]
-                  for row in found if row.get("exe")}
+        owners = [{"agent": row["agent"], "exe": row.get("exe", ""),
+                   "allowed_exe_roots": row.get("allowed_exe_roots", ())}
+                  for row in found if row.get("exe")]
     rejected: list[dict] = []
     for row in found:
         kept = []
         for hit in row["windows"]:
             exe = str(hit.get("exe", ""))
-            owner = owners.get(os.path.normcase(os.path.normpath(exe))) if exe else None
+            claims = {str(owner["agent"]) for owner in owners if exe and _executable_verdict(owner, exe)["match"]}
+            owner = next(iter(claims)) if len(claims) == 1 else None
             if owner and owner != row["agent"]:
                 rejected.append({"agent": row["agent"], "hwnd": hit["hwnd"],
                                  "title": hit.get("title", ""), "exe": exe,
@@ -343,7 +397,7 @@ def discover(root: Path, agent: str = "") -> dict:
     found = []
     for name in agents:
         try:
-            row = profile(root, name)
+            row = _runtime_profile(root, name, profile(root, name))
         except ValueError:
             continue
         anchor = load_anchor(root, name)
@@ -352,9 +406,29 @@ def discover(root: Path, agent: str = "") -> dict:
             if not matches(row, window):
                 continue
             hit = dict(window)
-            hit["anchor_pid"] = anchor.get("pid")
-            hit["is_anchor"] = bool(anchor.get("pid")) and hit["pid"] == anchor["pid"]
-            hit["fingerprint_match"] = bool(anchor.get("fingerprint")) and hit.get("title") == anchor.get("title")
+            configured_pid = int(anchor.get("pid") or 0)
+            configured_title = str(anchor.get("title") or "")
+            pid_match = bool(configured_pid) and hit["pid"] == configured_pid
+            title_match = (None if not configured_title else
+                           hit.get("title", "") == configured_title)
+            # A recycled PID is not an anchor.  The title guard is intentionally
+            # simple and visible; a conversation fingerprint is checked by the
+            # separate fingerprint command/dispatch preflight, not inferred from
+            # a window title here.
+            hit["anchor_pid"] = configured_pid or None
+            hit["anchor_title_match"] = title_match
+            hit["is_anchor"] = pid_match and title_match is not False
+            hit["anchor_status"] = (
+                "CURRENT" if hit["is_anchor"] else
+                "PID_TITLE_MISMATCH" if pid_match else
+                "STALE" if configured_pid else "UNCONFIGURED"
+            )
+            # The old field compared a title to a fingerprint string and always
+            # returned false.  Discovery has not read the active transcript, so
+            # no fingerprint verdict exists at this layer.  Keep the nullable
+            # key for consumers while making its absence explicit.
+            hit["fingerprint_match"] = None
+            hit["fingerprint_status"] = "NOT_OBSERVED_IN_DISCOVERY"
             hit["agent"] = name
             hit["identity"] = identity(row, window)
             hits.append(hit)

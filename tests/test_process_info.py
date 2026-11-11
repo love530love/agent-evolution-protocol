@@ -40,6 +40,46 @@ class PathCheckTests(unittest.TestCase):
         self.assertIn("not the path", result["reason"])
         self.assertEqual(result["actual"], r"D:\Apps\Qoder\0.5.1\Qoder.exe")
 
+    def test_an_explicit_version_root_accepts_the_same_binary_name(self):
+        with mock.patch.object(process_info, "available", return_value=True), \
+                mock.patch.object(process_info, "image_path",
+                                  return_value=r"D:\Apps\Qoder\.versions\0.5.1\Qoder.exe"):
+            result = process_info.path_check(
+                r"D:\Apps\Qoder\.versions\0.4.11\Qoder.exe", 1234,
+                allowed_roots=[r"D:\Apps\Qoder\.versions"])
+        self.assertTrue(result["match"])
+        self.assertEqual(result["match_mode"], "trusted-root")
+        self.assertEqual(result["allowed_root"], r"D:\Apps\Qoder\.versions")
+
+    def test_an_allowed_root_never_accepts_a_sibling_product_prefix(self):
+        verdict = process_info.executable_match(
+            r"D:\Apps\Qoder\.versions\0.4.11\Qoder.exe",
+            r"D:\Apps\QoderCN\.versions\0.5.1\Qoder.exe",
+            allowed_roots=[r"D:\Apps\Qoder"])
+        self.assertFalse(verdict["match"])
+        self.assertEqual(verdict["mode"], "mismatch")
+
+    def test_an_allowed_root_never_accepts_a_different_binary_name(self):
+        verdict = process_info.executable_match(
+            r"D:\Apps\Qoder\.versions\0.4.11\Qoder.exe",
+            r"D:\Apps\Qoder\.versions\0.5.1\Qoder CN.exe",
+            allowed_roots=[r"D:\Apps\Qoder\.versions"])
+        self.assertFalse(verdict["match"])
+        self.assertEqual(verdict["mode"], "mismatch")
+        self.assertIn("name differs", verdict["reason"])
+
+    def test_volume_or_unc_share_root_is_never_a_trusted_updater_boundary(self):
+        for root in ("D:\\", "\\\\server\\share\\"):
+            with self.subTest(root=root):
+                with self.assertRaisesRegex(ValueError, "filesystem root"):
+                    process_info.normalise_allowed_exe_roots([root])
+                verdict = process_info.executable_match(
+                    r"D:\Apps\Qoder\Qoder.exe",
+                    r"D:\Elsewhere\Qoder.exe",
+                    allowed_roots=[root])
+                self.assertFalse(verdict["match"])
+                self.assertIn("invalid allowed", verdict["reason"])
+
     @unittest.skipUnless(sys.platform == "win32", "normcase folds case only on Windows")
     def test_case_and_separator_differences_are_not_drift(self):
         with mock.patch.object(process_info, "available", return_value=True), \

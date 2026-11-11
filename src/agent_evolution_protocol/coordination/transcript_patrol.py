@@ -2,9 +2,10 @@
 
 A bus nobody writes to is decoration. This patrol walks the registered clients,
 captures whatever their window exposes, cleans it and publishes the delta. It is
-strictly read-only: it never types, never sends, never launches and never wakes
-a model. Capture does bring each window to the foreground briefly, so run it
-when nobody is typing, and keep the interval low.
+strictly non-intrusive: it never types, sends, launches, focuses a window, or
+wakes a model.  It consumes a UIA tree when one is exposed; OCR is used only
+when the target is already foreground, because desktop screenshots of an
+occluded window cannot safely be attributed to that window.
 
 Usage:
     python -m agent_evolution_protocol.coordination.transcript_patrol \
@@ -23,7 +24,7 @@ import subprocess
 import tempfile
 from typing import Any
 
-from . import transcript_bus
+from . import process_info, transcript_bus, uia_argv
 
 BASE = Path(__file__).resolve().parent
 UIA = BASE / "wake_adapters" / "uia_session.ps1"
@@ -45,7 +46,16 @@ def state_path(coord_root: Path) -> Path:
 
 def default_config(coord_root: Path) -> dict:
     """Seed a config from whatever clients already have a UI profile."""
-    clients: list[dict[str, str]] = []
+    # This is deliberately a small *observation* projection rather than a
+    # copy of the full delivery profile.  The executable fields must travel
+    # with it: otherwise an updater-safe delivery profile silently turns into
+    # a patrol that accepts any same-named process after a version move.
+    profile_fields = (
+        "agent", "process", "title", "transport", "exe",
+        "allowed_exe_roots", "allow_unknown_path", "activity_ocr",
+        "ocr_language", "session_marker",
+    )
+    clients: list[dict[str, Any]] = []
     profiles = Path(coord_root) / "ui_profiles"
     if profiles.is_dir():
         for path in sorted(profiles.glob("*.json")):
@@ -54,13 +64,19 @@ def default_config(coord_root: Path) -> dict:
             except (OSError, json.JSONDecodeError):
                 continue
             if str(data.get("agent", "")).strip():
-                clients.append({
-                    "agent": data["agent"],
-                    "process": data.get("process", ""),
-                    "title": data.get("title", ""),
-                    "transport": data.get("transport", "uia"),
-                })
-    return {"clients": clients, "note": "Read-only capture. Never types or wakes."}
+                client = {field: data[field] for field in profile_fields if field in data}
+                try:
+                    client["allowed_exe_roots"] = process_info.normalise_allowed_exe_roots(
+                        client.get("allowed_exe_roots", ()))
+                except ValueError:
+                    # A broad/malformed updater boundary is not a harmless
+                    # observation detail: omitting this client is safer than
+                    # seeding a config that can name any same-binary process.
+                    continue
+                client.setdefault("transport", "uia")
+                clients.append(client)
+    return {"clients": clients,
+            "note": "Background observation only. Never types, sends, launches, or focuses a client."}
 
 
 def load_config(coord_root: Path) -> dict:
@@ -76,28 +92,50 @@ def load_config(coord_root: Path) -> dict:
             raise ValueError("each client needs an 'agent' name")
         if not str(item.get("process", "")).strip():
             raise ValueError(f"client {item.get('agent')} needs a 'process' name")
+        try:
+            item["allowed_exe_roots"] = process_info.normalise_allowed_exe_roots(
+                item.get("allowed_exe_roots", ()))
+        except ValueError as exc:
+            raise ValueError(f"client {item.get('agent')} has invalid 'allowed_exe_roots': {exc}") from exc
     return data
 
 
 def capture(client: dict[str, Any], out_file: Path, timeout: int = 90) -> dict:
-    """Ask the transport for a transcript dump. Read-only."""
+    """Ask the transport for a background-safe transcript dump.
+
+    ``uia_session.ps1`` refuses screen OCR of an occluded client.  A blind
+    result is therefore honest coverage information, not permission to focus a
+    user window behind their back.
+    """
     pwsh = shutil.which("pwsh.exe")
     if not pwsh:
         return {"ok": False, "reason": "pwsh_missing"}
     args = [pwsh, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(UIA),
             "-Agent", client["agent"], "-ProcessName", client["process"],
-            "-Mode", "capture", "-OutFile", str(out_file)]
+            "-Mode", "observe", "-OutFile", str(out_file)]
     if str(client.get("title", "")).strip():
         args += ["-ExpectedTitle", client["title"]]
     if str(client.get("exe", "")).strip():
         args += ["-ExpectedPath", client["exe"]]
+    try:
+        roots = process_info.normalise_allowed_exe_roots(client.get("allowed_exe_roots", ()))
+    except ValueError as exc:
+        return {"ok": False, "reason": f"invalid_allowed_exe_roots:{exc}"}
+    if roots:
+        args += ["-AllowedExeRoots", ",".join(str(root) for root in roots if str(root).strip())]
     if client.get("allow_unknown_path"):
         args.append("-AllowUnknownPath")
-    if client.get("ocr_verify"):
+    if client.get("activity_ocr") or client.get("ocr_verify"):
         args.append("-OcrVerify")
+    if str(client.get("ocr_language", "")).strip():
+        args += ["-OcrLanguage", str(client["ocr_language"])]
+    if str(client.get("session_marker", "")).strip():
+        args += ["-SessionMarker", str(client["session_marker"])]
+    # Run through the same UTF-8 parameter bridge as delivery.  Otherwise a
+    # Chinese title/profile becomes question marks before PowerShell can even
+    # locate the existing window.
     try:
-        done = subprocess.run(args, text=True, encoding="utf-8", errors="replace",
-                              capture_output=True, timeout=timeout, check=False)
+        done = uia_argv.run(args, timeout=timeout)
     except subprocess.TimeoutExpired:
         return {"ok": False, "reason": "capture_timeout"}
     text = out_file.read_text(encoding="utf-8", errors="replace") if out_file.is_file() else ""

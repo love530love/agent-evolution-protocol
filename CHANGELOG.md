@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.6.31 — 更新器安全身份、静默观察与受限提权执行器
+
+- Treat versioned desktop-client updater directories as an explicit identity
+  policy rather than silently accepting a same-named executable.  Qoder and
+  Qoder CN can now opt into separate absolute `allowed_exe_roots`; every
+  platform matcher, client-registry discovery path and PowerShell UIA adapter
+  applies the same boundary-aware rule.
+- Keep an approved original-session fingerprint stable across an allowed client
+  updater move: the configured executable remains the logical identity, while
+  the observed versioned executable is retained as `actual_exe` plus an
+  `exe_match_mode` for audit.  A path outside the approved root still changes
+  the identity and fails closed.
+- Make window anchoring honest: discovery now reports `CURRENT`, `STALE`,
+  `PID_TITLE_MISMATCH` or `UNCONFIGURED`; it no longer presents a title-only
+  comparison as a session-fingerprint verdict.  Profile root inputs are
+  validated as absolute, non-duplicate Windows paths before registration.
+- Change transcript patrol to UIA `observe` mode.  Background windows are not
+  focused merely to obtain OCR; when no trusted foreground capture exists, the
+  report states `BACKGROUND_CAPTURE_UNVERIFIED` instead of manufacturing a
+  transcript.
+- Add a narrowly scoped elevated desktop worker for one exact, already
+  deposited order.  It defaults to preview, requires an interactive elevated
+  token for `-Apply`, cannot enumerate queues or launch clients, and keeps its
+  executor receipt explicitly separate from delivery/ACK/result evidence.
+- Add the durable `session_attestation` building block.  It binds a short
+  session-proof lease to the profile, fingerprint and observed surface, but is
+  intentionally **not yet a production send gate**: the current whole-window
+  OCR source cannot truthfully establish strict active-transcript evidence.
+  The next step is a dedicated active-header/transcript evidence adapter before
+  enabling that gate.
+- Regenerate the coordination skill manifest and public Qoder/Qoder CN profile
+  examples without leaking local absolute updater directories.
+
+**Evidence boundary:** local regression and read-only discovery prove the
+implementation and permitted updater identity handling only.  This release does
+not claim a new live Qoder/Qoder CN/WorkBuddy/CodeBuddy original-session
+`MESSAGE_VISIBLE → AGENT_ACK → TASK_RESULT_READBACK` delivery.
+
 ## 0.6.30 — 原会话执行面围栏与严格无人值守闭环
 
 - Harden original-session write fencing across profiled UIA, external runners,

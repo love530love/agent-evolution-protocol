@@ -2,6 +2,7 @@ param(
   [Parameter(Mandatory = $true)][string]$Agent,
   [Parameter(Mandatory = $true)][string]$ProcessName,
   [string]$ExpectedPath = '',
+  [string[]]$AllowedExeRoots = @(),
   [int]$ExpectedPid = 0,
   [string]$ExpectedTitle = '',
   [ValidateSet('observe', 'capture', 'deliver', 'compose', 'select-ocr')][string]$Mode = 'observe',
@@ -54,6 +55,8 @@ if ($ParamFile -and (Test-Path -LiteralPath $ParamFile)) {
     Set-Variable -Name $property.Name -Value $property.Value -Scope Script
   }
 }
+
+. (Join-Path $PSScriptRoot 'uia_path_match.ps1')
 
 # The same code page would otherwise mangle the receipt on the way out, so a
 # Chinese session label or composer hint came back as "?" and looked like the
@@ -579,19 +582,17 @@ function Get-TargetWindows {
     if ($ExpectedTitle -and -not [string]::Equals($proc.MainWindowTitle, $ExpectedTitle, [StringComparison]::Ordinal)) { continue }
     $procPath = ''
     try { if ($proc.Path) { $procPath = [IO.Path]::GetFullPath($proc.Path) } } catch { $procPath = '' }
-    if ($ExpectedPath) {
-      $want = [IO.Path]::GetFullPath($ExpectedPath)
-      if ($procPath) {
-        if (-not [string]::Equals($procPath, $want, [StringComparison]::OrdinalIgnoreCase)) { continue }
-      }
-      elseif (-not $AllowUnknownPath) { continue }
-    }
+    $pathMatch = Test-AepExecutablePath -ActualPath $procPath -ExpectedPath $ExpectedPath `
+      -AllowedRoots $AllowedExeRoots
+    if ($ExpectedPath -and -not $pathMatch.Match -and -not ($AllowUnknownPath -and -not $procPath)) { continue }
     $kept += [pscustomobject]@{
       Pid          = $proc.Id
       Hwnd         = $proc.MainWindowHandle
       Title        = $proc.MainWindowTitle
       Path         = $procPath
-      PathVerified = [bool]$procPath
+      PathVerified = [bool]$pathMatch.Match
+      PathMatchMode = [string]$pathMatch.Mode
+      PathMatchedRoot = [string]$pathMatch.Root
     }
   }
   return , $kept
@@ -1460,17 +1461,44 @@ if ([AepUiWindow]::GetWindowRect($window.Hwnd, [ref]$rectForRegion)) {
 
 if ($Mode -eq 'observe') {
   $transcriptSource = 'uia'
+  $ocrSkippedReason = ''
+  # ``CopyFromScreen`` sees the foreground desktop, not an arbitrary Electron
+  # window behind it.  A background OCR result can therefore be a convincing
+  # transcript from the *wrong application*.  Observation is deliberately
+  # non-intrusive: if UIA cannot read a background target, report that gap
+  # rather than quietly activating the target or publishing somebody else's
+  # pixels as this Agent's conversation.
+  $targetIsForeground = ([AepUiWindow]::GetForegroundWindow() -eq $window.Hwnd)
   # An Electron client exposes almost nothing to UIA (Qoder: 3 elements, no
   # Document), so the transcript reads as empty even though the window is full
   # of words.  Reporting 0 characters is the difference between "nothing to
   # read" and "I cannot see", so fall back to OCR when it was asked for.
   if ($OcrVerify -and $transcript.Text.Length -eq 0 -and $window.Hwnd -ne [IntPtr]::Zero) {
-    $ocrScan = Get-WindowOcrText -Hwnd $window.Hwnd
-    if ($ocrScan.Text) {
-      $transcript = [pscustomobject]@{ Text = [string]$ocrScan.Text; ElementCount = 0
-        LineCount = (Get-AepOcrLines -Scan $ocrScan).Count }
-      $transcriptSource = 'ocr'
+    if (-not $targetIsForeground) {
+      $ocrSkippedReason = 'BACKGROUND_CAPTURE_UNVERIFIED'
+      $transcriptSource = 'uia-background-unreadable'
+    } else {
+      $ocrScan = Get-WindowOcrText -Hwnd $window.Hwnd
+      if ($ocrScan.Text) {
+        $transcript = [pscustomobject]@{ Text = [string]$ocrScan.Text; ElementCount = 0
+          LineCount = (Get-AepOcrLines -Scan $ocrScan).Count }
+        $transcriptSource = 'ocr-foreground'
+        if ($SessionMarker.Trim()) {
+          if ($transcript.Text.Contains($SessionMarker)) {
+            $sessionMarkerSeen = $true
+            $sessionMarkerCheck = 'seen'
+          } else {
+            $sessionMarkerSeen = $false
+            $sessionMarkerCheck = 'absent'
+          }
+        }
+      }
     }
+  }
+  if ($OutFile) {
+    $outDir = Split-Path -Parent $OutFile
+    if ($outDir) { New-Item -ItemType Directory -Force -Path $outDir | Out-Null }
+    [IO.File]::WriteAllText($OutFile, [string]$transcript.Text, [System.Text.UTF8Encoding]::new($false))
   }
   Write-Report @{
     status                 = 'window-observed'
@@ -1478,6 +1506,8 @@ if ($Mode -eq 'observe') {
     title                  = $window.Title
     path                   = $window.Path
     path_verified          = $window.PathVerified
+    path_match_mode        = $window.PathMatchMode
+    path_matched_root      = $window.PathMatchedRoot
     launched               = $launched
     input_found            = [bool]$selection
     input_candidate_count  = $(if ($selection) { $selection.CandidateCount } else { 0 })
@@ -1496,6 +1526,9 @@ if ($Mode -eq 'observe') {
     transcript_lines       = $transcript.LineCount
     transcript_preview     = $(if ($transcript.Text.Length -gt 600) { $transcript.Text.Substring(0, 600) } else { $transcript.Text })
     transcript_source      = $transcriptSource
+    target_is_foreground   = $targetIsForeground
+    ocr_skipped_reason     = $ocrSkippedReason
+    capture_path           = $(if ($OutFile) { [IO.Path]::GetFullPath($OutFile) } else { '' })
     session_marker         = $SessionMarker
     session_marker_seen    = $sessionMarkerSeen
     session_marker_check   = $sessionMarkerCheck
@@ -1563,6 +1596,7 @@ if ($Mode -eq 'capture') {
     $ocr = Get-WindowOcrText -Hwnd $window.Hwnd
     if ($ocr.Text -and $ocr.Text.Trim().Length -gt $body.Trim().Length) { $body = $ocr.Text; $source = 'screen-ocr' }
   }
+  $capturedSessionMarkerSeen = [bool]($SessionMarker.Trim() -and $body.Contains($SessionMarker))
   $dir = Split-Path -Parent $OutFile
   if ($dir) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
   [IO.File]::WriteAllText($OutFile, $body, [System.Text.UTF8Encoding]::new($false))
@@ -1580,6 +1614,10 @@ if ($Mode -eq 'capture') {
     input_candidate_count = $(if ($selection) { $selection.CandidateCount } else { 0 })
     task_delivered      = $false
     method              = 'uia-capture'
+    foreground_changed  = $true
+    capture_scope       = 'foreground-whole-window'
+    session_marker      = $SessionMarker
+    session_marker_seen = $capturedSessionMarkerSeen
   }
   return
 }
@@ -2260,6 +2298,8 @@ Write-Report @{
   title               = $window.Title
   path                = $window.Path
   path_verified       = $window.PathVerified
+  path_match_mode     = $window.PathMatchMode
+  path_matched_root   = $window.PathMatchedRoot
   launched            = $launched
   new_session         = $launched
   write_method        = $writeMethod

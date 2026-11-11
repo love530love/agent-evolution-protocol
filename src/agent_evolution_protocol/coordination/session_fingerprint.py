@@ -8,8 +8,11 @@ similarly named session.
 
 A fingerprint is the identity of the *session*, not of the window that happens to
 show it.  It hashes the facts that a conversation cannot change without becoming
-a different conversation: the agent, the executable that runs it, the window
-title, and the two markers the profile uses to recognise a session and a model.
+a different conversation: the agent, the configured executable identity, the
+window title, and the two markers the profile uses to recognise a session and a
+model.  An explicitly trusted updater root preserves that configured executable
+identity across version-directory changes; the volatile live path is retained as
+``actual_exe`` for audit and never silently broadens the trust boundary.
 
 Deliberately excluded: the process id.  A restart is not a different session, and
 a fingerprint that breaks on every restart is a fingerprint operators learn to
@@ -24,6 +27,8 @@ import json
 import os
 from pathlib import Path
 from typing import Any
+
+from agent_evolution_protocol.coordination import process_info
 
 SCHEMA = "aep-session-fingerprint-v1"
 #: Hashed, in this order, so the digest is reproducible.
@@ -105,7 +110,41 @@ def merged_profile(client_row: dict[str, Any],
         # Always present, even when empty: a caller that indexes the key should
         # get "no marker" rather than KeyError.
         row[field] = value
+    # An updater root is client identity policy, not a conversation marker.  It
+    # can be declared in either record: ``clients/`` commonly owns the install
+    # location while ``ui_profiles/`` is where an operator first measured the
+    # versioned running path.  Carry both into observation so an approved update
+    # does not falsely look like a different desktop client.
+    roots: list[str] = []
+    for source in (row.get("allowed_exe_roots", ()),
+                   (ui_row or {}).get("allowed_exe_roots", ())):
+        for value in process_info.normalise_allowed_exe_roots(source):
+            if value not in roots:
+                roots.append(value)
+    if roots:
+        row["allowed_exe_roots"] = process_info.normalise_allowed_exe_roots(roots)
     return row
+
+
+def _executable_identity(window: dict[str, Any], profile: dict[str, Any]) -> tuple[str, str, str]:
+    """Return stable identity path, observed path, and match mode.
+
+    A versioned updater may replace ``...\\0.5.6\\Qoder.exe`` with
+    ``...\\0.5.7\\Qoder.exe`` while the original conversation remains in the
+    same application.  When that move is explicitly covered by the profile's
+    same-basename updater root, fingerprint the configured logical executable
+    rather than the volatile version directory.  The observed path is retained
+    separately for audit.  Any unapproved path still becomes the identity and
+    therefore fails comparison with the recorded client.
+    """
+    actual = str(window.get("exe") or "").strip()
+    expected = str(profile.get("exe") or "").strip()
+    verdict = process_info.executable_match(
+        expected, actual, allowed_roots=profile.get("allowed_exe_roots", ()),
+    )
+    if verdict.get("match") and expected:
+        return expected, actual, str(verdict.get("mode") or "exact")
+    return actual or expected, actual, str(verdict.get("mode") or "mismatch")
 
 
 def ui_profile(coord_root, agent: str) -> dict[str, Any]:
@@ -124,17 +163,30 @@ def ui_profile(coord_root, agent: str) -> dict[str, Any]:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
-    return data if isinstance(data, dict) else {}
+    if not isinstance(data, dict):
+        return {}
+    try:
+        data["allowed_exe_roots"] = process_info.normalise_allowed_exe_roots(
+            data.get("allowed_exe_roots", ()))
+    except ValueError:
+        # A malformed local profile must not broaden a fingerprint policy.  The
+        # caller will see the absence of profile markers and hold rather than
+        # derive a stable session identity from a whole-volume trust root.
+        return {}
+    return data
 
 
 def observe(*, agent: str, window: dict[str, Any], profile: dict[str, Any],
             moment: datetime | None = None) -> dict[str, Any]:
     """Build the fingerprint for a live window plus the profile it was bound to."""
+    executable, actual_exe, exe_match_mode = _executable_identity(window, profile)
     row = {
         "schema": SCHEMA,
         "agent": str(agent),
         "pid": int(window.get("pid") or 0),
-        "exe": str(window.get("exe") or profile.get("exe") or ""),
+        "exe": executable,
+        "actual_exe": actual_exe,
+        "exe_match_mode": exe_match_mode,
         "title": str(window.get("title") or ""),
         "session_marker": str(profile.get("session_marker") or ""),
         "model_marker": str(profile.get("model_marker") or ""),
