@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from agent_evolution_protocol.coordination import ui_fallback as ui
+from agent_evolution_protocol.coordination import session_fingerprint
 from agent_evolution_protocol.coordination import vision_grounding
 from agent_evolution_protocol.coordination import wake_daemon
 
@@ -23,7 +24,8 @@ class FakeDriver:
                  blocked_by=None, answers=True, delivered=None,
                  input_candidate_count=None, input_ambiguous=False,
                  window_size=None, input_region=None,
-                 interject_evidence=None, interject_action=None):
+                 interject_evidence=None, interject_action=None,
+                 attestation=None):
         self.model = model
         self.session = session
         self.input_found = input_found
@@ -48,6 +50,8 @@ class FakeDriver:
         self.captured = 0
         self.expected_ack = ""
         self.ratios = []
+        self.expected_surfaces = []
+        self.attestation = attestation
 
     def observe(self, profile):
         if self.no_window:
@@ -84,13 +88,20 @@ class FakeDriver:
         self.session = True
         return {"status": "session-selection-attempted"}
 
+    def attest_original_session(self, profile):
+        if self.attestation is not None:
+            return self.attestation(profile) if callable(self.attestation) else self.attestation
+        return {"valid": False, "reason": "ATTESTATION_UNSUPPORTED_BY_DRIVER"}
+
     def launch(self, profile):
         self.launched += 1
         self.no_window = False
 
-    def deliver(self, profile, message, event_id, *, urgent=False, composer_ratios=None):
+    def deliver(self, profile, message, event_id, *, urgent=False, composer_ratios=None,
+                expected_surface=None):
         self.sent += 1
         self.ratios.append(composer_ratios)
+        self.expected_surfaces.append(expected_surface)
         if not self.answers:
             return {"status": self.send_status,
                     "task_delivered": self.delivered is True,
@@ -121,11 +132,109 @@ class UiFallbackTests(unittest.TestCase):
                       receipt_path=self.receipt, lock_path=self.lock,
                       driver=driver, poll_seconds=0.1, **kwargs)
 
+    @staticmethod
+    def strict_profile():
+        return {
+            **PROFILE,
+            "require_strict_session_attestation": True,
+            "session_proof": {
+                "session_region": {"left": 0.25, "top": 0.0, "right": 0.95, "bottom": 0.25},
+                "model_region": {"left": 0.70, "top": 0.0, "right": 1.0, "bottom": 0.25},
+                "selector_region": {"left": 0.0, "top": 0.0, "right": 0.25, "bottom": 1.0},
+                "composer_region": {"left": 0.25, "top": 0.75, "right": 1.0, "bottom": 1.0},
+            },
+        }
+
+    def record_strict_fingerprint(self, profile):
+        observed = session_fingerprint.observe(
+            agent=profile["agent"],
+            window={"pid": 1234, "title": "Fake Agent", "exe": profile["exe"]},
+            profile=profile,
+        )
+        session_fingerprint.record(self.folder, profile["agent"], observed)
+
+    @staticmethod
+    def strict_attestation(profile):
+        return {
+            "valid": True,
+            "surface": {
+                "kind": "desktop-uia3", "pid": 1234, "title": "Fake Agent",
+                "actual_exe": profile["exe"], "path_match_mode": "exact",
+                "path_policy_digest": "", "target_id": "hwnd:77|runtime:42.77",
+            },
+            "capture": {"session_matches": [{"name": profile["session_marker"]}],
+                        "model_matches": [{"name": profile["model_marker"]}]},
+            "evidence": {
+                "transcript_source": "uia3-bounded-tree",
+                "marker_scope": "active-transcript",
+                "session_marker_seen": True, "model_marker_seen": True,
+                "session_switch": {"attempted": False, "unique": True,
+                                   "result": "already-active"},
+                "focus_changed": False, "input_attempted": False,
+                "input_submitted": False,
+            },
+        }
+
     def test_wrong_model_never_sends(self):
         driver = FakeDriver(model=False)
         result = self.run_relay(driver)
         self.assertEqual(result["state"], "MODEL_NOT_VERIFIED")
         self.assertEqual(driver.sent, 0)
+
+    def test_strict_attestation_refusal_happens_before_any_send(self):
+        profile = self.strict_profile()
+        driver = FakeDriver(attestation={"valid": False,
+                                         "reason": "ATTESTATION_ACTIVE_SESSION_NOT_VISIBLE"})
+        result = ui.run(profile, "Analyze the error", event_id="EVT-STRICT-BLOCK",
+                        receipt_path=self.receipt, lock_path=self.lock,
+                        driver=driver, poll_seconds=0.1)
+        self.assertEqual(result["state"], "SESSION_ATTESTATION_REQUIRED")
+        self.assertEqual(result["reason"], "ATTESTATION_ACTIVE_SESSION_NOT_VISIBLE")
+        self.assertEqual(driver.sent, 0)
+
+    def test_strict_attestation_binds_the_existing_send_without_claiming_delivery(self):
+        profile = self.strict_profile()
+        self.record_strict_fingerprint(profile)
+        driver = FakeDriver(attestation=self.strict_attestation)
+        result = ui.run(profile, "Analyze the error", event_id="EVT-STRICT-OK",
+                        receipt_path=self.receipt, lock_path=self.lock,
+                        driver=driver, poll_seconds=0.1)
+        self.assertEqual(result["state"], "AGENT_REPLY_VERIFIED")
+        self.assertEqual(driver.sent, 1)
+        self.assertEqual(driver.expected_surfaces[0]["target_id"], "hwnd:77|runtime:42.77")
+        proof = result["session_attestation"]
+        self.assertTrue(proof["valid"])
+        self.assertFalse(proof["delivery_proven"])
+        self.assertTrue(Path(proof["attestation_path"]).is_file())
+        self.assertTrue(Path(proof["evidence_path"]).is_file())
+
+    def test_strict_direct_relay_requires_a_recorded_matching_fingerprint(self):
+        profile = self.strict_profile()
+        driver = FakeDriver(attestation=self.strict_attestation)
+        result = ui.run(profile, "Analyze the error", event_id="EVT-STRICT-NOFINGERPRINT",
+                        receipt_path=self.receipt, lock_path=self.lock,
+                        driver=driver, poll_seconds=0.1)
+        self.assertEqual(result["state"], "SESSION_ATTESTATION_REQUIRED")
+        self.assertEqual(result["reason"], "SESSION_FINGERPRINT_REQUIRED")
+        self.assertEqual(driver.sent, 0)
+        self.assertFalse((self.folder / "session_attestation_evidence").exists())
+
+    def test_strict_profile_requires_calibrated_bounded_regions(self):
+        profile_path = self.folder / "strict-missing-regions.json"
+        profile_path.write_text(json.dumps({**PROFILE, "require_strict_session_attestation": True}),
+                                encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "session_proof"):
+            ui.load_profile(profile_path)
+
+    def test_strict_profile_rejects_selector_overlap_with_the_composer(self):
+        profile_path = self.folder / "strict-overlap.json"
+        profile = self.strict_profile()
+        profile["session_proof"]["selector_region"] = {
+            "left": 0.0, "top": 0.70, "right": 0.35, "bottom": 1.0,
+        }
+        profile_path.write_text(json.dumps(profile), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "selector_region"):
+            ui.load_profile(profile_path)
 
     def test_unverified_session_names_the_marker_it_looked_for(self):
         # "session not verified" and "the profile marker is a typo" look

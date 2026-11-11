@@ -169,7 +169,8 @@ def _profiled_deliver(root: Path, agent: str, text: str, event_id: str, *,
         # Carry the integrity verdict into the durable order history.  Without
         # it the receipt says "no input" and leaves the reader to work out that
         # the reason was UIPI rather than a client that would not focus.
-        for key in ("drivable", "blocked_by", "target_elevation", "executor_elevation", "reason", "session_lease"):
+        for key in ("drivable", "blocked_by", "target_elevation", "executor_elevation", "reason",
+                    "session_lease", "session_attestation"):
             if result.get(key) not in (None, ""):
                 receipt[key] = result[key]
         return receipt

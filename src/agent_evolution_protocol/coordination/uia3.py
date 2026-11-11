@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_evolution_protocol.coordination import process_info
+from agent_evolution_protocol.coordination import session_attestation
 
 # A Chromium window without renderer accessibility exposes its window chrome
 # only: eight panes and a title bar.  Forty is comfortably above that and far
@@ -209,6 +210,259 @@ class Uia3Driver:
                     parts.append(value)
         return "\n".join(parts)
 
+    # -- strict original-session proof -----------------------------------
+    @staticmethod
+    def _region_rect(wrapper, region: dict) -> tuple[int, int, int, int] | None:
+        """Convert one profile-calibrated normalized region to screen pixels."""
+        try:
+            outer = wrapper.rectangle()
+            left = int(outer.left + outer.width() * float(region["left"]))
+            top = int(outer.top + outer.height() * float(region["top"]))
+            right = int(outer.left + outer.width() * float(region["right"]))
+            bottom = int(outer.top + outer.height() * float(region["bottom"]))
+        except (AttributeError, KeyError, TypeError, ValueError):
+            return None
+        if left >= right or top >= bottom:
+            return None
+        return left, top, right, bottom
+
+    @classmethod
+    def _bounded_marker_matches(cls, elements: list[Any], wrapper, *, marker: str,
+                                region: dict) -> list[dict]:
+        """Find distinct marker leaves inside a calibrated, bounded region.
+
+        The visual tree contains both sidebar rows and top-level container
+        names.  Counting arbitrary descendants would allow either one to
+        satisfy an "active conversation" proof, so only controls whose own
+        centre lies inside the configured region are considered and duplicate
+        wrapper/leaf reports at the same geometry are folded together.
+        """
+        bounds = cls._region_rect(wrapper, region)
+        if not marker or bounds is None:
+            return []
+        left, top, right, bottom = bounds
+        found: list[dict] = []
+        seen: set[tuple] = set()
+        container_types = {"Window", "Pane", "Group", "List", "Tree", "DataGrid"}
+        for element in elements:
+            try:
+                info = element.element_info
+                name = str(info.name or "").strip()
+                control_type = str(info.control_type or "")
+                rect = element.rectangle()
+            except Exception:  # noqa: BLE001 - a stale UIA node is not proof
+                continue
+            if marker not in name or control_type in container_types:
+                continue
+            centre_x = (int(rect.left) + int(rect.right)) // 2
+            centre_y = (int(rect.top) + int(rect.bottom)) // 2
+            if not (left <= centre_x < right and top <= centre_y < bottom):
+                continue
+            key = (name, control_type, centre_x // 8, centre_y // 8)
+            if key in seen:
+                continue
+            seen.add(key)
+            found.append({
+                "name": name[:300], "control_type": control_type,
+                "rect": {"left": int(rect.left), "top": int(rect.top),
+                         "right": int(rect.right), "bottom": int(rect.bottom)},
+            })
+        return found
+
+    @staticmethod
+    def _runtime_id(wrapper) -> str:
+        """Read a stable UIA runtime identity without guessing from a title.
+
+        ``HWND`` identifies a top-level native window, but Electron can swap
+        the renderer/root provider while retaining that handle.  Strict input
+        therefore binds both the HWND and the current UIA runtime id.  Different
+        pywinauto builds expose it either directly on ``element_info`` or via
+        the underlying COM element, hence the deliberately small compatibility
+        probe below.  An unreadable id is a refusal, not a reason to weaken the
+        surface to HWND-only.
+        """
+        try:
+            info = wrapper.element_info
+        except Exception:  # noqa: BLE001
+            return ""
+        values = [getattr(info, "runtime_id", None)]
+        for owner in (getattr(info, "element", None), getattr(info, "_element", None)):
+            method = getattr(owner, "GetRuntimeId", None)
+            if callable(method):
+                try:
+                    values.append(method())
+                except Exception:  # noqa: BLE001 - no partial identity
+                    pass
+        for value in values:
+            if callable(value):
+                try:
+                    value = value()
+                except Exception:  # noqa: BLE001
+                    continue
+            if isinstance(value, (list, tuple)):
+                parts = [str(item).strip() for item in value if str(item).strip()]
+                if parts:
+                    return ".".join(parts)
+            elif value is not None and str(value).strip():
+                return str(value).strip()
+        return ""
+
+    @classmethod
+    def _surface(cls, profile: dict, wrapper, info: dict) -> tuple[dict | None, str]:
+        """Return an attestation-ready native surface, or a refusal reason."""
+        try:
+            pid = int(wrapper.element_info.process_id)
+            title = str(wrapper.window_text() or "").strip()
+        except Exception:  # noqa: BLE001
+            return None, "ATTESTATION_SURFACE_UNREADABLE"
+        actual_exe = process_info.image_path(pid)
+        if not actual_exe:
+            return None, "ATTESTATION_PROCESS_PATH_UNREADABLE"
+        path_match = process_info.executable_match(
+            str(profile.get("exe") or ""), actual_exe,
+            allowed_roots=profile.get("allowed_exe_roots") or (),
+        )
+        if path_match.get("match") is not True:
+            return None, "ATTESTATION_UNTRUSTED_PROCESS_PATH"
+        handle = info.get("handle")
+        runtime_id = cls._runtime_id(wrapper)
+        if not title or not handle:
+            return None, "ATTESTATION_SURFACE_UNREADABLE"
+        if not runtime_id:
+            return None, "ATTESTATION_RUNTIME_ID_UNREADABLE"
+        return {
+            "kind": "desktop-uia3",
+            "pid": pid,
+            "title": title,
+            "actual_exe": actual_exe,
+            "path_match_mode": str(path_match.get("mode") or ""),
+            "path_policy_digest": "",
+            "target_id": f"hwnd:{int(handle)}|runtime:{runtime_id}",
+        }, ""
+
+    @staticmethod
+    def _proof_regions(profile: dict) -> tuple[dict, str]:
+        proof = profile.get("session_proof")
+        if not isinstance(proof, dict):
+            return {}, "ATTESTATION_PROOF_REGIONS_REQUIRED"
+        for name in ("session_region", "model_region", "selector_region", "composer_region"):
+            region = proof.get(name)
+            if not isinstance(region, dict) or set(region) != {"left", "top", "right", "bottom"}:
+                return {}, "ATTESTATION_PROOF_REGIONS_REQUIRED"
+        return proof, ""
+
+    def _active_session_probe(self, profile: dict, *, allow_select: bool,
+                              wrapper=None, info: dict | None = None,
+                              expected_surface: dict | None = None) -> dict:
+        """Read bounded active/header regions, selecting only when unique."""
+        proof, reason = self._proof_regions(profile)
+        if reason:
+            return {"valid": False, "reason": reason}
+        if wrapper is None:
+            wrapper, info = self.find_window(profile)
+        if info is None:
+            info = {}
+        if wrapper is None:
+            return {"valid": False, "reason": "ATTESTATION_NO_WINDOW", "window": info}
+        try:
+            elements = list(wrapper.descendants())
+        except Exception as exc:  # noqa: BLE001
+            return {"valid": False, "reason": "ATTESTATION_TREE_UNREADABLE",
+                    "error": str(exc)[:400]}
+        if len(elements) < self.min_elements:
+            return {"valid": False, "reason": "ATTESTATION_TREE_TOO_SMALL",
+                    "element_count": len(elements)}
+        session_hits = self._bounded_marker_matches(
+            elements, wrapper, marker=str(profile.get("session_marker") or ""),
+            region=proof["session_region"])
+        model_hits = self._bounded_marker_matches(
+            elements, wrapper, marker=str(profile.get("model_marker") or ""),
+            region=proof["model_region"])
+        capture = {
+            "element_count": len(elements), "session_matches": session_hits,
+            "model_matches": model_hits, "proof_regions": proof,
+        }
+        if len(session_hits) == 1 and len(model_hits) == 1:
+            surface, surface_reason = self._surface(profile, wrapper, info)
+            if surface is None:
+                return {"valid": False, "reason": surface_reason, "capture": capture}
+            if expected_surface is not None:
+                try:
+                    same_surface = (session_attestation.surface_digest(surface) ==
+                                    session_attestation.surface_digest(expected_surface))
+                except (TypeError, ValueError):
+                    same_surface = False
+                if not same_surface:
+                    return {"valid": False, "reason": "ATTESTATION_SURFACE_CHANGED",
+                            "capture": capture, "surface": surface}
+            return {
+                "valid": True, "surface": surface, "capture": capture,
+                "evidence": {
+                    "transcript_source": "uia3-bounded-tree",
+                    "marker_scope": "active-transcript",
+                    "session_marker_seen": True, "model_marker_seen": True,
+                    "session_switch": {"attempted": False, "unique": True,
+                                       "result": "already-active"},
+                    "focus_changed": False, "input_attempted": False,
+                    "input_submitted": False,
+                },
+            }
+        if not allow_select:
+            return {"valid": False,
+                    "reason": ("ATTESTATION_ACTIVE_SESSION_AMBIGUOUS" if len(session_hits) > 1
+                               else "ATTESTATION_ACTIVE_SESSION_NOT_VISIBLE"),
+                    "capture": capture}
+        selector_hits = self._bounded_marker_matches(
+            elements, wrapper, marker=str(profile.get("session_marker") or ""),
+            region=proof["selector_region"])
+        capture["selector_matches"] = selector_hits
+        if len(selector_hits) != 1:
+            return {"valid": False,
+                    "reason": ("ATTESTATION_SELECTOR_AMBIGUOUS" if selector_hits
+                               else "ATTESTATION_SELECTOR_NOT_FOUND"),
+                    "capture": capture}
+        # Re-find the exact UIA element from its bounded, unique geometry.  A
+        # stale object after a renderer reflow is never clicked as a fallback.
+        desired = selector_hits[0]
+        selected_element = None
+        for element in elements:
+            try:
+                rect = element.rectangle()
+                name = str(element.element_info.name or "")
+            except Exception:  # noqa: BLE001
+                continue
+            if name == desired["name"] and int(rect.left) == desired["rect"]["left"] and \
+                    int(rect.top) == desired["rect"]["top"]:
+                selected_element = element
+                break
+        if selected_element is None:
+            return {"valid": False, "reason": "ATTESTATION_SELECTOR_STALE",
+                    "capture": capture}
+        try:
+            selected_element.click_input()
+        except Exception as exc:  # noqa: BLE001
+            return {"valid": False, "reason": "ATTESTATION_SELECTOR_CLICK_FAILED",
+                    "error": str(exc)[:400], "capture": capture}
+        time.sleep(0.6)
+        after = self._active_session_probe(profile, allow_select=False)
+        if after.get("valid") is not True:
+            after.setdefault("capture", capture)
+            return after
+        after["evidence"] = dict(after["evidence"])
+        after["evidence"]["session_switch"] = {
+            "attempted": True, "unique": True, "result": "selected"}
+        after["evidence"]["focus_changed"] = True
+        return after
+
+    def attest_original_session(self, profile: dict) -> dict:
+        """Prove the configured conversation in bounded active UIA regions.
+
+        This is intentionally separate from :meth:`capture`: the latter is a
+        convenient full-window transcript reader, while strict pre-input proof
+        must reject sidebar/search/whole-window marker collisions.
+        """
+        return self._active_session_probe(profile, allow_select=True)
+
     def select_session(self, profile: dict) -> dict:
         """Click the first element whose name carries the session marker."""
         marker = str(profile.get("session_marker") or "")
@@ -239,22 +493,67 @@ class Uia3Driver:
         subprocess.Popen([str(executable)], cwd=str(executable.parent), close_fds=True)
 
     def deliver(self, profile: dict, message: str, event_id: str, *, urgent: bool = False,
-                composer_ratios: tuple[float, float] | None = None) -> dict:
+                composer_ratios: tuple[float, float] | None = None,
+                expected_surface: dict | None = None) -> dict:
         """Type through the tree, verify by reading the tree, then press Enter."""
         wrapper, info = self.find_window(profile)
         if wrapper is None:
             return {"status": "NO_WINDOW", "task_delivered": False, **info}
-        candidates = self.composer_candidates(wrapper)
+        if expected_surface is not None:
+            current_surface, surface_reason = self._surface(profile, wrapper, info)
+            if current_surface is None:
+                return {"status": "attestation-surface-changed", "task_delivered": False,
+                        "reason": surface_reason}
+            try:
+                same_surface = (session_attestation.surface_digest(current_surface) ==
+                                session_attestation.surface_digest(expected_surface))
+            except (TypeError, ValueError):
+                same_surface = False
+            if not same_surface:
+                return {"status": "attestation-surface-changed", "task_delivered": False,
+                        "surface": current_surface}
+        strict_proof: dict | None = None
+        if expected_surface is not None:
+            strict_proof, proof_reason = self._proof_regions(profile)
+            if proof_reason:
+                return {"status": "attestation-surface-changed", "task_delivered": False,
+                        "reason": proof_reason}
+        candidates = self.composer_candidates(
+            wrapper, region=(strict_proof or {}).get("composer_region"))
         if not candidates:
+            if expected_surface is not None:
+                return {"status": "attestation-surface-changed", "task_delivered": False,
+                        "reason": "ATTESTATION_COMPOSER_NOT_IN_REGION",
+                        "element_count": len(list(wrapper.descendants())), "client": "uia3"}
             return {"status": "NO_INPUT_CONTROL", "task_delivered": False,
                     "element_count": len(list(wrapper.descendants())), "client": "uia3"}
         composer = candidates[0]
-        write_method, typed = self._write(composer, message, event_id)
+        if expected_surface is not None:
+            # The same HWND can retain its identity while its active chat pane
+            # changes.  Focus the exact bounded composer, then re-read bounded
+            # active/session/model evidence from this same wrapper immediately
+            # before the first write.  A later fallback must never type based
+            # on the earlier proof alone.
+            try:
+                composer.set_focus()
+            except Exception:  # noqa: BLE001
+                return {"status": "attestation-surface-changed", "task_delivered": False,
+                        "reason": "ATTESTATION_COMPOSER_FOCUS_FAILED"}
+            recheck = self._active_session_probe(
+                profile, allow_select=False, wrapper=wrapper, info=info,
+                expected_surface=expected_surface)
+            if recheck.get("valid") is not True:
+                return {"status": "attestation-surface-changed", "task_delivered": False,
+                        "reason": str(recheck.get("reason") or
+                                      "ATTESTATION_ACTIVE_SESSION_NOT_VISIBLE"),
+                        "capture": recheck.get("capture", {})}
+        write_method, typed = self._write(composer, message, event_id,
+                                          focus=expected_surface is None)
         if not typed:
             return {"status": "input-not-confirmed", "task_delivered": False,
                     "write_method": write_method, "client": "uia3",
                     "typed_preview": self._value(composer)[:200]}
-        send_method = self._send(composer, profile)
+        send_method = self._send(composer, profile, wrapper=wrapper)
         if not send_method:
             return {"status": "send-control-not-found", "task_delivered": False,
                     "write_method": write_method, "client": "uia3"}
@@ -306,7 +605,7 @@ class Uia3Driver:
         except Exception:  # noqa: BLE001 - plenty of controls have no ValuePattern
             return ""
 
-    def composer_candidates(self, wrapper) -> list[Any]:
+    def composer_candidates(self, wrapper, *, region: dict | None = None) -> list[Any]:
         """Editable, enabled, focusable controls ordered by screen position.
 
         The lowest one wins because a chat composer sits under the transcript
@@ -326,6 +625,17 @@ class Uia3Driver:
                     continue
             except Exception:  # noqa: BLE001
                 continue
+            if region is not None:
+                bounds = self._region_rect(wrapper, region)
+                try:
+                    rect = element.rectangle()
+                except Exception:  # noqa: BLE001
+                    continue
+                if bounds is None or not (
+                    bounds[0] <= int(rect.left) and int(rect.right) <= bounds[2] and
+                    bounds[1] <= int(rect.top) and int(rect.bottom) <= bounds[3]
+                ):
+                    continue
             found.append(element)
 
         def _bottom(element) -> int:
@@ -355,17 +665,18 @@ class Uia3Driver:
             return "ready", ready
         return "unknown", []
 
-    def _write(self, composer, message: str, event_id: str) -> tuple[str, bool]:
+    def _write(self, composer, message: str, event_id: str, *, focus: bool = True) -> tuple[str, bool]:
         """Put the text in the composer and prove it by reading it back.
 
         The proof is the event id, not "the field is non-empty": a composer that
         already held a human draft is non-empty before this runs, so a weaker
         check would report success for a write that never happened.
         """
-        try:
-            composer.set_focus()
-        except Exception:  # noqa: BLE001 - focus is helpful, not required
-            pass
+        if focus:
+            try:
+                composer.set_focus()
+            except Exception:  # noqa: BLE001 - focus is helpful, not required
+                pass
         try:
             composer.iface_value.SetValue(message)
             if event_id in self._value(composer):
@@ -383,10 +694,9 @@ class Uia3Driver:
         except Exception:  # noqa: BLE001
             return "uia3-write-failed", False
 
-    def _send(self, composer, profile: dict) -> str:
+    def _send(self, composer, profile: dict, *, wrapper=None) -> str:
         mode = str(profile.get("send_mode") or "enter")
         if mode == "button":
-            wrapper, _info = self.find_window(profile)
             if wrapper is not None:
                 for element in wrapper.descendants():
                     try:
@@ -485,18 +795,43 @@ class AutoDriver:
             return self.fallback.select_session(profile)
         return result
 
+    def attest_original_session(self, profile: dict) -> dict:
+        # Strict proof deliberately does not fall back to OCR.  A whole-window
+        # OCR capture cannot distinguish a target title in the sidebar from an
+        # active conversation header, so it is an observation aid, not input
+        # authorization.
+        try:
+            if self.uia3.has_tree(profile):
+                return self.uia3.attest_original_session(profile)
+        except Exception as exc:  # noqa: BLE001
+            return {"valid": False, "reason": "ATTESTATION_PROBE_FAILED",
+                    "error": str(exc)[:400]}
+        return {"valid": False, "reason": "ATTESTATION_UNSUPPORTED_BY_DRIVER",
+                "client": "uia3-tree-unavailable"}
+
     def launch(self, profile: dict) -> None:
         return self.fallback.launch(profile)
 
     def deliver(self, profile: dict, message: str, event_id: str, *, urgent: bool = False,
-                composer_ratios: tuple[float, float] | None = None) -> dict:
+                composer_ratios: tuple[float, float] | None = None,
+                expected_surface: dict | None = None) -> dict:
+        if expected_surface is not None and (urgent or not self._use_uia3(profile)):
+            return {"status": "attestation-surface-unsupported", "task_delivered": False}
         if not self._use_uia3(profile) or urgent:
             # The non-interrupting interject control is a pixel/OCR construct;
             # the tree cannot name it, so urgent stays on the adapter that can.
             return self.fallback.deliver(profile, message, event_id, urgent=urgent,
                                          composer_ratios=composer_ratios)
-        result = self.uia3.deliver(profile, message, event_id, composer_ratios=composer_ratios)
+        result = self.uia3.deliver(profile, message, event_id, composer_ratios=composer_ratios,
+                                   expected_surface=expected_surface)
         if result.get("status") in {"NO_WINDOW", "NO_INPUT_CONTROL", "uia3-write-failed"}:
+            if expected_surface is not None:
+                # The bounded UIA proof belongs to this native surface only.
+                # OCR cannot bind a write to it, so a strict route must hold
+                # rather than silently send through the fallback adapter.
+                return {"status": "attestation-surface-changed", "task_delivered": False,
+                        "reason": "ATTESTATION_UIA3_DELIVERY_UNAVAILABLE",
+                        "uia3_report": result}
             return self.fallback.deliver(profile, message, event_id, urgent=urgent,
                                          composer_ratios=composer_ratios)
         return result

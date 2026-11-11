@@ -257,6 +257,76 @@ class CommanderDeliverySafetyTests(unittest.TestCase):
         wrapped.assert_called_once()
         raw.assert_not_called()
 
+    def test_strict_profile_forces_the_bounded_uia_path_not_cdp(self):
+        order = commander.submit_order(self.root, target="qoder", task="notice",
+                                       text="Read this warning", sender="codex")
+        strict_profile = {
+            "agent": "qoder", "process": "Qoder", "title": "Qoder",
+            "exe": str((self.root / "Qoder.exe").resolve()),
+            "session_marker": "FlagGems original chat", "model_marker": "DeepSeek Flash",
+            "transport": "uia", "require_strict_session_attestation": True,
+            "session_proof": {
+                "session_region": {"left": 0.25, "top": 0.0, "right": 0.70, "bottom": 0.25},
+                "model_region": {"left": 0.70, "top": 0.0, "right": 1.0, "bottom": 0.25},
+                "selector_region": {"left": 0.0, "top": 0.0, "right": 0.25, "bottom": 1.0},
+                "composer_region": {"left": 0.25, "top": 0.75, "right": 1.0, "bottom": 1.0},
+            },
+        }
+        profile_path = self.root / "ui_profiles" / "qoder.json"
+        profile_path.parent.mkdir(parents=True)
+        profile_path.write_text(json.dumps(strict_profile), encoding="utf-8")
+        client = {"agent": "qoder", "windows": [{"pid": 123, "title": "Qoder",
+                                                       "exe": strict_profile["exe"]}],
+                  "unique": True, "anchored": False}
+        receipt = {"status": "MESSAGE_VISIBLE", "task_delivered": True,
+                   "agent_accepted": False}
+        with (patch.object(commander.registry, "discover", return_value={"clients": [client]}),
+              patch.object(commander.session_fingerprint, "compare",
+                           return_value={"match": True, "reason": "", "observed": "f" * 64}),
+              patch.object(commander.ui_fallback, "load_profile", return_value=strict_profile),
+              patch.object(commander, "_pick_transport") as pick,
+              patch.object(commander, "_profiled_deliver", return_value=receipt) as profiled,
+              patch.object(commander.cdp_session_delivery, "deliver") as cdp_delivery):
+            result = commander.dispatch(self.root, order=order)
+        self.assertEqual(result["state"], "MESSAGE_VISIBLE")
+        pick.assert_not_called()
+        profiled.assert_called_once()
+        cdp_delivery.assert_not_called()
+        self.assertTrue(result["attempts"][-2]["receipt"]["strict_session_attestation_required"])
+
+    def test_strict_profile_refuses_explicit_cdp_before_any_delivery(self):
+        order = commander.submit_order(self.root, target="qoder", task="notice",
+                                       text="Read this warning", sender="codex", transport="cdp")
+        strict_profile = {
+            "agent": "qoder", "process": "Qoder", "title": "Qoder",
+            "exe": str((self.root / "Qoder.exe").resolve()),
+            "session_marker": "FlagGems original chat", "model_marker": "DeepSeek Flash",
+            "transport": "uia", "require_strict_session_attestation": True,
+            "session_proof": {
+                "session_region": {"left": 0.25, "top": 0.0, "right": 0.70, "bottom": 0.25},
+                "model_region": {"left": 0.70, "top": 0.0, "right": 1.0, "bottom": 0.25},
+                "selector_region": {"left": 0.0, "top": 0.0, "right": 0.25, "bottom": 1.0},
+                "composer_region": {"left": 0.25, "top": 0.75, "right": 1.0, "bottom": 1.0},
+            },
+        }
+        profile_path = self.root / "ui_profiles" / "qoder.json"
+        profile_path.parent.mkdir(parents=True)
+        profile_path.write_text(json.dumps(strict_profile), encoding="utf-8")
+        client = {"agent": "qoder", "windows": [{"pid": 123, "title": "Qoder",
+                                                       "exe": strict_profile["exe"]}],
+                  "unique": True, "anchored": False}
+        with (patch.object(commander.registry, "discover", return_value={"clients": [client]}),
+              patch.object(commander.session_fingerprint, "compare",
+                           return_value={"match": True, "reason": "", "observed": "f" * 64}),
+              patch.object(commander.ui_fallback, "load_profile", return_value=strict_profile),
+              patch.object(commander, "_profiled_deliver") as profiled,
+              patch.object(commander.cdp_session_delivery, "deliver") as cdp_delivery):
+            result = commander.dispatch(self.root, order=order)
+        self.assertEqual(result["state"], "DEFERRED")
+        self.assertIn("ATTESTATION_TRANSPORT_UNSUPPORTED", result["attempts"][-1]["note"])
+        profiled.assert_not_called()
+        cdp_delivery.assert_not_called()
+
     def test_cdp_target_binding_mismatch_is_deferred_not_misreported_as_input(self):
         order = commander.submit_order(self.root, target="qoder", task="notice",
                                        text="Read this warning", sender="codex")

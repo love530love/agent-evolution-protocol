@@ -70,6 +70,12 @@ PROFILE_FIELDS = (
     "model_marker",
     "session_evidence_markers",
     "model_evidence_markers",
+    # The bounded regions that distinguish a visible active conversation from
+    # an identical label in a sidebar are part of the identity policy.  If an
+    # operator recalibrates them, an earlier proof must not silently remain
+    # valid under the new interpretation.
+    "require_strict_session_attestation",
+    "session_proof",
     "transport",
     "workspace_id",
     "session_provider",
@@ -187,7 +193,12 @@ def _profile_for_agent(profile: Mapping[str, Any], agent: str) -> dict[str, Any]
 
     payload: dict[str, Any] = {}
     for field in PROFILE_FIELDS:
-        raw = agent_key if field == "agent" else profile.get(field, "")
+        # ``load_profile`` normalises this to a list, but this module is also a
+        # public lower-level boundary used by tests and adapters which already
+        # hold an in-memory profile.  An omitted optional root policy means
+        # "no updater roots", not the malformed scalar ``\"\"``.
+        raw = (agent_key if field == "agent" else
+               profile.get(field, [] if field == "allowed_exe_roots" else ""))
         if field == "allowed_exe_roots":
             raw = process_info.normalise_allowed_exe_roots(raw)
         payload[field] = _stable_value(raw, path=field in _PROFILE_PATH_FIELDS)

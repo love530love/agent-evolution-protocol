@@ -237,3 +237,17 @@ asyncio / 模型模块`，源码文本守线禁止 `lh login` / `lobehub.com` / 
 
 **本夹具不证明任何一次真投递成功**：它证明的是「判定器在这些故障下仍给出预期结论」。
 只有 `VERIFIED` 能关单。
+
+## 9. v0.6.33：预检之外的严格写前原会话证明
+
+预检只读取登记、窗口和历史观察，不能代替“此刻 composer 属于哪一个会话”的证明。对于已完成实机 UIA3
+标定的 profile，可额外开启 `require_strict_session_attestation`。活路径会在 session lease 与 desktop lock
+内要求：活动 header 区唯一 session marker、模型区唯一 model marker、selector 区唯一候选、composer 区唯一
+可写控件、记录 fingerprint 与 HWND + UIA runtime id 一致；composer 获焦后再次读取活动证据。
+
+任何不满足项都会在键入前以 `SESSION_ATTESTATION_REQUIRED` 拒绝。严格路线不会把 UIA3 写入失败降级为 OCR
+发送。该 gate 仍只是输入前证明；预检与 gate 都不能替代 postflight 的消息可见、同事件 ACK 和结果回读。
+
+各客户端的 region 需单独在真机标定。未标定 profile 保持 strict 关闭，绝不以扩大区域、侧栏命中或整窗 OCR
+来“通过”严格证明。详见
+[`STRICT_ORIGINAL_SESSION_ATTESTATION.zh-CN.md`](STRICT_ORIGINAL_SESSION_ATTESTATION.zh-CN.md)。

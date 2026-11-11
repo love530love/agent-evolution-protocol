@@ -333,8 +333,8 @@ def _dispatch(root: Path, *, order: dict) -> dict:
     # "same conversation as last time", which needs both -- reading only the
     # client record hashed two empty marker strings and could not tell a
     # switched conversation from the original one.
-    profile_row = session_fingerprint.merged_profile(
-        profile_row, session_fingerprint.ui_profile(root, target))
+    ui_profile_row = session_fingerprint.ui_profile(root, target)
+    profile_row = session_fingerprint.merged_profile(profile_row, ui_profile_row)
     client = None
     try:
         discovered = registry.discover(root, target)
@@ -379,6 +379,19 @@ def _dispatch(root: Path, *, order: dict) -> dict:
             root, order, state="DEFERRED",
             receipt={"session_fingerprint": identity, "observed": observed_identity},
             note=f"SESSION_FINGERPRINT_MISMATCH: {identity['reason']}")
+    strict_attestation = ui_profile_row.get("require_strict_session_attestation", False)
+    if type(strict_attestation) is not bool:
+        return _record_attempt(
+            root, order, state="DEFERRED",
+            note="ORIGINAL_SESSION_PROFILE_INVALID: require_strict_session_attestation must be a boolean",
+        )
+    if strict_attestation and identity["match"] is not True:
+        return _record_attempt(
+            root, order, state="DEFERRED",
+            receipt={"session_fingerprint": identity, "observed": observed_identity},
+            note=("SESSION_FINGERPRINT_REQUIRED: strict original-session delivery "
+                  "requires a recorded matching fingerprint before input"),
+        )
     # Last gate before anything is typed.  It runs here, not inside a transport,
     # because "which text goes where" is a property of the order, and a check
     # implemented per transport is a check that will be missing from the next
@@ -396,8 +409,30 @@ def _dispatch(root: Path, *, order: dict) -> dict:
             note=("ORIGINAL_SESSION_PROFILE_REQUIRED: no verified UI profile; "
                   "refusing raw UIA/CDP input into a guessed conversation"),
         )
+    if strict_attestation:
+        try:
+            checked_profile = ui_fallback.load_profile(profile_path)
+            if checked_profile.get("agent") != target:
+                raise ValueError("UI_PROFILE_AGENT_MISMATCH")
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            return _record_attempt(
+                root, order, state="DEFERRED",
+                note=f"ORIGINAL_SESSION_PROFILE_INVALID: {exc}; no desktop input attempted",
+            )
     order["session_id"] = str(profile_row.get("session_marker") or "").strip()
-    transport, info = _pick_transport(root, target, order.get("transport", "auto"))
+    if strict_attestation:
+        # CDP has no DOM-bound equivalent of the calibrated active-session
+        # UIA proof yet.  Never let a strict profile bypass that proof merely
+        # because an automatic picker found a debug port.
+        if order.get("transport") == "cdp":
+            return _record_attempt(
+                root, order, state="DEFERRED",
+                note=("ATTESTATION_TRANSPORT_UNSUPPORTED: strict original-session "
+                      "delivery needs profiled UIA evidence, not a CDP bypass"),
+            )
+        transport, info = "profiled-ui", {"strict_session_attestation_required": True}
+    else:
+        transport, info = _pick_transport(root, target, order.get("transport", "auto"))
     _record_attempt(root, order, state="WINDOW_FOUND", transport=transport,
                     receipt={**info, "session_fingerprint": identity})
 
@@ -450,6 +485,7 @@ def _dispatch(root: Path, *, order: dict) -> dict:
     if receipt.get("status") in ("AGENT_BUSY", "URGENT_INTERJECT_UNAVAILABLE", "ACTIVITY_UNCONFIRMED", "NO_WINDOW",
                                   "LAUNCH_UNVERIFIED", "WINDOW_OR_INPUT_AMBIGUOUS",
                                   "NO_SAFE_COMPOSER", "SESSION_NOT_VERIFIED", "MODEL_NOT_VERIFIED",
+                                  "SESSION_ATTESTATION_REQUIRED",
                                   "EXECUTOR_TOO_LOW", "COMPOSER_NOT_CONFIRMED",
                                   "composer-not-confirmed"):
         note = "PREINPUT_NOT_READY: observe again after the target becomes ready"

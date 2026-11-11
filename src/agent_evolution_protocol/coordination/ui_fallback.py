@@ -17,6 +17,8 @@ from pathlib import Path, PureWindowsPath
 from agent_evolution_protocol.coordination import a11y
 from agent_evolution_protocol.coordination import input_routing
 from agent_evolution_protocol.coordination import process_info
+from agent_evolution_protocol.coordination import session_attestation
+from agent_evolution_protocol.coordination import session_fingerprint
 from agent_evolution_protocol.coordination import uia_argv
 from agent_evolution_protocol.coordination import vision_grounding
 from agent_evolution_protocol.coordination import session_lease
@@ -45,6 +47,74 @@ SELECT_SESSION = BASE / "wake_adapters" / "uia_select_session.ps1"
 def _absolute_profile_path(value: str) -> bool:
     """Accept native absolute paths plus Windows paths while CI runs elsewhere."""
     return Path(value).is_absolute() or PureWindowsPath(value).is_absolute()
+
+
+_SESSION_PROOF_REGIONS = (
+    "session_region", "model_region", "selector_region", "composer_region",
+)
+
+
+def _normalise_unit_region(value, *, name: str) -> dict[str, float]:
+    """Validate one calibrated, normalized rectangle used for strict proof.
+
+    A strict original-session proof must name exactly where an active header
+    (and, separately, the session selector) may be found.  A whole-window
+    fallback would reintroduce the sidebar collision that this gate exists to
+    prevent, so the geometry is deliberately explicit and bounded.
+    """
+    if not isinstance(value, dict):
+        raise ValueError(f"session_proof.{name} must be an object")
+    result: dict[str, float] = {}
+    for field in ("left", "top", "right", "bottom"):
+        raw = value.get(field)
+        if isinstance(raw, bool):
+            raise ValueError(f"session_proof.{name}.{field} must be a number")
+        try:
+            number = float(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"session_proof.{name}.{field} must be a number") from exc
+        if not 0 <= number <= 1:
+            raise ValueError(f"session_proof.{name}.{field} must be between 0 and 1")
+        result[field] = round(number, 6)
+    if result["left"] >= result["right"] or result["top"] >= result["bottom"]:
+        raise ValueError(f"session_proof.{name} must have positive area")
+    return result
+
+
+def _normalise_session_proof(value, *, required: bool) -> dict[str, dict[str, float]]:
+    if value in (None, ""):
+        if required:
+            raise ValueError("strict session attestation requires session_proof regions")
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError("session_proof must be an object")
+    result: dict[str, dict[str, float]] = {}
+    for name in _SESSION_PROOF_REGIONS:
+        if name not in value:
+            if required:
+                raise ValueError(f"strict session attestation requires session_proof.{name}")
+            continue
+        result[name] = _normalise_unit_region(value[name], name=name)
+    if required and len(result) != len(_SESSION_PROOF_REGIONS):
+        raise ValueError("strict session attestation requires calibrated session_proof regions")
+    if required:
+        # The selector is allowed to name a row in the sidebar only.  If it
+        # overlaps one of the active-session/model/composer regions, a bad
+        # calibration can turn the same arbitrary control into both the thing
+        # we click and the thing we treat as proof.  Header and model areas may
+        # legitimately overlap on compact clients, so only the selector is
+        # required to be disjoint from the write-bearing areas.
+        selector = result["selector_region"]
+
+        def _overlap(left: dict[str, float], right: dict[str, float]) -> bool:
+            return (max(left["left"], right["left"]) < min(left["right"], right["right"]) and
+                    max(left["top"], right["top"]) < min(left["bottom"], right["bottom"]))
+
+        for name in ("session_region", "model_region", "composer_region"):
+            if _overlap(selector, result[name]):
+                raise ValueError(
+                    f"session_proof.selector_region must not overlap session_proof.{name}")
+    return result
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -138,6 +208,12 @@ def load_profile(path: Path) -> dict:
     if not isinstance(session_binding_evidence, str) or "\0" in session_binding_evidence:
         raise ValueError("session_binding_evidence must be a string when provided")
     profile["session_binding_evidence"] = session_binding_evidence.strip()
+    strict_attestation = profile.get("require_strict_session_attestation", False)
+    if type(strict_attestation) is not bool:
+        raise ValueError("require_strict_session_attestation must be a boolean")
+    profile["require_strict_session_attestation"] = strict_attestation
+    profile["session_proof"] = _normalise_session_proof(
+        profile.get("session_proof"), required=strict_attestation)
     return profile
 
 
@@ -161,9 +237,11 @@ class Driver(Protocol):
     def observe(self, profile: dict) -> dict: ...
     def capture(self, profile: dict) -> str: ...
     def select_session(self, profile: dict) -> dict: ...
+    def attest_original_session(self, profile: dict) -> dict: ...
     def launch(self, profile: dict) -> None: ...
     def deliver(self, profile: dict, message: str, event_id: str, *, urgent: bool = False,
-                composer_ratios: tuple[float, float] | None = None) -> dict: ...
+                composer_ratios: tuple[float, float] | None = None,
+                expected_surface: dict | None = None) -> dict: ...
 
 
 def annotate_elevation(report: dict) -> dict:
@@ -415,6 +493,17 @@ class PowerShellUiaDriver:
             args.append("-AllowUnknownPath")
         return self._run(SELECT_SESSION, args)
 
+    def attest_original_session(self, profile: dict) -> dict:
+        """Decline strict proof rather than treating whole-window OCR as one.
+
+        The managed UIA/OCR adapter can show a session name from the sidebar,
+        search results, or an old transcript.  It has no calibrated bounded
+        active-conversation region yet, so manufacturing a strict attestation
+        here would be less safe than an explicit deferral.
+        """
+        return {"valid": False, "reason": "ATTESTATION_UNSUPPORTED_BY_DRIVER",
+                "client": "powershell-uia-ocr"}
+
     def launch(self, profile: dict) -> None:
         executable = Path(profile["exe"])
         if not executable.is_file():
@@ -422,7 +511,13 @@ class PowerShellUiaDriver:
         subprocess.Popen([str(executable)], cwd=str(executable.parent), close_fds=True)
 
     def deliver(self, profile: dict, message: str, event_id: str, *, urgent: bool = False,
-                composer_ratios: tuple[float, float] | None = None) -> dict:
+                composer_ratios: tuple[float, float] | None = None,
+                expected_surface: dict | None = None) -> dict:
+        if expected_surface is not None:
+            # A strict proof is bound to one UIA3 handle/runtime surface.  The
+            # PowerShell transport cannot preserve that binding across its own
+            # focus/re-discovery calls, so it must not be a silent fallback.
+            return {"status": "attestation-surface-unsupported", "task_delivered": False}
         args = self._target(profile) + [
             "-Mode", "compose" if profile["transport"] == "ocr" else "deliver",
             "-Text", message, "-EventId", event_id, "-ReadBackTimeoutSeconds", "5"]
@@ -520,6 +615,7 @@ def _preinput_receipt_retryable(existing: dict) -> bool:
         "URGENT_INTERJECT_UNAVAILABLE",
         "WINDOW_OR_INPUT_AMBIGUOUS", "NO_SAFE_COMPOSER",
         "SESSION_NOT_VERIFIED", "MODEL_NOT_VERIFIED",
+        "SESSION_ATTESTATION_REQUIRED",
         "EXECUTOR_TOO_LOW", "ROUTE_REGION_UNUSABLE", "ROUTE_UNSUPPORTED_BY_DRIVER",
         "COMPOSER_NOT_CONFIRMED",
     }:
@@ -538,7 +634,8 @@ def _preinput_receipt_retryable(existing: dict) -> bool:
 
 
 def _deliver(driver: Driver, profile: dict, message: str, event_id: str, *, urgent: bool,
-             composer_ratios: tuple[float, float] | None = None) -> dict:
+             composer_ratios: tuple[float, float] | None = None,
+             expected_surface: dict | None = None) -> dict:
     """Call both new and legacy drivers without turning a legacy driver into a
     false urgent success.  Normal dispatch remains compatible with older
     adapters; urgent interjection requires an adapter that explicitly accepts
@@ -556,16 +653,129 @@ def _deliver(driver: Driver, profile: dict, message: str, event_id: str, *, urge
         parameters = {}
     supports_urgent = "urgent" in parameters
     supports_region = "composer_ratios" in parameters
+    supports_surface = "expected_surface" in parameters
     if urgent and not supports_urgent:
         return {"status": "urgent-interject-unsupported", "interruption": False}
     if composer_ratios is not None and not supports_region:
         return {"status": "composer-region-unsupported", "interruption": False}
+    if expected_surface is not None and not supports_surface:
+        return {"status": "attestation-surface-unsupported", "interruption": False}
     kwargs: dict = {}
     if supports_urgent:
         kwargs["urgent"] = urgent
     if supports_region and composer_ratios is not None:
         kwargs["composer_ratios"] = composer_ratios
+    if supports_surface and expected_surface is not None:
+        kwargs["expected_surface"] = expected_surface
     return driver.deliver(profile, message, event_id, **kwargs)
+
+
+def _evidence_digest(value: dict) -> str:
+    encoded = json.dumps(value, ensure_ascii=False, sort_keys=True,
+                         separators=(",", ":")).encode("utf-8")
+    return "sha256:" + sha256(encoded).hexdigest()
+
+
+def _attest_original_session(
+        coordination_root: Path, profile: dict, driver: Driver, *, event_id: str) -> dict:
+    """Create and immediately validate a strict, pre-input session proof.
+
+    This is deliberately called *inside* the session lease and desktop lock in
+    :func:`_run_impl`.  The returned object is only a permission to enter the
+    existing send path; it never sets ``task_delivered`` or ``agent_accepted``.
+    """
+    attestor = getattr(driver, "attest_original_session", None)
+    if not callable(attestor):
+        return {"valid": False, "reason": "ATTESTATION_UNSUPPORTED_BY_DRIVER"}
+    try:
+        probe = attestor(profile)
+    except Exception as exc:  # noqa: BLE001 - a failed proof is a pre-input deferral
+        return {"valid": False, "reason": "ATTESTATION_PROBE_FAILED",
+                "error": str(exc)[:800]}
+    if not isinstance(probe, dict) or probe.get("valid") is not True:
+        unsafe_probe = probe if isinstance(probe, dict) else {}
+        return {"valid": False,
+                "reason": str(unsafe_probe.get("reason") or "ATTESTATION_INVALID"),
+                "probe": unsafe_probe}
+
+    surface = probe.get("surface")
+    evidence = probe.get("evidence")
+    if not isinstance(surface, dict) or not isinstance(evidence, dict):
+        return {"valid": False, "reason": "ATTESTATION_PROBE_MALFORMED"}
+
+    # Keep a bounded metadata record for later audit, not a full private chat
+    # transcript.  Its digest proves precisely the UIA region/markers that the
+    # strict proof relied on, while the original conversation stays in its
+    # native client and transcript store.
+    # A strict proof needs a separately recorded client/session fingerprint.
+    # ``None`` means nobody has bound this logical original conversation yet;
+    # treating that as a positive match would let a direct ``ui_fallback.run``
+    # bypass the same guard used by the commander.  Check before writing any
+    # proof artifact so an unregistered direct caller leaves no quasi-valid
+    # send record behind.
+    try:
+        expected_fingerprint = session_fingerprint.observe(
+            agent=profile["agent"],
+            window={"pid": surface.get("pid"), "title": surface.get("title"),
+                    "exe": surface.get("actual_exe")},
+            profile=profile,
+        )
+        identity = session_fingerprint.compare(
+            session_fingerprint.read(coordination_root, profile["agent"]),
+            expected_fingerprint,
+        )
+    except (OSError, ValueError, TypeError) as exc:
+        return {"valid": False, "reason": "SESSION_FINGERPRINT_REQUIRED",
+                "error": str(exc)[:800]}
+    if identity.get("match") is not True:
+        return {
+            "valid": False,
+            "reason": ("SESSION_FINGERPRINT_MISMATCH" if identity.get("match") is False
+                       else "SESSION_FINGERPRINT_REQUIRED"),
+            "identity": identity,
+        }
+
+    artifact = {
+        "schema": "aep-original-session-attestation-evidence-v1",
+        "agent": profile.get("agent", ""),
+        "event_id": event_id,
+        "surface": surface,
+        "probe": probe.get("capture", {}),
+        "evidence": {
+            key: evidence.get(key)
+            for key in ("transcript_source", "marker_scope", "session_marker_seen",
+                        "model_marker_seen", "session_switch", "focus_changed",
+                        "input_attempted", "input_submitted")
+        },
+    }
+    artifact_path = (Path(coordination_root) / "session_attestation_evidence" /
+                     f"{profile['agent']}-{event_id}.json")
+    try:
+        _atomic(artifact_path, artifact)
+        strict_evidence = dict(evidence)
+        strict_evidence["capture_sha256"] = _evidence_digest(artifact)
+        strict_evidence["evidence_path"] = str(artifact_path)
+        payload = session_attestation.build(
+            agent=profile["agent"], profile=profile,
+            observed_fingerprint=expected_fingerprint, surface=surface,
+            evidence=strict_evidence, strict=True,
+        )
+        session_attestation.write(coordination_root, profile["agent"], payload)
+        verdict = session_attestation.validate_stored(
+            coordination_root, agent=profile["agent"], profile=profile,
+            observed_fingerprint=expected_fingerprint, surface=surface,
+            strict=True,
+        )
+    except (OSError, ValueError, TypeError) as exc:
+        return {"valid": False, "reason": "ATTESTATION_PERSISTENCE_FAILED",
+                "error": str(exc)[:800], "evidence_path": str(artifact_path)}
+    return {
+        **verdict,
+        "attestation_path": str(session_attestation.path(coordination_root, profile["agent"])),
+        "evidence_path": str(artifact_path),
+        "surface": surface,
+        "identity": identity,
+    }
 
 
 def _window_from(observation: dict) -> vision_grounding.Region | None:
@@ -770,6 +980,7 @@ def run(profile: dict, message: str, *, event_id: str, receipt_path: Path,
                     lease=lease, lease_request_sha256=request_sha256,
                     lease_root=lease_root, transport_provider=provider,
                     session_binding_evidence=binding_evidence,
+                    coordination_root=coordination_root,
                 )
             except BaseException:
                 # If the relay had already crossed into an active write/readback
@@ -812,7 +1023,8 @@ def _run_impl(profile: dict, message: str, *, event_id: str, receipt_path: Path,
         min_confidence: float = vision_grounding.DEFAULT_MIN_CONFIDENCE,
         lease: session_lease.SessionLease | None = None,
         lease_request_sha256: str = "", lease_root: Path | None = None,
-        transport_provider: str = "uia", session_binding_evidence: str = "") -> dict:
+        transport_provider: str = "uia", session_binding_evidence: str = "",
+        coordination_root: Path | None = None) -> dict:
     if not EVENT.fullmatch(event_id) or not message.strip():
         raise ValueError("event_id and message required")
     if poll_seconds < 0.1:
@@ -959,42 +1171,69 @@ def _run_impl(profile: dict, message: str, *, event_id: str, receipt_path: Path,
             _atomic(receipt_path, state)
             return state
         state["pid"] = pid
-        before = driver.capture(profile)
-        if not _evidence_present(before, profile["session_marker"],
-                                 profile.get("session_evidence_markers", [])):
-            selected = driver.select_session(profile)
-            state["session_selection"] = selected
+        strict_attestation = None
+        if profile.get("require_strict_session_attestation"):
+            # Do not first perform the legacy whole-window/sidebar lookup: its
+            # "first matching text" selection is exactly what a strict proof
+            # replaces.  The bound driver probe, persistence, validation and
+            # subsequent send all remain inside this lease + desktop lock.
+            proof_root = (Path(coordination_root) if coordination_root is not None
+                          else (Path(lease_root).parent if lease_root is not None
+                                else Path(lock_path).parent))
+            strict_attestation = _attest_original_session(
+                proof_root, profile, driver, event_id=event_id)
+            state["session_attestation"] = {
+                key: strict_attestation.get(key)
+                for key in ("valid", "reason", "delivery_proven", "attestation_path",
+                            "evidence_path", "surface", "identity", "error")
+                if strict_attestation.get(key) not in (None, "")
+            }
+            if strict_attestation.get("valid") is not True:
+                state.update(state="SESSION_ATTESTATION_REQUIRED",
+                             reason=str(strict_attestation.get("reason") or
+                                        "ATTESTATION_INVALID"))
+                _atomic(receipt_path, state)
+                return state
+            # This read is only a nonce/replay check.  It does not authorise
+            # input; that authorization came from the bounded-region proof.
             before = driver.capture(profile)
-        if not _evidence_present(before, profile["session_marker"],
-                                 profile.get("session_evidence_markers", [])):
-            # Record what was looked for.  A profile whose marker does not match
-            # the live window is indistinguishable from "the session is gone"
-            # unless the receipt names the marker, and a one-character typo in
-            # a local profile then stalls every tick forever.
-            state.update(state="SESSION_NOT_VERIFIED",
-                         session_marker=profile["session_marker"],
-                         session_evidence_markers=list(profile.get("session_evidence_markers", [])),
-                         session_marker_present=bool(profile["session_marker"] in before),
-                         captured_chars=len(before))
-            _atomic(receipt_path, state)
-            return state
-        if not _evidence_present(before, profile["model_marker"],
-                                 profile.get("model_evidence_markers", [])):
-            # Record what was looked for, for the same reason the session branch
-            # does: "the label is not on screen" and "the capture came back
-            # empty because it read another window" are different faults, and
-            # without the numbers the receipt cannot tell them apart.  Measured
-            # 2026-11-02: a dispatch deferred here while the model selector was
-            # plainly visible, and the receipt carried no evidence at all.
-            state.update(state="MODEL_NOT_VERIFIED",
-                         model_marker=profile["model_marker"],
-                         model_evidence_markers=list(profile.get("model_evidence_markers", [])),
-                         model_marker_present=bool(profile["model_marker"] in before),
-                         evidence_present={marker: (marker in before)
-                                           for marker in profile.get("model_evidence_markers", [])},
-                         captured_chars=len(before))
-            _atomic(receipt_path, state)
-            return state
+        else:
+            before = driver.capture(profile)
+            if not _evidence_present(before, profile["session_marker"],
+                                     profile.get("session_evidence_markers", [])):
+                selected = driver.select_session(profile)
+                state["session_selection"] = selected
+                before = driver.capture(profile)
+            if not _evidence_present(before, profile["session_marker"],
+                                     profile.get("session_evidence_markers", [])):
+                # Record what was looked for.  A profile whose marker does not match
+                # the live window is indistinguishable from "the session is gone"
+                # unless the receipt names the marker, and a one-character typo in
+                # a local profile then stalls every tick forever.
+                state.update(state="SESSION_NOT_VERIFIED",
+                             session_marker=profile["session_marker"],
+                             session_evidence_markers=list(profile.get("session_evidence_markers", [])),
+                             session_marker_present=bool(profile["session_marker"] in before),
+                             captured_chars=len(before))
+                _atomic(receipt_path, state)
+                return state
+            if not _evidence_present(before, profile["model_marker"],
+                                     profile.get("model_evidence_markers", [])):
+                # Record what was looked for, for the same reason the session branch
+                # does: "the label is not on screen" and "the capture came back
+                # empty because it read another window" are different faults, and
+                # without the numbers the receipt cannot tell them apart.  Measured
+                # 2026-11-02: a dispatch deferred here while the model selector was
+                # plainly visible, and the receipt carried no evidence at all.
+                state.update(state="MODEL_NOT_VERIFIED",
+                             model_marker=profile["model_marker"],
+                             model_evidence_markers=list(profile.get("model_evidence_markers", [])),
+                             model_marker_present=bool(profile["model_marker"] in before),
+                             evidence_present={marker: (marker in before)
+                                               for marker in profile.get("model_evidence_markers", [])},
+                             captured_chars=len(before))
+                _atomic(receipt_path, state)
+                return state
         nonce, expected_ack = _challenge(ocr_safe=profile.get("transport") == "ocr")
         if event_id in before or expected_ack in before:
             state.update(state="NONCE_OR_EVENT_ALREADY_VISIBLE")
@@ -1022,6 +1261,20 @@ def _run_impl(profile: dict, message: str, *, event_id: str, receipt_path: Path,
                 return state
             state["composer_ratios"] = list(composer_ratios)
             state["located_by"] = route["locate_source"]
+        if strict_attestation is not None:
+            # Refuse before recording an irreversible send boundary when the
+            # chosen driver cannot carry the native surface proof into its own
+            # write operation.  This is a capability mismatch, not a send.
+            import inspect
+            try:
+                supports_surface = "expected_surface" in inspect.signature(driver.deliver).parameters
+            except (TypeError, ValueError):
+                supports_surface = False
+            if not supports_surface:
+                state.update(state="SESSION_ATTESTATION_REQUIRED",
+                             reason="ATTESTATION_SURFACE_BINDING_UNSUPPORTED")
+                _atomic(receipt_path, state)
+                return state
         state.update(state="SEND_ATTEMPTED", session_marker=profile["session_marker"],
                      model_marker=profile["model_marker"], challenge=nonce,
                      expected_ack=expected_ack, outgoing_chars=len(outgoing))
@@ -1037,7 +1290,8 @@ def _run_impl(profile: dict, message: str, *, event_id: str, receipt_path: Path,
         _atomic(receipt_path, state)
         try:
             sent = _deliver(driver, profile, outgoing, event_id, urgent=urgent,
-                            composer_ratios=composer_ratios)
+                            composer_ratios=composer_ratios,
+                            expected_surface=(strict_attestation or {}).get("surface"))
         except Exception as exc:  # noqa: BLE001
             state.update(state="SEND_UNCERTAIN", error=str(exc)[:800])
             if lease is not None:
@@ -1071,6 +1325,22 @@ def _run_impl(profile: dict, message: str, *, event_id: str, receipt_path: Path,
             state.update(state="ROUTE_UNSUPPORTED_BY_DRIVER",
                          reason="the driver cannot type into a located region; nothing was sent",
                          located_by=route["locate_source"])
+            if lease is not None:
+                lease.write(event_id=event_id, request_sha256=lease_request_sha256,
+                            state="PROVEN_NOT_SENT", receipt_file=str(receipt_path),
+                            transport_provider=transport_provider,
+                            session_binding_evidence=session_binding_evidence)
+            _atomic(receipt_path, state)
+            return state
+        if sent.get("status") in {"attestation-surface-unsupported", "attestation-surface-changed"}:
+            # The strict probe succeeded but this sender cannot bind its
+            # eventual write to that exact native surface.  That is still a
+            # proven pre-input refusal, never a partially sent message.
+            state.update(state="SESSION_ATTESTATION_REQUIRED",
+                         reason=("ATTESTATION_SURFACE_CHANGED" if sent.get("status") ==
+                                 "attestation-surface-changed" else
+                                 "ATTESTATION_SURFACE_BINDING_UNSUPPORTED"),
+                         send_report=sent)
             if lease is not None:
                 lease.write(event_id=event_id, request_sha256=lease_request_sha256,
                             state="PROVEN_NOT_SENT", receipt_file=str(receipt_path),

@@ -18,6 +18,7 @@
 |P0|`coord-cdp send`、commander 的 CDP 分支和无 profile 的 UIA fallback 可绕过 shared original-session lease|已修：新增 `cdp_session_delivery` 受控包装层，核对 websocket 的末段 target id、原会话 profile、stable marker 与 lease，再允许 DOM 发送；CLI 直发要求 `--agent`、精确 `--target-id` 和 profile；commander 缺 profile 时返回 `DEFERRED`，不退回 raw UIA/CDP 盲写|
 |P1|CDP 的 preflight/busy/target 不匹配诊断可能覆盖既有 event 回执，抹掉上一路证据|已修：既有 receipt 一律保留；新的拒绝/冲突状态写到带请求摘要的 sidecar outcome receipt，且 commander 将 target mismatch 作为 `DEFERRED`，不会伪报为已输入|
 |P0|transport 返回 `{ok:true}`、`sent` 或字符串 `DELIVERED` 即可能被误升级为目标已收到|已修：wake router 只在原会话消息可见（或等价 event/session 可见证据）时标记 `MESSAGE_VISIBLE`；只有匹配同事件、同会话的目标 ACK 才能升级 ACK；其余成功返回保持 `INPUT_SUBMITTED` 或 `UNCERTAIN`|
+|P0|整窗 UIA/OCR 或侧栏标题可包含同一 session marker，仍可能向错误原会话输入|已修（v0.6.33 opt-in）：严格 profile 仅接受受限活动 header/model 区的唯一 marker、已登记 fingerprint、HWND + UIA runtime surface 与受限 composer 区；获得 composer 焦点后再次验证。UIA3 失败不得降级到无法绑定 proof 的 OCR/PowerShell 输入，button send 复用已证明 wrapper。|
 |P1|调度器可把会话未知或只有输入证据的工作标为已完成，导致无人值守链路越过 ACK/结果核验|已修（可选严格策略）：supervisor 增加 `unattended-strict` completion policy；它要求同事件目标 ACK、正向结果回读、会话已核对且无 `session_unknown`。默认 `standard` 保持兼容，因此无人值守部署必须显式选择严格策略|
 |P0|超时只管理直接子进程，孙进程可能继续且继承 pipe 可拖过 timeout|已修（Windows）：父持有 `AEPExternal-*` Job，bootstrap 先入 Job 再启动目标；超时终止 Job 并验 Job 消失。非 Windows 用进程组兜底，明确不写 Windows 级树终止证明|
 |P1|stdout/stderr全量缓存在内存|已修：持续 drain + 每流可配置上限，回执记录见到字节数、截断和 capture 完整性|
@@ -60,6 +61,15 @@ window anchor 为 `CURRENT`，已保存 fingerprint 与当前观测一致。Qode
 认可；它的旧 anchor 是 `STALE`，且没有已保存 fingerprint，故保持未锚定。两次命令都是只读
 `coord-client discover/fingerprint --show`，未聚焦窗口、未输入、未发送，也不构成 ACK 或业务结果。
 
+2026-11-11 v0.6.33 严格会话审计：此前的 `session_attestation` 只是基础件，且整窗
+capture/侧栏同名会话无法证明当前正文。现在 profile 可显式启用
+`require_strict_session_attestation=true`：同一 session lease 与 desktop lock 中，UIA3
+必须在独立的 `session_region`、`model_region`、`selector_region`、`composer_region` 完成
+唯一性证明；surface 同时绑定可信实际 exe、PID、标题、HWND 和 UIA runtime id。无已登记
+fingerprint、任何 marker 歧义、runtime 不可读、同 HWND 内会话切换、composer 不在受限区或
+UIA3 写入失效，均在键入前保持 `SESSION_ATTESTATION_REQUIRED`。严格路线不会 OCR 降级。这个
+修复已由模拟 UIA 树回归覆盖，但尚未对任一第三方客户端完成新鲜的消息可见、目标 ACK 和结果读回。
+
 2026-11-09 本机复核：pytest 发现范围已显式限定为版本化的 `tests/` 与 in-package realtime 测试，因此 `coordination/acceptance_runs/` 产生的微型工作区不会再以同名 `test_*.py` 污染全量收集。执行 `python -m pytest -q`：**1587 passed, 15 skipped, 949 subtests passed**（216.08s，exit 0）。这证明现有源码与测试配置可回归；它不证明任何第三方 Agent 已被唤醒或接单。真实只读枚举事件 `EVT-DESKTOP-READ-20261107-002` 已通过新 Job bootstrap 列出本机 ChatGPT / Qoder CN / Qoder / WorkBuddy / WorkBuddyAI；该事件 `delivery_verified=false`，没有向任何第三方 Agent 发送任务。
 
 ## 尚未通过的生产门槛
@@ -71,5 +81,6 @@ window anchor 为 `CURRENT`，已保存 fingerprint 与当前观测一致。Qode
 - FACP 注册表、NATS 与真实派工尚未接通。
 - `unattended-strict` 不是默认值；生产无人值守 worker 若未显式启用它，仍只能得到兼容性 `standard` 的完成判定，不能宣称已满足严格闭环。
 - 尚未取得 Qoder、Qoder CN、WorkBuddy、WorkBuddy AI 或 CodeBuddy CN 在各自**原会话**中“消息可见 → 同事件 ACK → 结果回读”的新鲜实机证据；不能用 mail、进程、窗口、CLI 成功或单元测试替代。
+- 严格会话模式需要每个客户端针对真实窗口/DPI/布局校准 session、model、selector、composer 四块区域，并确认 UIA runtime id 可读；未标定客户端必须保持 strict 关闭，不能以扩大区域或 OCR fallback 规避拒绝。
 
 结论：执行入口由“实验级无树治理”提升为“**带跨路由原会话围栏、CDP 受控写入与严格完成策略的受限执行底座**”，但仍非端到端生产派工路径。UIA 已有原会话定位/输入/发送/可见读回/挑战 ACK；本轮将 thread-safe lease、external runner、profiled UIA、受控 CDP 路径接到同一 canonical root 与可证据的 session alias，并把常见的 transport 假成功降级为未证实状态。下一门槛是 Browser Bridge 实际适配、全局 Workspace 资源仲裁，以及在真实目标会话中自动把 `MESSAGE_VISIBLE → AGENT_ACK → TASK_RESULT_READBACK` 接回调度器。Provider 数量、CLI 退出码、窗口存在、Job 存在或单元测试均不能替代该验收。

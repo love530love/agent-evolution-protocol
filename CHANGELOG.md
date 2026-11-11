@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.6.33 — 严格原会话证明进入发送活路径
+
+- Add an opt-in `require_strict_session_attestation` delivery gate.  In one
+  held original-session lease and desktop lock, a profiled UIA3 adapter must
+  observe the configured active session marker, model marker and composer in
+  separately calibrated bounded regions before it may type.  A sidebar hit,
+  whole-window OCR hit, unreadable tree, ambiguous selector, missing runtime
+  id, unsupported driver or absent recorded fingerprint now yields an explicit
+  pre-input deferral rather than a best-effort write.
+- Bind strict proof to both `hwnd` and UIA runtime id; focus the bounded
+  composer and repeat the active session/model proof immediately before the
+  first write.  A same-window conversation switch, renderer replacement or
+  changed surface is refused before text entry.
+- Keep strict proof on the UIA3 path.  If UIA3 cannot deliver after a valid
+  proof, `AutoDriver` holds with `attestation-surface-changed`; it never falls
+  back to OCR/PowerShell input that cannot carry the proof.  Button-mode send
+  reuses the exact already-attested wrapper instead of rediscovering a window.
+- Add regression coverage for sidebar collisions, duplicate selector rows,
+  direct unregistered calls, UIA-to-OCR downgrade prevention, runtime-bound
+  surface changes, post-focus same-window chat changes, calibrated composer
+  selection and button-send window reuse.
+
+**Evidence boundary:** this release proves local code paths and regression
+behavior only.  No existing third-party profile is silently switched to strict
+mode, and it does not claim a newly observed
+`INPUT_SUBMITTED → MESSAGE_VISIBLE → AGENT_ACK → TASK_RESULT_READBACK` run in
+Qoder, Qoder CN, WorkBuddy, WorkBuddy AI or CodeBuddy.
+
 ## 0.6.32 — 提权执行器 CI 诊断与许可边界修复
 
 - Correct the elevated-task registration resolver's diagnostic order. An

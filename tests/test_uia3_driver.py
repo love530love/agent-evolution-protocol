@@ -30,7 +30,7 @@ class FakeRect:
 
 class FakeInfo:
     def __init__(self, control_type="Pane", name="", enabled=True, process_id=4321,
-                 handle=77, automation_id="", class_name=""):
+                 handle=77, automation_id="", class_name="", runtime_id=(42, 77)):
         self.control_type = control_type
         self.name = name
         self.enabled = enabled
@@ -38,6 +38,7 @@ class FakeInfo:
         self.handle = handle
         self.automation_id = automation_id
         self.class_name = class_name
+        self.runtime_id = runtime_id
 
 
 class FakeValue:
@@ -186,6 +187,62 @@ class ObserveTests(unittest.TestCase):
         self.assertIn("draft", text)
 
 
+class StrictSessionProofTests(unittest.TestCase):
+    @staticmethod
+    def profile():
+        return _profile(
+            transport="uia",
+            session_proof={
+                "session_region": {"left": 0.25, "top": 0.0, "right": 0.70, "bottom": 0.25},
+                "model_region": {"left": 0.70, "top": 0.0, "right": 1.0, "bottom": 0.25},
+                "selector_region": {"left": 0.0, "top": 0.0, "right": 0.25, "bottom": 1.0},
+                "composer_region": {"left": 0.25, "top": 0.75, "right": 1.0, "bottom": 1.0},
+            },
+        )
+
+    def test_sidebar_marker_does_not_count_as_the_active_conversation(self):
+        # The name exists in the left selector, but the currently open pane has
+        # no matching header.  It may be clicked once for a deliberate session
+        # switch, yet it can never authorize input without a post-switch active
+        # region proof.
+        sidebar = FakeElement(control_type="Text", name="Task chat",
+                              rect=FakeRect(10, 120, 220, 160))
+        model = FakeElement(control_type="Button", name="Model",
+                            rect=FakeRect(950, 45, 1100, 80))
+        driver = uia3.Uia3Driver(min_elements=1)
+        with patch.object(driver, "find_window", return_value=(FakeWindow([sidebar, model]), {"handle": 77})), \
+                patch.object(uia3.process_info, "image_path", return_value=self.profile()["exe"]), \
+                patch.object(uia3.time, "sleep"):
+            result = driver.attest_original_session(self.profile())
+        self.assertFalse(result["valid"])
+        self.assertEqual(result["reason"], "ATTESTATION_ACTIVE_SESSION_NOT_VISIBLE")
+        self.assertEqual(sidebar.clicks, 1)
+
+    def test_duplicate_sidebar_candidates_are_refused_without_a_click(self):
+        first = FakeElement(control_type="Text", name="Task chat", rect=FakeRect(10, 120, 220, 160))
+        second = FakeElement(control_type="Text", name="Task chat", rect=FakeRect(10, 180, 220, 220))
+        model = FakeElement(control_type="Button", name="Model", rect=FakeRect(950, 45, 1100, 80))
+        driver = uia3.Uia3Driver(min_elements=1)
+        with patch.object(driver, "find_window", return_value=(FakeWindow([first, second, model]), {"handle": 77})), \
+                patch.object(uia3.process_info, "image_path", return_value=self.profile()["exe"]):
+            result = driver.attest_original_session(self.profile())
+        self.assertFalse(result["valid"])
+        self.assertEqual(result["reason"], "ATTESTATION_SELECTOR_AMBIGUOUS")
+        self.assertEqual(first.clicks + second.clicks, 0)
+
+    def test_bounded_header_and_model_markers_create_a_strict_preinput_proof(self):
+        header = FakeElement(control_type="Text", name="Task chat", rect=FakeRect(420, 45, 700, 80))
+        model = FakeElement(control_type="Button", name="Model", rect=FakeRect(950, 45, 1100, 80))
+        driver = uia3.Uia3Driver(min_elements=1)
+        with patch.object(driver, "find_window", return_value=(FakeWindow([header, model]), {"handle": 77})), \
+                patch.object(uia3.process_info, "image_path", return_value=self.profile()["exe"]):
+            result = driver.attest_original_session(self.profile())
+        self.assertTrue(result["valid"])
+        self.assertEqual(result["evidence"]["marker_scope"], "active-transcript")
+        self.assertEqual(result["evidence"]["session_switch"]["result"], "already-active")
+        self.assertEqual(result["surface"]["target_id"], "hwnd:77|runtime:42.77")
+
+
 class DeliverTests(unittest.TestCase):
     def test_valuepattern_write_is_proven_by_reading_the_event_id_back(self):
         composer = FakeElement(control_type="Edit", name="composer",
@@ -228,6 +285,68 @@ class DeliverTests(unittest.TestCase):
             result = driver.deliver(_profile(), "body", "EVT-ABCDEFG")
         self.assertEqual(result["status"], "NO_INPUT_CONTROL")
         self.assertFalse(result["task_delivered"])
+
+    def test_surface_change_is_refused_before_the_composer_is_typed(self):
+        composer = FakeElement(control_type="Edit", name="composer",
+                               rect=FakeRect(0, 800, 1200, 880))
+        window = FakeWindow([composer])
+        driver = uia3.Uia3Driver()
+        expected = {
+            "kind": "desktop-uia3", "pid": 4321, "title": "Client",
+            "actual_exe": "C:/expected/Client.exe", "path_match_mode": "exact",
+            "path_policy_digest": "", "target_id": "hwnd:77|runtime:42.77",
+        }
+        with patch.object(driver, "find_window", return_value=(window, {"handle": 77})), \
+                patch.object(uia3.process_info, "image_path", return_value="C:/other/Client.exe"):
+            result = driver.deliver(_profile(exe="C:/expected/Client.exe"), "body EVT-ABCDEFG",
+                                    "EVT-ABCDEFG", expected_surface=expected)
+        self.assertEqual(result["status"], "attestation-surface-changed")
+        self.assertEqual(composer.keys, [])
+
+    def test_same_window_session_change_is_refused_after_composer_focus(self):
+        profile = StrictSessionProofTests.profile()
+        header = FakeElement(control_type="Text", name="Task chat",
+                             rect=FakeRect(420, 45, 700, 80))
+        model = FakeElement(control_type="Button", name="Model",
+                            rect=FakeRect(950, 45, 1100, 80))
+        composer = FakeElement(control_type="Edit", name="composer",
+                               rect=FakeRect(420, 800, 1100, 870))
+        window = FakeWindow([header, model, composer])
+        original_focus = composer.set_focus
+
+        def switch_chat_before_write():
+            original_focus()
+            header.element_info.name = "Other chat"
+
+        composer.set_focus = switch_chat_before_write
+        expected = {
+            "kind": "desktop-uia3", "pid": 4321, "title": "Client",
+            "actual_exe": profile["exe"], "path_match_mode": "exact",
+            "path_policy_digest": "", "target_id": "hwnd:77|runtime:42.77",
+        }
+        driver = uia3.Uia3Driver(min_elements=1)
+        with patch.object(driver, "find_window", return_value=(window, {"handle": 77})), \
+                patch.object(uia3.process_info, "image_path", return_value=profile["exe"]):
+            result = driver.deliver(profile, "body EVT-ABCDEFG", "EVT-ABCDEFG",
+                                    expected_surface=expected)
+        self.assertEqual(result["status"], "attestation-surface-changed")
+        self.assertEqual(result["reason"], "ATTESTATION_ACTIVE_SESSION_NOT_VISIBLE")
+        self.assertEqual(composer.keys, [])
+
+    def test_button_send_uses_the_already_attested_window(self):
+        composer = FakeElement(control_type="Edit", name="composer",
+                               rect=FakeRect(0, 800, 1200, 880))
+        button = FakeElement(control_type="Button", name="Send",
+                             rect=FakeRect(1120, 800, 1200, 880))
+        window = FakeWindow([composer, button])
+        driver = uia3.Uia3Driver()
+        with patch.object(driver, "find_window", return_value=(window, {"handle": 77})) as locate, \
+                patch.object(driver, "capture", return_value="body EVT-ABCDEFG"), \
+                patch.object(uia3.time, "sleep"):
+            result = driver.deliver(_profile(send_mode="button"), "body EVT-ABCDEFG", "EVT-ABCDEFG")
+        self.assertEqual(result["send_method"], "uia3-send-button")
+        self.assertEqual(button.clicks, 1)
+        self.assertEqual(locate.call_count, 1)
 
 
 class FallbackDriver:
@@ -294,6 +413,23 @@ class AutoDriverTests(unittest.TestCase):
         with patch.object(driver.uia3, "has_tree", return_value=True):
             result = driver.deliver(_profile(prefer_uia3=True), "m", "EVT-1", urgent=True)
         self.assertEqual(result["client"], "powershell")
+
+    def test_strict_uia_failure_never_falls_back_to_ocr_typing(self):
+        fallback = FallbackDriver()
+        driver = uia3.AutoDriver(fallback=fallback)
+        expected = {
+            "kind": "desktop-uia3", "pid": 4321, "title": "Client",
+            "actual_exe": "C:/nonexistent/Client.exe", "path_match_mode": "exact",
+            "path_policy_digest": "", "target_id": "hwnd:77|runtime:42.77",
+        }
+        with patch.object(driver.uia3, "has_tree", return_value=True), \
+                patch.object(driver.uia3, "deliver",
+                             return_value={"status": "NO_INPUT_CONTROL", "task_delivered": False}):
+            result = driver.deliver(_profile(prefer_uia3=True), "m", "EVT-1",
+                                    expected_surface=expected)
+        self.assertEqual(result["status"], "attestation-surface-changed")
+        self.assertEqual(result["reason"], "ATTESTATION_UIA3_DELIVERY_UNAVAILABLE")
+        self.assertNotIn("deliver", fallback.calls)
 
     def test_busy_detection_is_overlaid_from_pixels(self):
         # The busy indicator is an animation with no accessible name; if the

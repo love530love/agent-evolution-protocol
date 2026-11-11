@@ -29,3 +29,20 @@ pwsh -File scripts/desktop-preflight.ps1 `
 ```
 
 预检失败意味着当前窗口或锚点不满足无人值守条件，应先重新注册/锚定，不应直接重试投递。
+
+## 严格原会话模式（v0.6.33，可选）
+
+当 profile 显式设置 `require_strict_session_attestation=true` 时，以上预检仍不够：发送前还必须在同一
+session lease 与 desktop lock 内，完成 UIA3 受限区域的原会话证明。配置需要额外的
+`session_region`、`model_region`、`selector_region`、`composer_region`；同时要求已有匹配 fingerprint、
+可信 runtime id，并在 composer 获得焦点后重新核对活动会话。UIA3 不能继续时会拒绝，而不会转 OCR/PowerShell
+盲发。
+
+严格证明只是输入许可，**不是** `message-visible`、ACK 或结果。未完成以下全部链路时不得关单：
+
+```text
+INPUT_SUBMITTED → MESSAGE_VISIBLE → AGENT_ACK → TASK_RESULT_READBACK
+```
+
+标定、拒绝原因与回滚边界见
+[`STRICT_ORIGINAL_SESSION_ATTESTATION.zh-CN.md`](STRICT_ORIGINAL_SESSION_ATTESTATION.zh-CN.md)。
