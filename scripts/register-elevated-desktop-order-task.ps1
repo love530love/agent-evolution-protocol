@@ -57,30 +57,38 @@ function Get-ControlledReceiptPath {
 function Resolve-ApprovedAepPython {
     param([string]$Requested)
 
-    $approved = @(
+    # Keep the allow-list independent from which optional runtime happens to be
+    # installed.  A caller-supplied foreign executable must be rejected as
+    # unapproved even on a freshly cloned repository with no local runtime.
+    # Otherwise the diagnostic would misleadingly claim that the only problem
+    # is a missing runtime, and tests/automation could not distinguish the
+    # containment fence from an installation prerequisite.
+    $approvedLocations = @(
         (Join-Path $repo ".tools\agent-runtime\Scripts\python.exe"),
         (Join-Path $repo ".tools\desktop-sdk\Scripts\python.exe"),
         (Join-Path $repo ".venv\Scripts\python.exe")
-    ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
-        ForEach-Object { (Resolve-Path -LiteralPath $_).Path }
-    if ($approved.Count -eq 0) {
-        throw "APPROVED_AEP_PYTHON_NOT_FOUND: install the repository capability runtime first"
-    }
+    ) | ForEach-Object { [System.IO.Path]::GetFullPath($_) }
 
     if ($Requested) {
         if (-not (Test-Path -LiteralPath $Requested -PathType Leaf)) {
             throw "PYTHON_NOT_FOUND: $Requested"
         }
         $candidate = (Resolve-Path -LiteralPath $Requested).Path
-    } else {
-        $candidate = $approved[0]
-    }
-    if (-not ($approved | Where-Object {
+        if (-not ($approvedLocations | Where-Object {
                 [string]::Equals($_, $candidate, [System.StringComparison]::OrdinalIgnoreCase)
             })) {
         throw "PYTHON_NOT_APPROVED: $candidate"
     }
-    return $candidate
+        return $candidate
+    }
+
+    $installedApproved = $approvedLocations | Where-Object {
+        Test-Path -LiteralPath $_ -PathType Leaf
+    } | ForEach-Object { (Resolve-Path -LiteralPath $_).Path }
+    if ($installedApproved.Count -eq 0) {
+        throw "APPROVED_AEP_PYTHON_NOT_FOUND: install the repository capability runtime first"
+    }
+    return $installedApproved[0]
 }
 
 $ReceiptFullPath = Get-ControlledReceiptPath -Requested $ReceiptPath -Root $CoordRoot -Id $OrderId

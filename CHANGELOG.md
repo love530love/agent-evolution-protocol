@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.6.32 — 提权执行器 CI 诊断与许可边界修复
+
+- Correct the elevated-task registration resolver's diagnostic order. An
+  explicitly supplied Python executable is now compared against the static,
+  repository-local allow-list **before** the optional runtime installation is
+  consulted. A foreign executable therefore reliably reports
+  `PYTHON_NOT_APPROVED`, including on a clean CI checkout with no installed
+  capability runtime; the no-argument path still reports
+  `APPROVED_AEP_PYTHON_NOT_FOUND` when none of the approved runtimes exists.
+- Preserve v0.6.31 and its tag as historical evidence rather than rewriting a
+  published release after CI found the defect. v0.6.32 is the corrective
+  iteration.
+- Replayed the exact GitHub Actions test entrypoint locally:
+  `python -m unittest discover -s tests -q` → `1305 tests`, `4 skipped`, exit
+  0. This is local evidence only; the new remote matrix remains independently
+  verifiable from the v0.6.32 commit.
+
 ## 0.6.31 — 更新器安全身份、静默观察与受限提权执行器
 
 - Treat versioned desktop-client updater directories as an explicit identity

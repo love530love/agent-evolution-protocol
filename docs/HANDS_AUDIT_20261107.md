@@ -45,6 +45,14 @@ elevated worker 只处理一个已经 DEPOSITED 的精确 order，默认 preview
 基础件；因现有整窗 OCR 尚不能严格证明“活跃原会话”，它**尚未**接入生产发送闸门。新增或修改的
 回归随后由本版全量测试复核；这仍不是任何第三方原会话已经接单的实机结论。
 
+2026-11-11 v0.6.32 纠正审计：v0.6.31 的 Windows CI 在干净 runner 上暴露了一处明确的诊断顺序
+缺陷：显式传入外来 Python 时，注册器先检查可选的本地 capability runtime，导致错误报
+`APPROVED_AEP_PYTHON_NOT_FOUND`，而非真实的 containment 拒绝
+`PYTHON_NOT_APPROVED`。修复后，显式路径先与静态 repository-local allow-list 比较，只有默认
+路径才查询已安装的 allow-listed runtime。本机按 GitHub Actions 相同入口执行
+`python -m unittest discover -s tests -q` 为 **1305 tests, 4 skipped, exit 0**。这只证明补丁的
+本机回归，v0.6.32 的远程矩阵仍需独立查看；v0.6.31 标签和失败记录保留为可追溯历史。
+
 同日发布前只读实机枚举：Qoder（PID 43000）在
 `D:\Programs\Qoder\.qoder-versions\0.5.7\Qoder.exe`，被识别为 `exe-trusted-root`；其
 window anchor 为 `CURRENT`，已保存 fingerprint 与当前观测一致。Qoder CN（PID 40388）在自己的
