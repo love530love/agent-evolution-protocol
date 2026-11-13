@@ -121,12 +121,24 @@ try {
             # Optional startup handshake, not a heartbeat or an Agent ACK.
             $ready = @{ status = 'READY'; pid = $PID; coord_root = $root;
                 initial_reconciliation_complete = $true; at = [DateTime]::UtcNow.ToString('o') } | ConvertTo-Json
-            $stream = [IO.File]::Open($readyPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::Read)
+            # Never make an empty/partial READY file observable.  Consumers use
+            # this as a real liveness handshake before enqueueing work, so a
+            # direct CreateNew+Write sequence recreates the same false-ready
+            # race that this handshake is meant to eliminate.  The temporary
+            # file lives beside the destination, therefore Move is atomic on
+            # this volume after Flush(true) makes the contents durable.
+            $readyTemp = Join-Path (Split-Path -Parent $readyPath) ('.' + [IO.Path]::GetFileName($readyPath) + '.' + [guid]::NewGuid().ToString('N') + '.tmp')
+            $stream = [IO.File]::Open($readyTemp, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
             try {
                 $bytes = [Text.Encoding]::UTF8.GetBytes($ready)
                 $stream.Write($bytes, 0, $bytes.Length)
                 $stream.Flush($true)
             } finally { $stream.Dispose() }
+            try {
+                [IO.File]::Move($readyTemp, $readyPath)
+            } finally {
+                if (Test-Path -LiteralPath $readyTemp) { Remove-Item -LiteralPath $readyTemp -Force }
+            }
             $readyWritten = $true
         }
         if ($Once) { break }

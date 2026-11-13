@@ -6,8 +6,8 @@
 
 - 命令总数：**91**
 - 风险分布：read-only 21、mutating 55、irreversible 15
-- 用途已记录：**27** / 91（未记录 64，只允许减少）
-- 清单摘要：`sha256:b2b46a8912c66266c29ea1c54ab716014ed2b701c7d8b052410f88f8ad360877`
+- 用途已记录：**28** / 91（未记录 63，只允许减少）
+- 清单摘要：`sha256:7ffba5b00a5238ec5b0a09ddff85efd73d6bc2de0cde8c89dd838feff4005f8d`
 
 风险分级是**声明**而不是推导：未登记的命令一律按 `mutating` 处理。
 把会写的命令标成 `read-only` 是这里唯一有代价的错误，所以默认值朝安全方向倒。
@@ -69,7 +69,7 @@
 | `coord-dependency-audit` | read-only | `--lock --output` | *未记录* |
 | `coord-dependency-gate` | mutating | `--lock --audit-dir --inventory-dir --wheel-dir --output` | *未记录* |
 | `coord-dependency-inventory` | read-only | `--lock --environment --output` | *未记录* |
-| `coord-desktop` | mutating | `ACTION` | *未记录* |
+| `coord-desktop` | mutating | `ACTION` | Register desktop providers and run read-only per-client capability probes before any UI input. |
 | `coord-desktop-ipc` | mutating | `ACTION --workspace-id --agent` | Persist/recover Supervisor ↔ Desktop Runner events and receipts. |
 | `coord-desktop-runner` | mutating | `ACTION --agent` | Plan/launch/wait for a GUI Agent in the interactive user session. |
 | `coord-digest` | read-only | `--agent` | *未记录* |

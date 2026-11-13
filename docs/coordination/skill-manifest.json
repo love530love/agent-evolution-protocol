@@ -1884,6 +1884,7 @@
       "arguments": [
         {
           "choices": [
+            "capability-probe",
             "export-config",
             "inventory",
             "plan",
@@ -1892,6 +1893,7 @@
           ],
           "dest": "action",
           "flags": [],
+          "help": "capability-probe is read-only: it never focuses, types, clicks, or sends",
           "kind": "positional",
           "required": true
         },
@@ -1900,6 +1902,7 @@
           "flags": [
             "--profile-file"
           ],
+          "help": "provider profile JSON for register",
           "kind": "option",
           "required": false
         },
@@ -1908,6 +1911,16 @@
           "flags": [
             "--provider"
           ],
+          "help": "registered provider; capability-probe defaults to agent_desktop",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "agent",
+          "flags": [
+            "--agent"
+          ],
+          "help": "roster agent for capability-probe; required for that action",
           "kind": "option",
           "required": false
         },
@@ -1929,6 +1942,7 @@
           "flags": [
             "--operation"
           ],
+          "help": "operation to plan from previously discovered MCP tools",
           "kind": "option",
           "required": false
         },
@@ -1938,6 +1952,7 @@
           "flags": [
             "--previous-state"
           ],
+          "help": "previous delivery evidence state; uncertain sends never fail over automatically",
           "kind": "option",
           "required": false
         },
@@ -1947,6 +1962,7 @@
           "flags": [
             "--timeout"
           ],
+          "help": "read-only provider probe timeout in seconds",
           "kind": "option",
           "required": false
         },
@@ -1956,13 +1972,15 @@
           "flags": [
             "--details"
           ],
+          "help": "include registered profile and discovery receipt in inventory",
           "kind": "flag",
           "nargs": 0,
           "required": false
         }
       ],
-      "documented": false,
+      "documented": true,
       "name": "coord-desktop",
+      "purpose": "Register desktop providers and run read-only per-client capability probes before any UI input.",
       "risk": "mutating"
     },
     {
@@ -5540,8 +5558,8 @@
     }
   ],
   "count": 91,
-  "digest": "sha256:b2b46a8912c66266c29ea1c54ab716014ed2b701c7d8b052410f88f8ad360877",
-  "documented": 27,
+  "digest": "sha256:7ffba5b00a5238ec5b0a09ddff85efd73d6bc2de0cde8c89dd838feff4005f8d",
+  "documented": 28,
   "generated_from": "agent_evolution_protocol.cli:build_parser",
   "global_arguments": [
     {
@@ -5583,5 +5601,5 @@
     }
   ],
   "schema": "aep-skill-manifest-v1",
-  "undocumented": 64
+  "undocumented": 63
 }

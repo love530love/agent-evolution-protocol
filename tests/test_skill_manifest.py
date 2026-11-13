@@ -231,9 +231,9 @@ class ResearchDocTests(unittest.TestCase):
         self.assertEqual(self._number(r"(\d+) 个子命令", "the command count"),
                          self.manifest["count"])
 
-    def test_the_documented_docstring_count_is_the_real_one(self):
+    def test_the_documented_command_description_count_is_the_real_one(self):
         self.assertEqual(
-            self._number(r"其中 (\d+) 个在处理函数上有 docstring", "the docstring count"),
+            self._number(r"其中 (\d+) 个在定义处有可生成的说明", "the documented command count"),
             self.manifest["documented"])
 
     def test_the_documented_undocumented_count_is_the_real_one(self):

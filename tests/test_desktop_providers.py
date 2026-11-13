@@ -104,3 +104,104 @@ class DesktopProviderTests(unittest.TestCase):
         self.assertEqual(providers.plan(self.root, operation="locate")["candidates"], [])
         with self.assertRaisesRegex(ValueError, "env"):
             providers.register(self.root, {**self.profile, "env": {"A": None}})
+
+    def _agent_desktop_profile(self):
+        return {"name": "agent_desktop", "command": sys.executable, "args": [],
+                "sdk_python": sys.executable, "bindings": {"snapshot": "desktop_snapshot"}}
+
+    @staticmethod
+    def _unique_window(*, anchored=True):
+        return {"clients": [{"agent": "qoder", "out_of_scope": "", "windows": [{
+            "pid": 42, "title": "Qoder", "identity": "exe", "anchor_status": "CURRENT",
+            "is_anchor": anchored,
+        }]}]}
+
+    def test_capability_probe_separates_usable_tree_from_session_acceptance(self):
+        providers.register(self.root, self._agent_desktop_profile())
+        responses = [
+            {"ok": True, "data": [{"id": "w-42", "pid": 42, "title": "Qoder",
+                                  "process_instance": "instance-42", "accessible": True}]},
+            {"ok": True, "data": {"ref_count": 3, "snapshot_id": "normal", "window": {"id": "w-42"},
+                                  "tree": {"secret": "must not persist", "children": [
+                                      {"ref_id": "@r1", "role": "textbox", "available_actions": ["SetValue"]}
+                                  ]}}},
+            {"ok": True, "data": {"ref_count": 4, "snapshot_id": "forced", "window": {"id": "w-42"},
+                                  "tree": {"children": [
+                                      {"ref_id": "@r2", "role": "edit", "available_actions": ["SetValue"]}
+                                  ]}}},
+        ]
+        with patch.object(providers.client_registry, "discover", return_value=self._unique_window()), \
+             patch.object(providers.client_registry, "profile", return_value={"electron": True}), \
+             patch.object(providers, "_run_json", side_effect=responses) as runner:
+            result = providers.capability_probe(self.root, "qoder", timeout=3)
+        self.assertEqual(result["status"], "SESSION_UNATTESTED")
+        self.assertEqual(result["tree_status"], "TREE_USABLE")
+        self.assertFalse(result["delivery_verified"])
+        self.assertFalse(result["session_accepted"])
+        self.assertEqual(len(result["routes"]), 2)
+        self.assertTrue(all("tree" not in route for route in result["routes"]))
+        self.assertEqual(runner.call_count, 3)
+        receipt = json.loads((self.root / "desktop_providers" / "capabilities" /
+                              "agent_desktop--qoder.json").read_text(encoding="utf-8"))
+        self.assertNotIn("secret", json.dumps(receipt))
+
+    def test_capability_probe_records_opaque_tree_without_attempting_input(self):
+        providers.register(self.root, self._agent_desktop_profile())
+        responses = [
+            {"ok": True, "data": [{"id": "w-42", "pid": 42, "title": "Qoder"}]},
+            {"ok": True, "data": {"ref_count": 0, "snapshot_id": "opaque", "window": {"id": "w-42"}}},
+        ]
+        with patch.object(providers.client_registry, "discover", return_value=self._unique_window(anchored=False)), \
+             patch.object(providers.client_registry, "profile", return_value={"electron": False}), \
+             patch.object(providers, "_run_json", side_effect=responses):
+            result = providers.capability_probe(self.root, "qoder", timeout=3)
+        self.assertEqual(result["status"], "TREE_OPAQUE")
+        self.assertEqual(result["window_resolution"]["anchor_status"], "CURRENT")
+        self.assertFalse(result["desktop_input_performed"])
+        self.assertFalse(result["message_visible"])
+        self.assertFalse(result["agent_ack"])
+
+    def test_capability_probe_marks_titlebar_only_tree_partial(self):
+        providers.register(self.root, self._agent_desktop_profile())
+        responses = [
+            {"ok": True, "data": [{"id": "w-42", "pid": 42, "title": "Qoder"}]},
+            {"ok": True, "data": {"ref_count": 1, "snapshot_id": "titlebar", "window": {"id": "w-42"},
+                                  "tree": {"role": "dialog", "children": [{
+                                      "ref_id": "@title", "role": "group", "available_actions": ["SetValue"],
+                                      "native_id": {"kind": "automation_id", "value": "TitleBar"},
+                                  }]}}},
+        ]
+        with patch.object(providers.client_registry, "discover", return_value=self._unique_window()), \
+             patch.object(providers.client_registry, "profile", return_value={"electron": False}), \
+             patch.object(providers, "_run_json", side_effect=responses):
+            result = providers.capability_probe(self.root, "qoder", timeout=3)
+        self.assertEqual(result["status"], "TREE_PARTIAL")
+        self.assertEqual(result["routes"][0]["composer_input_count"], 0)
+
+    def test_capability_probe_refuses_ambiguous_or_out_of_scope_targets_before_provider_io(self):
+        providers.register(self.root, self._agent_desktop_profile())
+        ambiguous = {"clients": [{"agent": "qoder", "out_of_scope": "", "windows": [{"pid": 1}, {"pid": 2}]}]}
+        outside = {"clients": [{"agent": "chrome", "out_of_scope": "human chat", "windows": []}]}
+        with patch.object(providers.client_registry, "discover", return_value=ambiguous), \
+             patch.object(providers, "_run_json") as runner:
+            result = providers.capability_probe(self.root, "qoder", timeout=3)
+        self.assertEqual(result["status"], "WINDOW_AMBIGUOUS")
+        runner.assert_not_called()
+        with patch.object(providers.client_registry, "discover", return_value=outside), \
+             patch.object(providers, "_run_json") as runner:
+            result = providers.capability_probe(self.root, "chrome", timeout=3)
+        self.assertEqual(result["status"], "OUT_OF_SCOPE")
+        runner.assert_not_called()
+
+    def test_capability_probe_classifies_provider_timeout_as_tree_timeout(self):
+        providers.register(self.root, self._agent_desktop_profile())
+        responses = [
+            {"ok": True, "data": [{"id": "w-42", "pid": 42, "title": "Qoder"}]},
+            {"ok": False, "error": {"code": "TIMEOUT", "message": "snapshot timed out"}},
+        ]
+        with patch.object(providers.client_registry, "discover", return_value=self._unique_window()), \
+             patch.object(providers.client_registry, "profile", return_value={"electron": False}), \
+             patch.object(providers, "_run_json", side_effect=responses):
+            result = providers.capability_probe(self.root, "qoder", timeout=3)
+        self.assertEqual(result["status"], "TREE_TIMEOUT")
+        self.assertEqual(result["routes"][0]["status"], "TREE_TIMEOUT")

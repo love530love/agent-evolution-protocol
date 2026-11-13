@@ -991,6 +991,11 @@ def coord_desktop(args: argparse.Namespace) -> None:
             if not args.provider:
                 raise ValueError("probe requires --provider")
             result = desktop_providers.probe(coord_root(args), args.provider, timeout=args.timeout)
+        elif args.action == "capability-probe":
+            if not args.agent:
+                raise ValueError("capability-probe requires --agent")
+            result = desktop_providers.capability_probe(
+                coord_root(args), args.agent, provider=args.provider or "agent_desktop", timeout=args.timeout)
         elif args.action == "plan":
             if not args.operation:
                 raise ValueError("plan requires --operation")
@@ -3640,7 +3645,26 @@ def build_parser() -> argparse.ArgumentParser:
     changes.add_argument("--evidence", nargs="+", default=[])
     changes.set_defaults(func=coord_improvement)
     reasoning = commands.add_parser("coord-reasoning"); reasoning.add_argument("action", choices=("create", "status")); reasoning.add_argument("--request-file", type=Path); reasoning.add_argument("--task"); reasoning.set_defaults(func=coord_reasoning)
-    desktop = commands.add_parser("coord-desktop"); desktop.add_argument("action", choices=("register", "inventory", "probe", "plan", "export-config")); desktop.add_argument("--profile-file", type=Path); desktop.add_argument("--provider"); desktop.add_argument("--operation", choices=sorted(desktop_providers.OPERATIONS)); desktop.add_argument("--previous-state", default="NOT_STARTED"); desktop.add_argument("--timeout", type=int, default=30); desktop.add_argument("--details", action="store_true"); desktop.set_defaults(func=coord_desktop)
+    desktop = commands.add_parser(
+        "coord-desktop",
+        help="register desktop providers and run read-only per-client capability probes before any UI input",
+        description="Register desktop providers and run read-only per-client capability probes before any UI input.",
+    )
+    desktop.add_argument(
+        "action", choices=("register", "inventory", "probe", "capability-probe", "plan", "export-config"),
+        help="capability-probe is read-only: it never focuses, types, clicks, or sends",
+    )
+    desktop.add_argument("--profile-file", type=Path, help="provider profile JSON for register")
+    desktop.add_argument("--provider", help="registered provider; capability-probe defaults to agent_desktop")
+    desktop.add_argument("--agent", help="roster agent for capability-probe; required for that action")
+    desktop.add_argument("--operation", choices=sorted(desktop_providers.OPERATIONS),
+                         help="operation to plan from previously discovered MCP tools")
+    desktop.add_argument("--previous-state", default="NOT_STARTED",
+                         help="previous delivery evidence state; uncertain sends never fail over automatically")
+    desktop.add_argument("--timeout", type=int, default=30,
+                         help="read-only provider probe timeout in seconds")
+    desktop.add_argument("--details", action="store_true", help="include registered profile and discovery receipt in inventory")
+    desktop.set_defaults(func=coord_desktop)
     agent_mcp = commands.add_parser("coord-agent-mcp"); agent_mcp.add_argument("action", choices=("register", "inventory", "render-config", "plan")); agent_mcp.add_argument("--profile-file", type=Path); agent_mcp.add_argument("--agent"); agent_mcp.add_argument("--workspace-id"); agent_mcp.add_argument("--operation", choices=sorted(agent_mcp_registry.OPERATIONS)); agent_mcp.add_argument("--session-id"); agent_mcp.add_argument("--no-replace", action="store_true"); agent_mcp.set_defaults(func=coord_agent_mcp)
     provider_catalog = commands.add_parser("coord-provider-catalog", help="list optional third-party execution providers (read-only)"); provider_catalog.add_argument("--catalog", type=Path); provider_catalog.add_argument("--layer"); provider_catalog.add_argument("--status", choices=sorted(execution_provider_catalog.STATUSES)); provider_catalog.set_defaults(func=coord_provider_catalog)
     desktop_runner_cmd = commands.add_parser("coord-desktop-runner"); desktop_runner_cmd.add_argument("action", choices=("launch", "wait", "ensure")); desktop_runner_cmd.add_argument("--agent", required=True); desktop_runner_cmd.add_argument("--apply", action="store_true"); desktop_runner_cmd.add_argument("--allow-launch", action="store_true"); desktop_runner_cmd.add_argument("--debug-port", type=int, default=0); desktop_runner_cmd.add_argument("--extra-args", nargs="*", default=[]); desktop_runner_cmd.add_argument("--timeout", type=float, default=30.0); desktop_runner_cmd.add_argument("--poll-interval", type=float, default=0.25); desktop_runner_cmd.set_defaults(func=coord_desktop_runner)

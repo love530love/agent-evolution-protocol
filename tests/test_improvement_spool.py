@@ -44,12 +44,25 @@ class SpoolTests(unittest.TestCase):
         repo = Path(__file__).resolve().parents[1]
         with _tempdir() as temp:
             root = Path(temp)
+            ready = root / "watcher-ready.json"
             args = [shutil.which("pwsh.exe"), "-NoProfile", "-File",
                     str(repo / "scripts/watch-improvements.ps1"), "-Python", sys.executable,
-                    "-CoordRoot", temp]
+                    "-CoordRoot", temp, "-ReadyFile", str(ready)]
             process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                        env={**os.environ, "PYTHONPATH": str(repo / "src")})
             try:
+                # A spawned process is not a live event consumer.  The script
+                # deliberately publishes READY only after registering its
+                # watchers and completing its initial reconciliation; enqueue
+                # after that durable handshake so this test exercises delivery,
+                # not a process-start race under a busy Windows workstation.
+                ready_deadline = time.monotonic() + 20
+                while time.monotonic() < ready_deadline and not ready.exists():
+                    if process.poll() is not None:
+                        break
+                    time.sleep(0.1)
+                self.assertTrue(ready.exists(), "watcher did not publish READY")
+                self.assertEqual(json.loads(ready.read_text(encoding="utf-8"))["status"], "READY")
                 proof = root / "proof"
                 proof.write_text("ok")
                 event = root / "source.json"
