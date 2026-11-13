@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.6.34 — 每客户端桌面可操作性探针与原子 READY 握手
+
+- Add `aep coord-desktop capability-probe --agent <name>`: a read-only,
+  per-client evidence probe that binds the roster's `PID + title` to an
+  `agent-desktop` window and distinguishes `TREE_USABLE`, `TREE_PARTIAL`,
+  `TREE_OPAQUE`, `TREE_TIMEOUT`, and binding failures.  A title bar or a
+  nonzero ref count no longer implies that a message composer is writable.
+- Preserve the five-stage delivery boundary.  A probe never focuses, types,
+  clicks, sends, or claims `MESSAGE_VISIBLE`, `AGENT_ACK`, or
+  `TASK_RESULT_READBACK`; even a usable tree remains `SESSION_UNATTESTED`
+  until a strict original-session driver proves the full closure.
+- Publish `watch-improvements.ps1 -ReadyFile` only after complete JSON has
+  been flushed to a same-directory temporary file and atomically moved into
+  place.  Consumers now cannot mistake an empty ready-file race for a live
+  event consumer.
+- Regenerate the coordination skill manifest so newly joined agents discover
+  the read-only probe and its evidence boundary before attempting desktop
+  delivery.
+
+**Evidence boundary:** this release adds an executable discovery/probe layer,
+not a universal Electron chat sender.  Qoder, Qoder CN, WorkBuddy, WorkBuddy
+AI and CodeBuddy still require a client-specific, strict original-session
+driver before any live command can be certified as delivered.
+
 ## 0.6.33 — 严格原会话证明进入发送活路径
 
 - Add an opt-in `require_strict_session_attestation` delivery gate.  In one
