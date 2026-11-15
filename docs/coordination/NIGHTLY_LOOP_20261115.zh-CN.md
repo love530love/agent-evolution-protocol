@@ -23,7 +23,7 @@
 
 ## 当前证据
 
-- AEP：`v0.6.37` → `v0.6.38` → `v0.6.39` → `v0.6.40` → `v0.6.41`（rollout 投递确认），`v0.6.41` 代码与文档提交后普通推送 `origin/main`。
+- AEP：`v0.6.37` → `v0.6.38` → `v0.6.39` → `v0.6.40` → `v0.6.41`（rollout 投递确认）→ `v0.6.42`（租约结算与 lease 阻塞恢复），代码与文档提交后普通推送 `origin/main`。
 - AEP 全量回归：`1775 passed, 2 skipped`（排除已知陈旧的 `tests/test_ui_profile_examples.py`）。
 - 第 1 轮事件 `AEP-NL-20261115-2005-01`：
   - 投递回执 `task_delivered=true`，事件见证控件为当前 `设计自进化架构` 文档；
@@ -33,6 +33,8 @@
 - 第 2 轮事件 `AEP-NL-20261115-2005-02` 已回读：AEGS 功能提交 `9584c69`、治理证据提交 `da11ca8`；自报 `18 passed / 0 skipped, 10.95s`。
 - 第 3 轮事件 `AEP-NL-20261115-2005-03`：UI 回执为 `submitted-unconfirmed`，但同一 thread 的 rollout 用户消息在 `2026-11-15T12:13:12.091Z` 证明已送达（message id `01a1df20-3419-7af1-beff-a58879af5609`）。已按该独立证据恢复为 `sent`，没有重发。
 - `v0.6.41` 把这条恢复逻辑固化：UI 回执不确定时，先在本 thread rollout 中确认用户消息；确认则记 `DELIVER_RECOVERED` 并继续等待结果，未确认才 HOLD。
+- 第 4 轮首次投递被共享 session lease 拦下（`SESSION_UNCERTAIN`，未触达输入）：第 3 轮的 `submitted-unconfirmed` 在 `session_leases` 留下 `UNCERTAIN`。已用 rollout 双向证据（同一 event 的 `UserMessage` 与 `task_complete`）执行 `session_lease.reconcile`，租约变为 `RECONCILED`。
+- `v0.6.42` 固化两条规则：结果回读或 `DELIVER_RECOVERED` 时自动用 rollout 证据 reconcile 该会话租约；若投递被 lease 拦住、收到 `SESSION_UNCERTAIN` 且 `previous_event_id` 已被 rollout 证明结算，则本事件证明未输入，记为 `DELIVER_NOT_SENT` 并重排，不重发上一事件。
 
 ## 早间检查
 
@@ -67,5 +69,6 @@ python -m aegs.cli journal status .
 - 单个任务超过 60 分钟仍无结果会终态 HOLD，不重发；8 小时窗口内剩余任务随之停止。
 - `submitted-unconfirmed` 的 rollout 确认默认最多等 20 秒；若 rollout 不可读或滞后，仍按不确定 HOLD，不会改走其他通道重发。
 - 原始 UIA `session_marker` 可能在侧栏命中非活动会话，因此它只作辅助；主闸门是“全局最新 thread + 活动视图事件指纹 + rollout 回读”。
+- 活动视图若停留在历史位置，最新事件指纹不在渲染范围内，preflight 会 `ACTIVE_VIEW_FINGERPRINT_MISSING` 并 HOLD；把原会话滚到最新后再继续，不能改走其他通道。
 - AEGS 的 `PASS` 只是项目证据，不是 AEP 授权、claim/lease、ACK 或任务完成判定。
 - `tests/test_ui_profile_examples.py` 的 `qoder_cn` 模板陈旧失败在本次工作前已存在，未混入本次改动。

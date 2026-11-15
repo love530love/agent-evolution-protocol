@@ -44,6 +44,7 @@ class FakeAdapter:
         self.deliveries: list[tuple[str, str]] = []
         self.results: dict[str, dict] = {}
         self.submissions: dict[str, dict] = {}
+        self.reconciliations: list[tuple[str, str, str]] = []
         self.transcript = "previous: PREVIOUS-EVENT"
 
     def threads(self):
@@ -68,6 +69,10 @@ class FakeAdapter:
     def submission(self, thread_id, marker):
         return self.submissions.get(
             marker, {"status": "absent", "message_seen": False})
+
+    def reconcile_session(self, event_id, evidence, session_id):
+        self.reconciliations.append((event_id, evidence, session_id))
+        return {"state": "RECONCILED", "reconciled": True}
 
     def git_snapshot(self, repo):
         return {"head": "abc", "branch": "main", "status": "", "log": "abc test"}
@@ -121,6 +126,8 @@ def test_result_readback_advances_without_sending_again(tmp_path):
     state = _state(tmp_path)
     assert state["items"][0]["status"] == "result"
     assert state["items"][0]["fields"]["commit"] == "deadbeef"
+    assert adapter.reconciliations[0][0] == event_id
+    assert "task_complete" in adapter.reconciliations[0][1]
 
 
 def test_uncertain_delivery_holds_and_never_retries(tmp_path):
@@ -134,6 +141,7 @@ def test_uncertain_delivery_holds_and_never_retries(tmp_path):
     assert first["status"] == "HOLD_UNCERTAIN_DELIVERY"
     assert second["status"] == "HOLD_UNCERTAIN_DELIVERY"
     assert len(adapter.deliveries) == 1
+    assert adapter.reconciliations == []
 
 
 def test_uncertain_delivery_confirmed_by_rollout_is_not_resent(tmp_path):
@@ -152,7 +160,8 @@ def test_uncertain_delivery_confirmed_by_rollout_is_not_resent(tmp_path):
     state = _state(tmp_path)
     assert state["items"][0]["status"] == "sent"
     assert state["items"][0]["sent_at"] == "2026-11-15T12:00:01Z"
-    assert state["history"][-1]["action"] == "DELIVER_RECOVERED"
+    assert any(row["action"] == "DELIVER_RECOVERED" for row in state["history"])
+    assert adapter.reconciliations[0][0] == "AEP-NL-TESTRUN-01"
     adapter.results["AEP-RESULT:AEP-NL-TESTRUN-01"] = {
         "status": "seen", "task_result_readback": True, "turn_id": "TURN",
         "completed_at": "2026-11-15T12:01:00Z",
@@ -178,6 +187,42 @@ def test_uncertain_delivery_holds_when_rollout_has_no_submission(tmp_path):
     state = _state(tmp_path)
     assert state["items"][0]["status"] == "uncertain"
     assert state["history"][-1]["payload"]["submission_status"] == "absent"
+    assert adapter.reconciliations == []
+
+
+def test_lease_blocked_by_settled_prior_event_is_requeued(tmp_path):
+    adapter = FakeAdapter()
+    config = _config(tmp_path)
+    start = _now()
+    nightly_loop.tick(tmp_path, config, now=start, adapter=adapter)
+    adapter.results["AEP-RESULT:AEP-NL-TESTRUN-01"] = {
+        "status": "seen", "task_result_readback": True, "turn_id": "TURN-1",
+        "completed_at": "2026-11-15T12:00:00Z",
+        "message": "AEP-RESULT:AEP-NL-TESTRUN-01\ncommit: dead\ntests: 1",
+        "rollout_sha256": "sha",
+    }
+    nightly_loop.tick(tmp_path, config, now=start + timedelta(minutes=5),
+                      adapter=adapter)
+    adapter.transcript += "\nAEP-NL-TESTRUN-01"
+    adapter.receipt = {"report": {
+        "status": "SESSION_UNCERTAIN", "task_delivered": False,
+        "previous_event_id": "AEP-NL-TESTRUN-01",
+        "reason": "another route left this original session unresolved"}}
+    blocked = nightly_loop.tick(tmp_path, config,
+                                now=start + timedelta(minutes=10), adapter=adapter)
+    assert blocked["status"] == "RETRYABLE_NOT_SENT"
+    assert blocked["finished"] is False
+    assert blocked["send_count"] == 1
+    state = _state(tmp_path)
+    assert state["items"][1]["status"] == "queued"
+    assert state["items"][1]["requeued_from"] == "SESSION_UNCERTAIN"
+    assert any(row["action"] == "DELIVER_NOT_SENT" for row in state["history"])
+    adapter.receipt = {"report": {"status": "delivered", "task_delivered": True}}
+    retried = nightly_loop.tick(tmp_path, config,
+                                now=start + timedelta(minutes=15), adapter=adapter)
+    assert retried["status"] == "SENT"
+    assert retried["send_count"] == 2
+    assert len(adapter.deliveries) == 3
 
 
 def test_missing_result_after_grace_holds_without_retry(tmp_path):

@@ -19,7 +19,7 @@ import sys
 import time
 from typing import Any, Callable
 
-from agent_evolution_protocol.coordination import codex_rollout
+from agent_evolution_protocol.coordination import codex_rollout, session_lease
 
 SCHEMA = "aep-nightly-loop-v1"
 CONFIG_SCHEMA = "aep-nightly-loop-config-v1"
@@ -277,6 +277,18 @@ class SystemAdapter:
             Path(self.config.get("state_db") or codex_rollout.DEFAULT_STATE_DB),
             thread_id, marker)
 
+    def reconcile_session(self, event_id: str, evidence: str,
+                          session_id: str) -> dict[str, Any]:
+        lease_root = Path(self.config.get("session_lease_root")
+                          or (self.root / "session_leases"))
+        return session_lease.reconcile(
+            lease_root,
+            workspace_id=str(self.config.get("workspace_id") or self.root.resolve()),
+            provider=str(self.config.get("session_provider", "uia")),
+            target_agent=str(self.config["agent"]),
+            session_id=session_id or str(self.config.get("session_marker") or ""),
+            evidence=evidence)
+
     def git_snapshot(self, repo: Path) -> dict[str, Any]:
         def run(*args: str) -> str:
             try:
@@ -342,6 +354,49 @@ def _record(state: dict[str, Any], action: str, payload: dict[str, Any],
         "at": _iso(now), "action": action, "payload": payload,
     })
     state["history"] = state["history"][-200:]
+
+
+def _rollout_evidence(item: dict[str, Any] | None) -> str:
+    """Turn a recorded result or submission into lease-settlement evidence."""
+    if not isinstance(item, dict):
+        return ""
+    result = item.get("result") if isinstance(item.get("result"), dict) else {}
+    submission = item.get("submission") if isinstance(item.get("submission"), dict) else {}
+    event_id = str(item.get("event_id") or "")
+    parts: list[str] = []
+    if result.get("completed_at"):
+        detail = (f"Codex rollout task_complete for {event_id} turn "
+                  f"{result.get('turn_id', '')} at {result.get('completed_at')}")
+        if result.get("rollout_sha256"):
+            detail += f", rollout sha256 {result['rollout_sha256']}"
+        parts.append(detail)
+    if submission.get("message_seen") is True:
+        detail = (f"Codex rollout UserMessage for {event_id} id "
+                  f"{submission.get('message_id', '')} submitted_at "
+                  f"{submission.get('submitted_at', '')}")
+        if submission.get("rollout_sha256"):
+            detail += f", rollout sha256 {submission['rollout_sha256']}"
+        parts.append(detail)
+    return "; ".join(parts)
+
+
+def _settle_session(adapter: Any, state: dict[str, Any], event_id: str,
+                    evidence: str, now: datetime) -> dict[str, Any]:
+    """Release the shared session lease once rollout proves the event settled."""
+    if not evidence:
+        return {"state": "NO_EVIDENCE", "reconciled": False}
+    settle = getattr(adapter, "reconcile_session", None)
+    if not callable(settle):
+        return {"state": "UNSUPPORTED", "reconciled": False}
+    try:
+        outcome = settle(event_id, evidence, str(state.get("title_marker") or ""))
+    except Exception as exc:  # noqa: BLE001 - a lease error must not lose a result
+        outcome = {"state": "ERROR", "reconciled": False, "reason": str(exc)}
+    _record(state, "RECONCILE_SESSION" if outcome.get("reconciled")
+            else "RECONCILE_SKIPPED",
+            {"event_id": event_id, "evidence": evidence[:400],
+             "outcome": outcome}, now)
+    return outcome
 
 
 def _finalize_report(root: Path, state: dict[str, Any], adapter: Any,
@@ -531,6 +586,8 @@ def tick(root: Path, config_path: Path, *, now: datetime | None = None,
                     "turn_id": result.get("turn_id", ""),
                     "completed_at": result.get("completed_at", ""),
                 }, now)
+                _settle_session(adapter, state, item["event_id"],
+                                _rollout_evidence(item), now)
                 if state["cursor"] >= len(items):
                     _stop(state, "FINISHED_QUEUE", "all tasks produced results", now)
                 else:
@@ -627,8 +684,39 @@ def tick(root: Path, config_path: Path, *, now: datetime | None = None,
                 "turn_id": submission.get("turn_id", ""),
                 "rollout_sha256": submission.get("rollout_sha256", ""),
             }, now)
+            _settle_session(adapter, state, item["event_id"],
+                            _rollout_evidence(item), now)
             _write_json(target["state"], state)
             return _finalize_report(root, state, adapter, now)
+        previous_event_id = str(report.get("previous_event_id") or "")
+        if (status_text.lower() == "session_uncertain"
+                and previous_event_id
+                and previous_event_id != item["event_id"]):
+            previous = next((row for row in items
+                             if row.get("event_id") == previous_event_id), None)
+            evidence = _rollout_evidence(previous)
+            settled = (_settle_session(adapter, state, previous_event_id,
+                                       evidence, now)
+                       if evidence else {"reconciled": False})
+            if settled.get("reconciled"):
+                # The lease fence blocked this event before any UI write.  The
+                # prior event now has rollout proof, so this event may be
+                # re-queued instead of being frozen as an uncertain send.
+                item["status"] = "queued"
+                item["requeued_from"] = status_text
+                item.pop("sent_at", None)
+                state["status"] = "RETRYABLE_NOT_SENT"
+                state["reason"] = ("session lease was blocked by a prior event now "
+                                   "proven settled; no input was sent")
+                state["finished"] = False
+                _record(state, "DELIVER_NOT_SENT", {
+                    "event_id": item["event_id"],
+                    "status": status_text,
+                    "previous_event_id": previous_event_id,
+                    "reconciled": True,
+                }, now)
+                _write_json(target["state"], state)
+                return _finalize_report(root, state, adapter, now)
         item["status"] = "uncertain"
         _stop(state, "HOLD_UNCERTAIN_DELIVERY",
               f"delivery outcome is uncertain ({status_text}); no retry", now)
