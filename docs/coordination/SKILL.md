@@ -4,10 +4,10 @@
 > 手改会让 `tests/test_skill_manifest.py` 失败——这是刻意的：
 > 上一版研究文档把 `schema=aep-next-action-v1` 写错了整整两天，因为散文不会报错。
 
-- 命令总数：**92**
-- 风险分布：read-only 21、mutating 56、irreversible 15
-- 用途已记录：**29** / 92（未记录 63，只允许减少）
-- 清单摘要：`sha256:a85dc15ea9f93c1e3bb2398459d1c6025a1fa224450057c1073c0def5f375472`
+- 命令总数：**93**
+- 风险分布：read-only 21、mutating 57、irreversible 15
+- 用途已记录：**30** / 93（未记录 63，只允许减少）
+- 清单摘要：`sha256:0f3601ea1d6f624d6aa3af08ac2f3755ea2e72b714341f9a1cdcd6875d4cbe08`
 
 风险分级是**声明**而不是推导：未登记的命令一律按 `mutating` 处理。
 把会写的命令标成 `read-only` 是这里唯一有代价的错误，所以默认值朝安全方向倒。
@@ -87,6 +87,7 @@
 | `coord-orca` | mutating | `ACTION` | *未记录* |
 | `coord-policy` | read-only | `ACTION --plan --window` | Validate a proposed action plan without touching the desktop. |
 | `coord-process-probe` | read-only | `--pid` | *未记录* |
+| `coord-project-evidence` | mutating | `ACTION` | Seal, verify or inspect time-bounded advisory evidence from another project. |
 | `coord-provider-catalog` | read-only | `—` | List optional execution providers without installing or probing them. |
 | `coord-providers` | mutating | `ACTION` | List, promote or retire optional execution providers. |
 | `coord-reasoning` | mutating | `ACTION` | *未记录* |

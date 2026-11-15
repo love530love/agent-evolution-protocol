@@ -312,6 +312,60 @@ def observe(events: list[dict[str, Any]], *, session_id: str = "",
     }
 
 
+def marker_evidence(transcript: str | list[dict[str, Any]], marker: str, *,
+                    own_text: str = "") -> dict[str, Any]:
+    """Whether a result marker is visible, even when UIA split or duplicated it.
+
+    Desktop UIA often emits one visual sentence as several line fragments (for
+    example ``AEP-RESULT`` and ``:AEP-OPS-...``), and repeats each fragment for
+    its accessibility copy.  Comparing raw lines therefore reports "absent"
+    for a marker the screen plainly shows.  Whitespace is removed from both
+    sides before searching; the returned ``count`` is the number of visible
+    occurrences after the outgoing order body is removed, so our own prompt
+    cannot satisfy the check.  ``echo_only`` is the three-valued distinction
+    that matters: the marker exists, but only in our text.
+    """
+    needle = re.sub(r"\s+", "", str(marker or ""))
+    if not needle:
+        raise ValueError("marker must not be empty")
+    if isinstance(transcript, str):
+        events: list[dict[str, Any]] = [{"added_lines": [transcript]}]
+    elif isinstance(transcript, list):
+        events = [row for row in transcript if isinstance(row, dict)]
+    else:
+        raise ValueError("transcript must be text or a list of events")
+    raw_parts: list[str] = []
+    incoming_parts: list[str] = []
+    for event in events:
+        lines = event.get("added_lines") or []
+        if isinstance(lines, str):
+            lines = [lines]
+        text = "".join(str(line) for line in lines)
+        raw_parts.append(text)
+        if event.get("direction") == "outgoing" or event.get("role") in ("user", "system"):
+            continue
+        incoming_parts.append(text)
+    raw = re.sub(r"\s+", "", "".join(raw_parts))
+    eligible = re.sub(r"\s+", "", "".join(incoming_parts))
+    own = re.sub(r"\s+", "", str(own_text or ""))
+    if own:
+        eligible = eligible.replace(own, "")
+    count = eligible.count(needle)
+    raw_count = raw.count(needle)
+    status = "seen" if count else ("echo_only" if needle in raw else "absent")
+    return {
+        "marker": str(marker),
+        "status": status,
+        "seen": status == "seen",
+        "count": count,
+        "raw_count": raw_count,
+        "own_text_supplied": bool(own),
+        "events": len(events),
+        "note": ("seen means the marker is outside our own text; it does not "
+                 "prove the agent acted on the task."),
+    }
+
+
 def judge(claim_value: dict[str, Any], observed: dict[str, Any], *,
           root: Any = None, at: datetime | None = None) -> dict[str, Any]:
     """Compare one claim against one observation.  ``match`` is ``True``/``False``/``None``.

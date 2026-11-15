@@ -1,7 +1,7 @@
 {
   "by_risk": {
     "irreversible": 15,
-    "mutating": 56,
+    "mutating": 57,
     "read-only": 21
   },
   "commands": [
@@ -3151,6 +3151,62 @@
     {
       "arguments": [
         {
+          "choices": [
+            "record",
+            "seal",
+            "status",
+            "verify"
+          ],
+          "dest": "action",
+          "flags": [],
+          "kind": "positional",
+          "required": true
+        },
+        {
+          "dest": "workspace_id",
+          "flags": [
+            "--workspace-id"
+          ],
+          "help": "stable logical project identity",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": "",
+          "dest": "task_id",
+          "flags": [
+            "--task-id"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "receipt",
+          "flags": [
+            "--receipt"
+          ],
+          "help": "JSON source facts, or a sealed receipt for verify",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 900.0,
+          "dest": "max_age_seconds",
+          "flags": [
+            "--max-age-seconds"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": true,
+      "name": "coord-project-evidence",
+      "purpose": "Seal, verify or inspect time-bounded advisory evidence from another project.",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
           "dest": "catalog",
           "flags": [
             "--catalog"
@@ -5661,9 +5717,9 @@
       "risk": "mutating"
     }
   ],
-  "count": 92,
-  "digest": "sha256:a85dc15ea9f93c1e3bb2398459d1c6025a1fa224450057c1073c0def5f375472",
-  "documented": 29,
+  "count": 93,
+  "digest": "sha256:0f3601ea1d6f624d6aa3af08ac2f3755ea2e72b714341f9a1cdcd6875d4cbe08",
+  "documented": 30,
   "generated_from": "agent_evolution_protocol.cli:build_parser",
   "global_arguments": [
     {

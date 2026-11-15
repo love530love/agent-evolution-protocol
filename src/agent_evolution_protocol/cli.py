@@ -30,6 +30,7 @@ from agent_evolution_protocol.coordination.capability_roster import declare as d
 from agent_evolution_protocol.coordination.mechanism_audit import audit as audit_mechanism
 from agent_evolution_protocol.coordination import a11y
 from agent_evolution_protocol.coordination import process_info
+from agent_evolution_protocol.coordination import project_evidence
 from agent_evolution_protocol.coordination import uia_argv
 from agent_evolution_protocol.coordination import ui_fallback
 from agent_evolution_protocol.coordination import session_lease
@@ -3241,6 +3242,44 @@ def coord_transcript(args: argparse.Namespace) -> None:
 
 
 
+def coord_project_evidence(args: argparse.Namespace) -> None:
+    """Seal, verify or inspect time-bounded advisory evidence from another project."""
+    root = coord_root(args)
+    action = args.action
+    if action == "status":
+        if not args.workspace_id:
+            raise ProtocolError("status requires --workspace-id")
+        print(json.dumps(project_evidence.latest(
+            root, args.workspace_id, max_age_seconds=args.max_age_seconds),
+            ensure_ascii=False, indent=2))
+        return
+    if not args.receipt:
+        raise ProtocolError(f"{action} requires --receipt")
+    try:
+        raw = json.loads(args.receipt.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ProtocolError(f"cannot read evidence receipt: {exc}") from exc
+    if action == "verify":
+        print(json.dumps(project_evidence.verify(
+            raw, max_age_seconds=args.max_age_seconds), ensure_ascii=False, indent=2))
+        return
+    if not args.workspace_id:
+        raise ProtocolError(f"{action} requires --workspace-id")
+    try:
+        receipt = project_evidence.seal(
+            raw, workspace_id=args.workspace_id, task_id=args.task_id,
+            max_age_seconds=args.max_age_seconds)
+        if action == "record":
+            target = project_evidence.record(root, receipt)
+            print(json.dumps({"stored": str(target), "receipt": receipt,
+                              "verdict": project_evidence.verify(receipt)},
+                             ensure_ascii=False, indent=2))
+            return
+    except ValueError as exc:
+        raise ProtocolError(str(exc)) from exc
+    print(json.dumps(receipt, ensure_ascii=False, indent=2))
+
+
 def coord_loop_verdict(args: argparse.Namespace) -> None:
     """Recompute one handoff loop verdict from filesystem evidence."""
     root = coord_root(args)
@@ -3991,6 +4030,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     loopv = commands.add_parser("coord-loop-verdict", help="recompute one handoff loop verdict from filesystem evidence")
     loopv.add_argument("--event-id", required=True); loopv.add_argument("--bridge-root", type=Path); loopv.add_argument("--sender", default=""); loopv.add_argument("--target", default=""); loopv.set_defaults(func=coord_loop_verdict)
+    pe = commands.add_parser("coord-project-evidence",
+                             help="seal or inspect time-bounded advisory evidence from another project")
+    pe.add_argument("action", choices=("seal", "verify", "record", "status"))
+    pe.add_argument("--workspace-id", help="stable logical project identity")
+    pe.add_argument("--task-id", default="")
+    pe.add_argument("--receipt", type=Path, help="JSON source facts, or a sealed receipt for verify")
+    pe.add_argument("--max-age-seconds", type=float,
+                    default=project_evidence.DEFAULT_MAX_AGE_SECONDS)
+    pe.set_defaults(func=coord_project_evidence)
     relay = commands.add_parser("coord-relay-drill", help="one-shot relay drill: plan or execute in-turn multi-agent dispatch")
     relay.add_argument("--bridge-root", type=Path); relay.add_argument("--apply", action="store_true"); relay.set_defaults(func=coord_relay_drill)
 

@@ -304,6 +304,41 @@ class MayCompleteTests(unittest.TestCase):
         self.assertTrue(result_readback.may_complete({"match": True, "claim_done": True}))
 
 
+class ResultMarkerTests(unittest.TestCase):
+    MARKER = "AEP-RESULT:AEP-OPS-20261115-02"
+
+    def test_a_marker_split_across_uia_fragments_is_still_seen(self):
+        transcript = "ChatGPT 说：\nAEP-RESULT\n:AEP-OPS-20261115-02\ncommit: f72abb2"
+        value = result_readback.marker_evidence(transcript, self.MARKER)
+        self.assertEqual(value["status"], "seen")
+        self.assertTrue(value["seen"])
+        self.assertEqual(value["count"], 1)
+
+    def test_a_marker_only_in_our_outgoing_text_is_echo_not_a_result(self):
+        order = f"请回复 {self.MARKER}"
+        value = result_readback.marker_evidence(order, self.MARKER, own_text=order)
+        self.assertEqual(value["status"], "echo_only")
+        self.assertFalse(value["seen"])
+
+    def test_our_text_does_not_hide_a_real_result(self):
+        order = f"请回复 {self.MARKER}"
+        transcript = f"你说：{order}\nChatGPT 说：\nAEP-RESULT\n:AEP-OPS-20261115-02"
+        value = result_readback.marker_evidence(transcript, self.MARKER, own_text=order)
+        self.assertEqual(value["status"], "seen")
+        self.assertEqual(value["count"], 1)
+        self.assertEqual(value["raw_count"], 2)
+
+    def test_an_outgoing_event_is_excluded_even_without_own_text(self):
+        events = [_event(f"please send {self.MARKER}", direction="outgoing")]
+        value = result_readback.marker_evidence(events, self.MARKER)
+        self.assertEqual(value["status"], "echo_only")
+
+    def test_a_missing_marker_is_absent_not_an_error(self):
+        value = result_readback.marker_evidence("still working", self.MARKER)
+        self.assertEqual(value["status"], "absent")
+        self.assertFalse(value["seen"])
+
+
 class ContractTests(unittest.TestCase):
     def test_the_verdict_does_not_claim_a_second_readback_contract(self):
         # This repository already paid for a parallel contract: four invented
