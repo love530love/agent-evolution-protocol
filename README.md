@@ -61,7 +61,7 @@ aep --coord-root .tools/acceptance coord-improvement self-test
 
 This preserves a machine-readable report and evidence under a unique run directory. It does not change production policy or certify real Agent delivery/ACK. CI covers Ubuntu/Windows and Python 3.10/3.12.
 
-[总体系与能力状态](docs/SYSTEM_OVERVIEW.zh-CN.md) · [协同推理工作流](docs/COLLABORATIVE_REASONING_FRAMEWORK.zh-CN.md) · [v0.6.34 发布说明](docs/releases/v0.6.34.md)
+[总体系与能力状态](docs/SYSTEM_OVERVIEW.zh-CN.md) · [协同推理工作流](docs/COLLABORATIVE_REASONING_FRAMEWORK.zh-CN.md) · [v0.6.35 发布说明](docs/releases/v0.6.35.md)
 
 An evidence-driven governance protocol for multi-agent systems that need diversity without coordination collapse.
 
@@ -130,9 +130,11 @@ multi-agent coordination:
 - [presence and return-to-team notices](docs/coordination/PRESENCE_AND_RETURN.md)
 - [any online agent can request a bounded handoff](docs/coordination/ANY_AGENT_CAN_DISPATCH.md)
 - [human-style desktop fallback](docs/coordination/HUMAN_UI_FALLBACK.md)
+- [per-client original-session route calibration (strict UIA precondition, not delivery)](docs/coordination/CLIENT_ROUTE_CALIBRATION.md)
 - [Enter-first sending and non-interrupting urgent interjection](docs/DESKTOP_SEND_AND_URGENT_INTERJECT.zh-CN.md)
 - [which UI profile facts are distributable and which stay local](docs/coordination/UI_PROFILES.zh-CN.md)
 - [Windows desktop MCP provider discovery and fallback planning](docs/coordination/DESKTOP_MCP_PROVIDERS.md)
+- [MCP process lifecycle, Windows Job containment, and single-instance control plane](docs/coordination/MCP_PROCESS_LIFECYCLE.md)
 - [shared Windows command memory](docs/coordination/COMMAND_MEMORY.md)
 - [Windows build case index](docs/coordination/WINDOWS_BUILD_KNOWLEDGE.md)
 - [browser capability routing](docs/coordination/BROWSER_CAPABILITY_ROUTING.md)

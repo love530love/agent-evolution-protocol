@@ -192,6 +192,16 @@ class UiFallbackTests(unittest.TestCase):
         self.assertEqual(result["reason"], "ATTESTATION_ACTIVE_SESSION_NOT_VISIBLE")
         self.assertEqual(driver.sent, 0)
 
+    def test_strict_uia3_route_requires_a_persisted_calibration_before_attestation(self):
+        profile = {**self.strict_profile(), "prefer_uia3": True}
+        driver = FakeDriver(attestation=self.strict_attestation(profile))
+        result = ui.run(profile, "Analyze the error", event_id="EVT-STRICT-NOCAL",
+                        receipt_path=self.receipt, lock_path=self.lock,
+                        driver=driver, poll_seconds=0.1)
+        self.assertEqual(result["state"], "SESSION_ATTESTATION_REQUIRED")
+        self.assertEqual(result["reason"], "CALIBRATION_REFERENCE_MISSING")
+        self.assertEqual(driver.sent, 0)
+
     def test_strict_attestation_binds_the_existing_send_without_claiming_delivery(self):
         profile = self.strict_profile()
         self.record_strict_fingerprint(profile)

@@ -54,10 +54,11 @@ def append_log(entry: dict) -> None:
 
 
 def write_json(path: Path, data: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    os.replace(tmp, path)
+    try:
+        from .foundation.io import write_json_atomic
+    except ImportError:  # direct source-file loader used by legacy tests
+        from agent_evolution_protocol.coordination.foundation.io import write_json_atomic
+    write_json_atomic(path, data, indent=2)
 
 
 def claim_deadline(event: dict) -> str:
@@ -213,19 +214,34 @@ def consume(path: Path, *, dry_run: bool = False) -> int:
     rename, preventing a second daemon from sending the same event.
     """
     try:
-        try:
-            from .wake_ingress import wake_lock, valid_event_id
-        except ImportError:  # direct source-file loader used by legacy tests
-            from agent_evolution_protocol.coordination.wake_ingress import wake_lock, valid_event_id
+        from .battle_orders import TaskWriterBusy
+        from .wake_ingress import wake_lock, valid_event_id
+    except ImportError:  # direct source-file loader used by legacy tests
+        from agent_evolution_protocol.coordination.battle_orders import TaskWriterBusy
+        from agent_evolution_protocol.coordination.wake_ingress import wake_lock, valid_event_id
+    try:
         event_id = valid_event_id(path.stem)
+    except ValueError:
+        # An unscoped filename has no shared lock to take.  Never run an
+        # adapter while unlocked: quarantine the file and let a human inspect it.
+        if not path.is_file():
+            return 0
+        append_log(dict(at=stamp(), status="invalid-event-id", path=str(path),
+                        error="filename is not a valid wake ID; adapter not invoked",
+                        monotonic=time.monotonic()))
+        move_atomic(path, FAILED)
+        return 1
+    try:
         with wake_lock(QUEUE.parent, event_id):
             if not path.is_file():
                 return 0
             return _consume_unlocked(path, dry_run=dry_run)
-    except ValueError:
-        # Preserve legacy tests/diagnostics for malformed filenames; no adapter
-        # is invoked for an unscoped path.
-        return _consume_unlocked(path, dry_run=dry_run)
+    except TaskWriterBusy:
+        # Another daemon/cancel path owns this event.  Leave it in the queue;
+        # consuming it unlocked would duplicate adapter input.
+        append_log(dict(at=stamp(), status="deferred-busy", id=event_id,
+                        path=str(path), monotonic=time.monotonic()))
+        return 0
 
 
 def queue_items() -> list[Path]:

@@ -40,6 +40,8 @@ from agent_evolution_protocol.coordination.legion_ledger import record as record
 from agent_evolution_protocol.coordination import governance
 from agent_evolution_protocol.coordination import reasoning_contract
 from agent_evolution_protocol.coordination import desktop_providers
+from agent_evolution_protocol.coordination import mcp_lifecycle
+from agent_evolution_protocol.coordination import client_route_calibration
 from agent_evolution_protocol.coordination import agent_mcp_registry
 from agent_evolution_protocol.coordination import execution_provider_catalog
 from agent_evolution_protocol.coordination import input_routing
@@ -78,6 +80,7 @@ from agent_evolution_protocol.coordination import delivery_audit
 from agent_evolution_protocol.coordination import claim_conflicts
 from agent_evolution_protocol.coordination import process_probe
 from agent_evolution_protocol.coordination import capability_bridge
+from agent_evolution_protocol.coordination import uia3
 from agent_evolution_protocol.routing import classify_intent, load_route_config
 from agent_evolution_protocol.route_state import analyze_route_state, continuation_from_events, select_resource_type
 
@@ -1011,6 +1014,22 @@ def coord_desktop(args: argparse.Namespace) -> None:
     print(json.dumps(result, ensure_ascii=False, indent=2))
     if args.action == "probe" and result["status"] != "TOOLS_DISCOVERED":
         raise SystemExit(2)
+
+
+def coord_mcp_lifecycle(args: argparse.Namespace) -> None:
+    """Inspect/prune AEP's own MCP lifecycle records, never generic processes."""
+    try:
+        root = coord_root(args)
+        if args.action == "status":
+            result = mcp_lifecycle.snapshot(
+                root, stale_after_seconds=args.stale_after_seconds)
+        else:
+            result = mcp_lifecycle.prune(
+                root, stale_after_seconds=args.stale_after_seconds,
+                retention_seconds=args.retention_seconds)
+    except (OSError, ValueError, TypeError) as exc:
+        raise ProtocolError(str(exc)) from exc
+    print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
 def coord_agent_mcp(args: argparse.Namespace) -> None:
@@ -2458,12 +2477,19 @@ def _pwsh() -> str:
 
 
 def _uia_profile(root: Path, who: str) -> dict:
-    """The operator's profile file first; the built-in table is only a fallback.
+    """Load the raw-UIA overlay; the built-in table is only a fallback.
 
     Two copies of the same fact is how the built-in table came to name Qoder
     0.4.11 while the running client was 0.5.1, and how this command ended up
     passing no ``-AllowUnknownPath`` and failing to find a window that the
     scheduler could find.
+
+    ``coord-uia`` predates fully specified relay profiles.  Its non-strict
+    compatibility path still accepts a small overlay such as a
+    ``session_marker`` so it can settle an existing session lease before any
+    desktop action.  Calibration and the profiled relay deliberately use
+    ``ui_fallback.load_profile`` instead; a strict route is never permitted to
+    bypass that full validation through this helper.
     """
     path = Path(root) / "ui_profiles" / f"{who}.json"
     if path.is_file():
@@ -2486,6 +2512,109 @@ def _uia_report(completed) -> dict | None:
         if isinstance(candidate, dict):
             return candidate
     return None
+
+
+def _unit_region(value: str, *, name: str) -> dict[str, float]:
+    """Parse one normalized ``left,top,right,bottom`` calibration region."""
+    try:
+        fields = [float(part.strip()) for part in str(value).split(",")]
+    except (TypeError, ValueError) as exc:
+        raise ProtocolError(f"{name} must be LEFT,TOP,RIGHT,BOTTOM in 0..1") from exc
+    if len(fields) != 4:
+        raise ProtocolError(f"{name} must be LEFT,TOP,RIGHT,BOTTOM in 0..1")
+    return {"left": fields[0], "top": fields[1],
+            "right": fields[2], "bottom": fields[3]}
+
+
+def _calibration_proof(args: argparse.Namespace, profile: dict) -> dict:
+    """Choose explicit CLI/file geometry, or re-validate existing geometry."""
+    supplied = {
+        "session_region": getattr(args, "session_region", None),
+        "model_region": getattr(args, "model_region", None),
+        "selector_region": getattr(args, "selector_region", None),
+        "composer_region": getattr(args, "composer_region", None),
+    }
+    if getattr(args, "proof_file", None):
+        if any(value for value in supplied.values()):
+            raise ProtocolError("use --proof-file or four --*-region values, not both")
+        try:
+            proof = json.loads(args.proof_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ProtocolError(f"cannot read calibration proof: {exc}") from exc
+        if not isinstance(proof, dict):
+            raise ProtocolError("calibration proof must be a JSON object")
+    elif any(value for value in supplied.values()):
+        if not all(value for value in supplied.values()):
+            raise ProtocolError("all four --*-region values are required together")
+        proof = {name: _unit_region(value, name=name)
+                 for name, value in supplied.items()}
+    else:
+        proof = profile.get("session_proof", {})
+        if not proof:
+            raise ProtocolError(
+                "calibration needs --proof-file or all four --*-region values; "
+                "no existing session_proof is available")
+    try:
+        return ui_fallback.normalise_session_proof(proof, required=True)
+    except (TypeError, ValueError) as exc:
+        raise ProtocolError(f"invalid calibration proof: {exc}") from exc
+
+
+def coord_uia_calibrate(args: argparse.Namespace) -> None:
+    """Calibrate a bounded UIA route without composing or sending a message."""
+    root = coord_root(args)
+    who = valid_agent(args.agent)
+    profile_path = Path(root) / "ui_profiles" / f"{who}.json"
+    if not profile_path.is_file():
+        raise ProtocolError("calibration requires coordination/ui_profiles/<agent>.json")
+    try:
+        profile = ui_fallback.load_profile(profile_path)
+    except ValueError as exc:
+        raise ProtocolError(f"invalid original-session profile: {exc}") from exc
+    proof = _calibration_proof(args, profile)
+    candidate = dict(profile)
+    candidate.update({
+        "prefer_uia3": True,
+        "require_strict_session_attestation": True,
+        "session_proof": proof,
+    })
+    observation = uia3.Uia3Driver().calibrate_route(
+        candidate, proof, select_original=bool(getattr(args, "select_original", False)))
+    payload = {
+        "agent": who,
+        "action": "calibrate",
+        "status": observation.get("status", "CALIBRATION_NOT_READY"),
+        "reason": observation.get("reason", ""),
+        "selected_original": bool(observation.get("selected_original", False)),
+        "composer_candidate_count": observation.get("composer_candidate_count"),
+        "desktop_input_performed": False,
+        "message_visible": False,
+        "agent_ack": False,
+        "task_result_readback": False,
+        "delivery_verified": False,
+        "profile_written": False,
+        "note": (
+            "Calibration proves only current bounded UIA route evidence. It never "
+            "proves a message was sent, visible, acknowledged, or acted upon."
+        ),
+    }
+    if observation.get("valid") is not True:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    calibration = client_route_calibration.build(
+        agent=who, profile=profile, session_proof=proof, observation=observation,
+        selected_original=payload["selected_original"],
+    )
+    client_route_calibration.write(root, calibration)
+    payload.update({
+        "calibration_id": calibration["id"],
+        "calibration_digest": calibration["digest"],
+        "calibration_file": str(client_route_calibration.path(root, who, calibration["id"])),
+    })
+    if getattr(args, "apply", False):
+        client_route_calibration.apply_profile(root, profile_path, calibration)
+        payload["profile_written"] = True
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
 def _direct_uia_lease_settle(lease: session_lease.SessionLease, *, event_id: str,
@@ -2530,10 +2659,26 @@ def _direct_uia_lease_settle(lease: session_lease.SessionLease, *, event_id: str
 
 
 def coord_uia(args: argparse.Namespace) -> None:
-    """Desktop transport probe: observe/capture, or deliver/compose to an original window."""
+    """Desktop transport: calibrate is read-only; compose/deliver can write an original chat."""
+    if args.action == "calibrate":
+        coord_uia_calibrate(args)
+        return
+    if any((getattr(args, "proof_file", None), getattr(args, "session_region", None),
+            getattr(args, "model_region", None), getattr(args, "selector_region", None),
+            getattr(args, "composer_region", None), getattr(args, "select_original", False),
+            getattr(args, "apply", False))):
+        raise ProtocolError("route-calibration arguments are valid only with coord-uia calibrate")
     root = coord_root(args)
     who = valid_agent(args.agent)
     profile = _uia_profile(root, who)
+    if (args.action in {"deliver", "compose"} and
+            profile.get("require_strict_session_attestation") is True):
+        # Raw PowerShell UIA cannot bind a write to the bounded UIA3 surface.
+        # Strict profiles must enter via the profiled relay, which validates the
+        # calibration artifact and holds the shared session lease.
+        raise ProtocolError(
+            "strict UIA profile delivery requires the profiled commander relay; "
+            "raw coord-uia cannot bypass route calibration")
     process_name = args.process or profile.get("process") or who
     exe = args.exe or profile.get("exe", "")
     title = args.title or profile.get("title", "")
@@ -3665,6 +3810,14 @@ def build_parser() -> argparse.ArgumentParser:
                          help="read-only provider probe timeout in seconds")
     desktop.add_argument("--details", action="store_true", help="include registered profile and discovery receipt in inventory")
     desktop.set_defaults(func=coord_desktop)
+    lifecycle = commands.add_parser(
+        "coord-mcp-lifecycle",
+        help="inspect/prune only AEP-owned MCP lifecycle records; never kill generic host processes",
+    )
+    lifecycle.add_argument("action", choices=("status", "prune"))
+    lifecycle.add_argument("--stale-after-seconds", type=int, default=120)
+    lifecycle.add_argument("--retention-seconds", type=int, default=86_400)
+    lifecycle.set_defaults(func=coord_mcp_lifecycle)
     agent_mcp = commands.add_parser("coord-agent-mcp"); agent_mcp.add_argument("action", choices=("register", "inventory", "render-config", "plan")); agent_mcp.add_argument("--profile-file", type=Path); agent_mcp.add_argument("--agent"); agent_mcp.add_argument("--workspace-id"); agent_mcp.add_argument("--operation", choices=sorted(agent_mcp_registry.OPERATIONS)); agent_mcp.add_argument("--session-id"); agent_mcp.add_argument("--no-replace", action="store_true"); agent_mcp.set_defaults(func=coord_agent_mcp)
     provider_catalog = commands.add_parser("coord-provider-catalog", help="list optional third-party execution providers (read-only)"); provider_catalog.add_argument("--catalog", type=Path); provider_catalog.add_argument("--layer"); provider_catalog.add_argument("--status", choices=sorted(execution_provider_catalog.STATUSES)); provider_catalog.set_defaults(func=coord_provider_catalog)
     desktop_runner_cmd = commands.add_parser("coord-desktop-runner"); desktop_runner_cmd.add_argument("action", choices=("launch", "wait", "ensure")); desktop_runner_cmd.add_argument("--agent", required=True); desktop_runner_cmd.add_argument("--apply", action="store_true"); desktop_runner_cmd.add_argument("--allow-launch", action="store_true"); desktop_runner_cmd.add_argument("--debug-port", type=int, default=0); desktop_runner_cmd.add_argument("--extra-args", nargs="*", default=[]); desktop_runner_cmd.add_argument("--timeout", type=float, default=30.0); desktop_runner_cmd.add_argument("--poll-interval", type=float, default=0.25); desktop_runner_cmd.set_defaults(func=coord_desktop_runner)
@@ -3706,7 +3859,30 @@ def build_parser() -> argparse.ArgumentParser:
     checkpoint = commands.add_parser("kernel-checkpoint"); checkpoint.add_argument("--task-id", required=True); checkpoint.add_argument("--executor", required=True); checkpoint_body = checkpoint.add_mutually_exclusive_group(required=True); checkpoint_body.add_argument("--payload-json"); checkpoint_body.add_argument("--payload-file"); checkpoint.set_defaults(func=kernel_checkpoint)
     legion = commands.add_parser("coord-legion"); legion.add_argument("action", choices=("record", "scoreboard", "slacking", "challenge", "chase", "adjudicate", "incentive-board")); legion.add_argument("--agent"); legion.add_argument("--kind"); legion.add_argument("--reporter"); legion.add_argument("--reviewer"); legion.add_argument("--verdict", choices=("accepted", "rejected")); legion.add_argument("--event-id"); legion.add_argument("--task"); legion.add_argument("--signature"); legion.add_argument("--evidence", nargs="*", default=[]); legion.add_argument("--note"); legion.add_argument("--reason"); legion.add_argument("--alternative"); legion.add_argument("--predicted-signature"); legion.add_argument("--cheapest-test"); legion.add_argument("--stop-condition"); legion.add_argument("--expected", nargs="*", default=[]); legion.add_argument("--window-hours", type=float, default=24); legion.add_argument("--min-productive", type=int, default=1); legion.set_defaults(func=coord_legion)
     digest = commands.add_parser("coord-chat-digest"); digest.add_argument("--agent", required=True); digest.add_argument("--since-hours", type=float, default=24); digest.add_argument("--per-actor", type=int, default=4); digest.add_argument("--chars", type=int, default=240); digest.add_argument("--markdown", action="store_true"); digest.set_defaults(func=coord_chat_digest)
-    uia = commands.add_parser("coord-uia"); uia.add_argument("action", choices=("observe", "capture", "deliver", "compose")); uia.add_argument("--agent", required=True); uia.add_argument("--process"); uia.add_argument("--exe"); uia.add_argument("--title"); uia.add_argument("--event-id"); uia.add_argument("--text"); uia.add_argument("--text-file", type=Path); uia.add_argument("--out-file"); uia.add_argument("--workspace-id", help="stable logical workspace identity for the original-session write lease"); uia.add_argument("--session-provider", help="verified canonical provider for the original chat when it differs from UIA"); uia.add_argument("--session-binding-evidence", help="evidence for --session-provider when it differs from UIA"); uia.add_argument("--session-lease-root", type=Path, help="shared coordination/session_leases path used by every route to this chat"); uia.add_argument("--allow-unknown-path", action="store_true"); uia.add_argument("--allow-clipboard-paste", action="store_true"); uia.add_argument("--urgent-interject", action="store_true", help="reach the client through an exact profiled interject action while it is busy; refuses rather than clicking Stop"); uia.add_argument("--no-send", action="store_true", help="write the text and stop; the receipt reports what the client offers to do next"); uia.add_argument("--ocr", action="store_true"); uia.add_argument("--timeout", type=int, default=20); uia.set_defaults(func=coord_uia)
+    uia = commands.add_parser("coord-uia")
+    uia.add_argument("action", choices=("observe", "capture", "deliver", "compose", "calibrate"))
+    uia.add_argument("--agent", required=True)
+    uia.add_argument("--process"); uia.add_argument("--exe"); uia.add_argument("--title")
+    uia.add_argument("--event-id"); uia.add_argument("--text"); uia.add_argument("--text-file", type=Path)
+    uia.add_argument("--out-file")
+    uia.add_argument("--workspace-id", help="stable logical workspace identity for the original-session write lease")
+    uia.add_argument("--session-provider", help="verified canonical provider for the original chat when it differs from UIA")
+    uia.add_argument("--session-binding-evidence", help="evidence for --session-provider when it differs from UIA")
+    uia.add_argument("--session-lease-root", type=Path, help="shared coordination/session_leases path used by every route to this chat")
+    uia.add_argument("--allow-unknown-path", action="store_true")
+    uia.add_argument("--allow-clipboard-paste", action="store_true")
+    uia.add_argument("--urgent-interject", action="store_true", help="reach the client through an exact profiled interject action while it is busy; refuses rather than clicking Stop")
+    uia.add_argument("--no-send", action="store_true", help="write the text and stop; the receipt reports what the client offers to do next")
+    uia.add_argument("--ocr", action="store_true")
+    uia.add_argument("--timeout", type=int, default=20)
+    uia.add_argument("--proof-file", type=Path, help="JSON with four normalized original-session proof regions; calibrate only")
+    uia.add_argument("--session-region", help="LEFT,TOP,RIGHT,BOTTOM normalized to 0..1; calibrate only")
+    uia.add_argument("--model-region", help="LEFT,TOP,RIGHT,BOTTOM normalized to 0..1; calibrate only")
+    uia.add_argument("--selector-region", help="LEFT,TOP,RIGHT,BOTTOM normalized to 0..1; calibrate only")
+    uia.add_argument("--composer-region", help="LEFT,TOP,RIGHT,BOTTOM normalized to 0..1; calibrate only")
+    uia.add_argument("--select-original", action="store_true", help="calibrate only: click one unique selector candidate, then re-attest")
+    uia.add_argument("--apply", action="store_true", help="calibrate only: atomically opt a successful calibration into the UI profile")
+    uia.set_defaults(func=coord_uia)
 
     vision = commands.add_parser("coord-vision", help="ask a grounder where a control is, and compare it with a known answer")
     vision.add_argument("action", choices=("ground", "providers"))

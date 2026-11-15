@@ -44,8 +44,8 @@ SCHEMA = "aep-dispatch-gate-v1"
 #: token the sender appended.
 ACK_TOKEN = "AEP-ACK"
 
-#: Two id vocabularies are canonical here, and the gate has to know both or it
-#: refuses orders that are correct.
+#: Four id vocabularies are canonical here, and the gate has to know all of
+#: them or it refuses orders that are correct.
 #:
 #: ``EVT_ID_PATTERN`` -- minted by ``commander.submit_order`` when the caller
 #: supplies no id.
@@ -63,12 +63,21 @@ ACK_TOKEN = "AEP-ACK"
 #: id.  That check runs before any desktop input, so it proved nothing about the
 #: UI and everything about this regex.
 #:
-#: Both patterns stay tight so a prose word cannot pass for an id, and the safety
+#: ``WAKE_ID_PATTERN`` and ``PULSE_ID_PATTERN`` are the same seam found later in
+#: two in-tree producers: ``wake_ingress._preview`` mints ``WAKE-<wake id>`` and
+#: ``mission_pulse.event_id_for`` mints ``PULSE-<20 hex>``.  Both hand the id to
+#: ``submit_order``, so leaving them out meant the gate refused the very orders
+#: those modules exist to queue.  Measured 2026-11-13 with ``submit_order`` +
+#: ``dispatch_gate.check``: both forms returned ``one_event_id / found none``.
+#:
+#: All patterns stay tight so a prose word cannot pass for an id, and the safety
 #: property is unchanged: exactly one *distinct* id, and it must equal the
 #: order's.  Widening the vocabulary is not the same as relaxing the check.
 EVT_ID_PATTERN = r"EVT-[A-Za-z0-9][A-Za-z0-9_-]{5,}"
 STAMP_ID_PATTERN = r"[0-9]{8}T[0-9]{12}Z-[0-9a-f]{8}"
-EVENT = re.compile(rf"\b(?:{EVT_ID_PATTERN}|{STAMP_ID_PATTERN})\b")
+WAKE_ID_PATTERN = r"WAKE-[A-Za-z0-9][A-Za-z0-9_.-]{0,127}"
+PULSE_ID_PATTERN = r"PULSE-[0-9A-F]{20}"
+EVENT = re.compile(rf"\b(?:{WAKE_ID_PATTERN}|{PULSE_ID_PATTERN}|{EVT_ID_PATTERN}|{STAMP_ID_PATTERN})\b")
 _STAMP_ID = re.compile(rf"^{STAMP_ID_PATTERN}$")
 
 TASK_MARKER = re.compile(r"\[AEP:([^\]\s]+)\]")

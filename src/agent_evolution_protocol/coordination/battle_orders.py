@@ -15,6 +15,15 @@ ORDER = re.compile(r"^\s*(集结|开火准备|停火|换防|复火)\s+(T[0-9]+)(
 AGENT = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 
 
+class TaskWriterBusy(ValueError):
+    """Another writer holds the per-task lock; the caller may retry later.
+
+    This is a distinct type because a busy lock is *not* the same fact as an
+    invalid task or path.  Callers that serialize protocol writes must defer;
+    falling back to an unlocked write would silently defeat the lock.
+    """
+
+
 def _events(root: Path, task: str) -> list[dict]:
     folder = Path(root) / "battle_events" / task
     if not folder.exists():
@@ -51,7 +60,7 @@ def _task_writer_lock(root: Path, task: str):
             try:
                 msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
             except OSError as exc:
-                raise ValueError("battle order for this task is being written; retry after checking status") from exc
+                raise TaskWriterBusy("battle order for this task is being written; retry after checking status") from exc
             try:
                 yield
             finally:
@@ -62,7 +71,7 @@ def _task_writer_lock(root: Path, task: str):
             try:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError as exc:
-                raise ValueError("battle order for this task is being written; retry after checking status") from exc
+                raise TaskWriterBusy("battle order for this task is being written; retry after checking status") from exc
             try:
                 yield
             finally:

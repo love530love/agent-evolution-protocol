@@ -1,5 +1,7 @@
 # 多 Agent 协作机制：待开发目标与验收表（2026-10-13）
 
+2026-11-13 严格 UIA 路线校准：新增 `coord-uia calibrate`、每客户端四区 proof、校准 artifact 与 profile 引用的运行时闸门；默认只读，显式 `--select-original` 后重新证明，显式 `--apply` 才原子采用。源码和单测覆盖校准漂移、缺失 artifact、selector 重寻与旧 attestation 失效；它们仍不构成 `MESSAGE_VISIBLE → AGENT_ACK → TASK_RESULT_READBACK`。当前 Qoder 的最近 capability probe 为 `TREE_PARTIAL`，因此该客户端生产投递保持 HOLD，见 `CLIENT_ROUTE_CALIBRATION.md` 与 `AGENT_DESKTOP_LIVE_AUDIT_20261112.zh-CN.md`。
+
 2026-10-23 Windows 状态读取并发修复：run 39923316245 四项通过，Windows 3.10 在监听器替换任务状态时的 next_due 读取出现 CRT PermissionError/EACCES。campaign 的任务读取、status、next_due 共用有界只读重试：仅 Windows 已知共享/访问冲突，最多四次、合计等待 120ms；持续拒绝、其他错误和坏 JSON 仍失败，不重放业务动作。追加故障注入及真实监听回归。
 
 2026-10-23 CI 路径复盘：c19ee75 的 Windows 两组新测试因 TEMP 8.3 别名与 resolve 后证据路径不等而失败（run 39922851448）。本机真实短路径重现后，规范化测试夹具根目录并断言过期故障注入命中；不跳过测试、不放宽业务门。详情见 `docs/VALIDATION_HANDOFF.zh-CN.md`。

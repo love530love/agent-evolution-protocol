@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import time
 from uuid import uuid4
 
 from agent_evolution_protocol.coordination import client_registry
@@ -97,6 +98,95 @@ def _run_json(argv: list[str], *, timeout: int) -> dict:
     if run.returncode and payload.get("ok") is True:
         return {"ok": False, "error": {"code": "PROCESS_EXIT", "message": f"provider exited {run.returncode}"}}
     return payload
+
+
+def _run_probe_worker(profile: dict, profile_path: Path, *, timeout: int) -> tuple[subprocess.CompletedProcess, dict]:
+    """Run one MCP discovery worker with a bounded, owned process tree.
+
+    A normal stdio lifecycle is one client -> one server process, so this is
+    deliberately *not* a machine-wide singleton.  On Windows the worker joins
+    a fresh parent-owned Job Object before it launches the upstream server.  A
+    timeout therefore terminates only that probe's worker/server descendants;
+    it never matches or kills another client application's Python/Node/MCP
+    process by name.
+    """
+    command = [profile["sdk_python"], str(Path(__file__).with_name("desktop_mcp_worker.py")),
+               "--profile", str(profile_path.resolve()), "--timeout", str(timeout)]
+    flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    if os.name != "nt":
+        try:
+            completed = subprocess.run(command, capture_output=True, text=True,
+                                       encoding="utf-8", errors="replace",
+                                       timeout=timeout + 10, check=False,
+                                       creationflags=flags)
+        except subprocess.TimeoutExpired as exc:
+            completed = subprocess.CompletedProcess(
+                command, 124, stdout=exc.stdout or "", stderr=exc.stderr or "")
+            return completed, {"backend": "direct", "timed_out": True,
+                               "process_tree_stopped_verified": False}
+        return completed, {"backend": "direct", "timed_out": False,
+                           "process_tree_stopped_verified": False}
+
+    # Reuse the same Job Object ownership model as bounded external command
+    # execution.  The worker receives only the random, purpose-scoped name and
+    # joins before it creates the upstream stdio server.
+    from .windows_job import Job, interpreter_profile
+
+    job_name = "AEPProbe-" + uuid4().hex
+    job = Job.create(job_name)
+    command.extend(["--job", job_name])
+    completed: subprocess.CompletedProcess | None = None
+    timed_out = False
+    stopped = False
+    try:
+        worker = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                  text=True, encoding="utf-8", errors="replace",
+                                  creationflags=flags)
+        try:
+            stdout, stderr = worker.communicate(timeout=timeout + 10)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            try:
+                job.terminate()
+            except OSError:
+                pass
+            try:
+                stdout, stderr = worker.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                # This is our exact worker handle, not a discovered host PID.
+                worker.kill()
+                stdout, stderr = worker.communicate(timeout=5)
+        completed = subprocess.CompletedProcess(command, 124 if timed_out else worker.returncode,
+                                                stdout=stdout, stderr=stderr)
+    finally:
+        try:
+            job.terminate()
+            deadline = time.monotonic() + 3.0
+            while job.active_processes() and time.monotonic() < deadline:
+                time.sleep(0.02)
+        except OSError:
+            pass
+        finally:
+            try:
+                job.close()
+            except OSError:
+                pass
+        try:
+            remaining = Job.open(job_name)
+            if remaining is None:
+                stopped = True
+            else:
+                remaining.close()
+        except OSError:
+            stopped = False
+    if completed is None:  # pragma: no cover - protects exception-only paths
+        raise RuntimeError("desktop MCP probe worker did not produce a result")
+    return completed, {
+        "backend": "windows-job",
+        "timed_out": timed_out,
+        "process_tree_stopped_verified": stopped,
+        "interpreter_profile": interpreter_profile(command),
+    }
 
 
 def _snapshot_summary(payload: dict, *, forced_electron_a11y: bool) -> dict:
@@ -423,12 +513,11 @@ def probe(root: Path, name: str, *, timeout: int = 30) -> dict:
               "profile_sha256": _digest(profile), "status": "PROBE_FAILED", "tools": [],
               "desktop_input_performed": False, "delivery_verified": False}
     try:
-        run = subprocess.run([profile["sdk_python"], str(Path(__file__).with_name("desktop_mcp_worker.py")),
-                              "--profile", str(path.resolve()), "--timeout", str(timeout)],
-                             capture_output=True, text=True, encoding="utf-8", errors="replace",
-                             timeout=timeout + 10, check=False,
-                             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
-        if run.returncode:
+        run, containment = _run_probe_worker(profile, path, timeout=timeout)
+        result["containment"] = containment
+        if containment.get("timed_out"):
+            result["error"] = "PROCESS_TIMEOUT: contained probe worker exceeded its deadline"
+        elif run.returncode:
             try:
                 failure = json.loads(run.stdout)
             except (ValueError, TypeError):
@@ -443,7 +532,7 @@ def probe(root: Path, name: str, *, timeout: int = 30) -> dict:
             if not isinstance(data.get("tools"), list) or not all(isinstance(t, dict) and isinstance(t.get("name"), str) for t in data["tools"]):
                 raise ValueError("invalid MCP tool discovery result")
             result.update(status="TOOLS_DISCOVERED", tools=data["tools"])
-    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+    except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as exc:
         result["error"] = str(exc)
     _write(Path(root) / "desktop_providers" / "receipts" / f"{name}.json", result)
     return {**result, "tools": [tool["name"] for tool in result["tools"]]}

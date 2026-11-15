@@ -45,6 +45,10 @@
 }
 ```
 
+> 上面的示例故意省略 `route_calibration`。该引用只能由一次成功的
+> `coord-uia calibrate --apply` 原子写入；手工补写 JSON 不能替代本机校准
+> artifact，也不会通过严格 UIA 路线的运行时校验。
+
 `selector_region` 必须与 `session_region`、`model_region`、`composer_region` 完全不相交。这样侧栏中同名标题只能作为一次受控切换候选，不能同时成为“已打开原会话”或“可写输入框”的证据。会话和模型在紧凑标题栏内可以相交；它们是两个不同 marker，仍必须各自唯一。
 
 ## 实际发送前的原子流程
@@ -84,10 +88,12 @@ UIA3 在第 6 步失效时，严格路线不会转去 OCR/PowerShell 的“尽�
 
 ## 标定与回滚
 
-1. 先在只读模式观察本机窗口与 UIA3 树，记录窗口 DPI、布局、真实 header/model/composer 的矩形。
-2. 以无害挑战串运行一次严格投递；验收必须独立看见五段链路，不能只看 CLI 成功、输入框文本或文件信箱。
-3. 任何不唯一、树不足、运行时 ID 不可读或模型/会话标签漂移，保持 `require_strict_session_attestation=false` 并修正 profile，不要扩大区域规避拒绝。
-4. 若需要即时回退，关闭该 profile 的严格开关；这只恢复该 profile 的既有受限路线，**不**让未知原会话获得发送权限，也不删除 attestation / lease 审计文件。
+1. 先在只读模式观察本机窗口与 UIA3 树，记录窗口 DPI、布局、真实 header/model/composer 的矩形；随后执行[路线校准](coordination/CLIENT_ROUTE_CALIBRATION.md)。默认校准不聚焦、不输入、不发送。
+2. 原会话不在活动区时，仅显式 `--select-original` 才能点击**唯一**侧栏候选；点击后必须重新证明活动区、模型区和唯一 composer。一次点击不等于会话已切换，更不等于投递。
+3. 只有 `CALIBRATED` 后附加 `--apply` 才会原子写入 profile；运行时仍会校验 profile 对校准 artifact 的精确引用。校准文件缺失、被替换、基础 profile 漂移或 proof 不一致都会在输入前拒绝。
+4. 再以无害挑战串运行一次严格投递；验收必须独立看见五段链路，不能只看 CLI 成功、输入框文本或文件信箱。
+5. 任何不唯一、树不足、运行时 ID 不可读或模型/会话标签漂移，保持 `require_strict_session_attestation=false` 并修正 profile，不要扩大区域规避拒绝。
+6. 若需要即时回退，关闭该 profile 的严格开关；这只恢复该 profile 的既有受限路线，**不**让未知原会话获得发送权限，也不删除 attestation / lease 审计文件。
 
 ## 验收边界
 

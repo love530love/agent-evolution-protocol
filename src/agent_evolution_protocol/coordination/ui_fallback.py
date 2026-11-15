@@ -33,7 +33,7 @@ import subprocess
 import tempfile
 import time
 import sys
-from typing import Protocol
+from typing import Mapping, Protocol
 from uuid import uuid4
 
 
@@ -81,7 +81,7 @@ def _normalise_unit_region(value, *, name: str) -> dict[str, float]:
     return result
 
 
-def _normalise_session_proof(value, *, required: bool) -> dict[str, dict[str, float]]:
+def normalise_session_proof(value, *, required: bool) -> dict[str, dict[str, float]]:
     if value in (None, ""):
         if required:
             raise ValueError("strict session attestation requires session_proof regions")
@@ -116,6 +116,65 @@ def _normalise_session_proof(value, *, required: bool) -> dict[str, dict[str, fl
                     f"session_proof.selector_region must not overlap session_proof.{name}")
     return result
 
+
+# Kept as a compatibility alias for existing internal callers. New modules use
+# the public name because a calibrated proof is a cross-route protocol value,
+# not an implementation detail of this relay.
+_normalise_session_proof = normalise_session_proof
+
+
+def _normalise_route_calibration(value, *, proof: dict[str, dict[str, float]]) -> dict:
+    """Validate the optional link from a strict profile to its calibration.
+
+    The record itself stays under ``coordination/route_calibrations``. The
+    profile only carries a compact, immutable reference, which is enough to
+    invalidate any old session attestation when an operator changes calibrated
+    geometry or adopts a newer client surface.
+    """
+    # ``normalise_profile`` represents an absent optional reference as {}, so
+    # accept that canonical non-strict form on a second normalization pass.
+    # A strict profile always has four proof regions and must still supply the
+    # complete immutable reference below.
+    if value in (None, "") or (value == {} and not proof):
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError("route_calibration must be an object")
+    required = {"schema", "id", "digest", "session_proof_digest", "surface_digest", "calibrated_at"}
+    if set(value) != required or value.get("schema") != "aep-client-route-calibration-v1":
+        raise ValueError("route_calibration has invalid fields")
+    identifier = str(value.get("id", "")).strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", identifier):
+        raise ValueError("route_calibration.id is invalid")
+
+    def digest(field: str) -> str:
+        text = str(value.get(field, "")).strip().casefold()
+        if text.startswith("sha256:"):
+            text = text[len("sha256:"):]
+        if not re.fullmatch(r"[0-9a-f]{64}", text):
+            raise ValueError(f"route_calibration.{field} must be a sha256 digest")
+        return "sha256:" + text
+
+    expected_proof = "sha256:" + sha256(json.dumps(
+        proof, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")).hexdigest()
+    if digest("session_proof_digest") != expected_proof:
+        raise ValueError("route_calibration.session_proof_digest does not match session_proof")
+    timestamp = str(value.get("calibrated_at", "")).strip()
+    try:
+        parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("route_calibration.calibrated_at must be ISO-8601") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("route_calibration.calibrated_at must include a timezone")
+    return {
+        "schema": "aep-client-route-calibration-v1",
+        "id": identifier,
+        "digest": digest("digest"),
+        "session_proof_digest": expected_proof,
+        "surface_digest": digest("surface_digest"),
+        "calibrated_at": parsed.astimezone(timezone.utc).isoformat(),
+    }
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
@@ -129,8 +188,17 @@ _atomic = write_json_atomic
 _utc = iso_now
 
 
-def load_profile(path: Path) -> dict:
-    profile = json.loads(Path(path).read_text(encoding="utf-8"))
+def normalise_profile(value: Mapping[str, object]) -> dict:
+    """Validate and canonicalize a profile already held in memory.
+
+    Calibration fingerprints must describe the same policy whether the caller
+    received it from ``load_profile`` or already has a mapping in memory.  Keep
+    that normalization in one place so omitted optional lists do not turn into
+    a spurious profile-drift refusal at ``--apply`` time.
+    """
+    if not isinstance(value, Mapping):
+        raise ValueError("profile must be an object")
+    profile = dict(value)
     required = ("agent", "process", "title", "exe", "session_marker", "model_marker", "transport")
     if not isinstance(profile, dict) or any(not str(profile.get(key, "")).strip() for key in required):
         raise ValueError("profile requires agent, process, title, exe, session_marker, model_marker and transport")
@@ -212,9 +280,15 @@ def load_profile(path: Path) -> dict:
     if type(strict_attestation) is not bool:
         raise ValueError("require_strict_session_attestation must be a boolean")
     profile["require_strict_session_attestation"] = strict_attestation
-    profile["session_proof"] = _normalise_session_proof(
+    profile["session_proof"] = normalise_session_proof(
         profile.get("session_proof"), required=strict_attestation)
+    profile["route_calibration"] = _normalise_route_calibration(
+        profile.get("route_calibration"), proof=profile["session_proof"])
     return profile
+
+
+def load_profile(path: Path) -> dict:
+    return normalise_profile(json.loads(Path(path).read_text(encoding="utf-8")))
 
 
 def _evidence_present(text: str, exact: str, markers: list[str]) -> bool:
@@ -1180,6 +1254,26 @@ def _run_impl(profile: dict, message: str, *, event_id: str, receipt_path: Path,
             proof_root = (Path(coordination_root) if coordination_root is not None
                           else (Path(lease_root).parent if lease_root is not None
                                 else Path(lock_path).parent))
+            if profile.get("prefer_uia3"):
+                # A strictly bounded UIA3 route is not admitted solely because
+                # its JSON says so.  Its exact calibration artifact must still
+                # exist, validate, reference this profile and match the current
+                # base policy.  Import lazily to avoid the calibration module's
+                # profile-schema dependency becoming an import cycle.
+                from agent_evolution_protocol.coordination import client_route_calibration
+                route_calibration = client_route_calibration.validate_profile_reference(
+                    proof_root, profile)
+                state["route_calibration"] = {
+                    key: route_calibration.get(key)
+                    for key in ("valid", "required", "reason", "id", "digest", "path")
+                    if route_calibration.get(key) not in (None, "")
+                }
+                if route_calibration.get("valid") is not True:
+                    state.update(state="SESSION_ATTESTATION_REQUIRED",
+                                 reason=str(route_calibration.get("reason") or
+                                            "CALIBRATION_REFERENCE_INVALID"))
+                    _atomic(receipt_path, state)
+                    return state
             strict_attestation = _attest_original_session(
                 proof_root, profile, driver, event_id=event_id)
             state["session_attestation"] = {

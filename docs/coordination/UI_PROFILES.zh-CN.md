@@ -20,7 +20,7 @@
 每次应用更新就失效一次；`qoder.json` 曾经因为钉死版本号而从 0.5.1 漂到 0.5.3，
 导致窗口明明在屏幕上却被判成「找不到窗口」。**从运行中的进程读，不要猜一个看起来更新的号。**
 
-## 2. 从模板实例化（三步）
+## 2. 从模板实例化（普通三步；严格 UIA 另加校准）
 
 ```bash
 # 1. 复制模板
@@ -31,7 +31,7 @@ cp examples/ui_profiles/qoder_cn.json coordination/ui_profiles/qoder_cn.json
 #    exe            <- 从运行中的进程读，别照抄安装目录
 #    session_marker <- 只在该会话里出现的一句话，绝不能是通用词
 
-# 3. 验证
+# 3. 验证普通 profile 的可读事实
 aep coord-uia observe --agent qoder_cn
 ```
 
@@ -47,6 +47,24 @@ aep coord-uia observe --agent qoder_cn
 
 - `exe` 不是绝对路径 → `load_profile` 直接抛错，模板不可能被误用；
 - `session_marker` 匹配不到 → `SESSION_MARKER_MISSING`，拒绝往一个无法识别的会话里打字。
+
+若此客户端实际暴露了可用 UIA3 树，且要启用严格原会话路线，再做第 4 步。四块区域必须由当前窗口实测；示例数值不适用于另一客户端、另一缩放比例或另一原会话：
+
+```powershell
+aep --coord-root coordination coord-uia calibrate --agent qoder_cn `
+  --session-region LEFT,TOP,RIGHT,BOTTOM `
+  --model-region LEFT,TOP,RIGHT,BOTTOM `
+  --selector-region LEFT,TOP,RIGHT,BOTTOM `
+  --composer-region LEFT,TOP,RIGHT,BOTTOM
+
+# 仅复核 CALIBRATED 后，才单独重跑并显式采用
+aep --coord-root coordination coord-uia calibrate --agent qoder_cn `
+  --proof-file .\qoder_cn-proof.json --apply
+```
+
+默认校准是只读；`--select-original` 也只允许对唯一侧栏候选进行一次选择并重证。
+`--apply` 后 profile 仍只存在本机忽略目录，且真实投递仍须完成消息可见、ACK 与结果读回。
+详见[客户端原会话路线校准](CLIENT_ROUTE_CALIBRATION.md)。
 
 ## 3. 各客户端的可移植事实（含证据等级）
 

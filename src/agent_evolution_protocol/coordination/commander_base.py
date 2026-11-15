@@ -41,6 +41,13 @@ from agent_evolution_protocol.coordination.provider_readback import (
 
 # --- constants (single source; commander.py re-imports these) -----------------
 SAFE_AGENT = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
+#: Order event ids become ACK tokens and, on the CDP path, receipt filenames
+#: (``receipts/<event_id>-<target>-cdp.json``).  A path separator or a leading
+#: dot there escapes the receipts directory, so ingress accepts only a single
+#: identifier-shaped token.  This is deliberately wider than the gate's dispatch
+#: vocabularies (EVT-/stamp/WAKE-/PULSE-) because other callers mint stable
+#: ad-hoc ids, but it excludes whitespace, quotes, colons and every separator.
+SAFE_EVENT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.+-]{0,127}$")
 ACK_TOKEN = "AEP-ACK"
 CEASE_AFTER_FAILURES = 3
 REINFORCE_AFTER_MINUTES = 20  # 主订单停火或久未ACK后，允许候选agent补位
@@ -129,6 +136,8 @@ def submit_order(root: Path, *, target: str, task: str, text: str, sender: str,
     """
     if not SAFE_AGENT.fullmatch(target) or not SAFE_AGENT.fullmatch(sender):
         raise ValueError("invalid agent name")
+    if event_id and (not isinstance(event_id, str) or not SAFE_EVENT_ID.fullmatch(event_id)):
+        raise ValueError("invalid event id")
     if not text.strip():
         raise ValueError("text is required")
     if source_wake is not None and not isinstance(source_wake, dict):

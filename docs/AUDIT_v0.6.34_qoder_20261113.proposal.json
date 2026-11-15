@@ -1,0 +1,12 @@
+{
+  "author": "qoder",
+  "change": "审计 v0.6.34 后修复五处协议缺陷：wake_daemon.consume 在逐事件锁内消费、锁争用延后并隔离非法事件；dispatch_gate 识别 WAKE-/PULSE- 事件 ID；submit_order 校验 event_id 防路径穿越；command_memory 落盘前脱敏凭据；session_fingerprint 重算 digest 识别篡改并原子写记录。新增 tests/test_core_hardening_qoder.py（20 tests），审计报告见 docs/AUDIT_v0.6.34_qoder_20261113.zh-CN.md。",
+  "acceptance": "相关模块 92 passed；全量 pytest 1737 passed, 2 skipped, 152.38s, exit 0；四类事件 ID 均能通过 dispatch gate，恶意 event_id 被拒，凭据样本落盘不含原值，篡改指纹返回 False 而重启仍匹配。验证仅为隔离单测与本地全量，不代表部署或真实桌面投递。",
+  "rollback": "回退改动文件 src/agent_evolution_protocol/coordination/{wake_daemon,battle_orders,dispatch_gate,commander_base,command_memory,session_fingerprint}.py，并删除 tests/test_core_hardening_qoder.py；报告与日志保留作为审计记录。回退后重跑全量 pytest 核对基线。",
+  "scope": "src/agent_evolution_protocol/coordination/wake_daemon.py, battle_orders.py, dispatch_gate.py, commander_base.py, command_memory.py, session_fingerprint.py; tests/test_core_hardening_qoder.py; docs/AUDIT_v0.6.34_qoder_20261113.zh-CN.md",
+  "evidence": [
+    "docs/AUDIT_v0.6.34_qoder_20261113.zh-CN.md",
+    "docs/AUDIT_v0.6.34_qoder_20261113.pytest.log",
+    "tests/test_core_hardening_qoder.py"
+  ]
+}

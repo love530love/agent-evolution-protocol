@@ -36,6 +36,13 @@ python -m agent_evolution_protocol.coordination.ui_fallback --profile 'coordinat
 
 唤醒守护程序会在档案存在时优先选用此通道；没有档案的客户端继续使用各自已验收适配器或仅投递信箱。所有桌面输入由一把本地锁串行化，防止多个 Agent 同时操作同一键盘/窗口。静默期间没有模型轮询；等待本轮回复时才进行最多 300 秒的有界读回。
 
+若 profile 同时启用 `prefer_uia3=true` 和
+`require_strict_session_attestation=true`，还必须存在并匹配本机
+`route_calibrations/<agent>/<calibration-id>.json` 的不可变路线校准引用；缺失、被替换、基础 profile
+策略或 proof 漂移都会在输入前停为 `SESSION_ATTESTATION_REQUIRED`。校准的步骤、
+显式 `--apply` 与边界见[客户端原会话路线校准](CLIENT_ROUTE_CALIBRATION.md)。旧
+OCR/UIA fallback 不会因该文件存在而取得严格 UIA 写入许可。
+
 ## 当前边界
 
 - UIA 会话列表不可见、OCR 输入提示不唯一、模型标识不可见时，不会盲点。

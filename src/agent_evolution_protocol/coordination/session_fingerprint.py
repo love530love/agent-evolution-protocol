@@ -24,11 +24,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
-import os
 from pathlib import Path
 from typing import Any
 
 from agent_evolution_protocol.coordination import process_info
+from agent_evolution_protocol.coordination.foundation import write_json_atomic
 
 SCHEMA = "aep-session-fingerprint-v1"
 #: Hashed, in this order, so the digest is reproducible.
@@ -234,12 +234,7 @@ def record(coord_root, agent: str, row: dict[str, Any],
     payload["agent"] = str(agent)
     payload["recorded_at"] = (moment or datetime.now(timezone.utc)).isoformat()
     payload["fingerprint"] = compute(payload)
-    target = path(coord_root, agent)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_name(target.name + ".tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-                   encoding="utf-8")
-    os.replace(tmp, target)
+    write_json_atomic(path(coord_root, agent), payload, indent=2)
     return payload
 
 
@@ -267,8 +262,24 @@ def compare(recorded: dict[str, Any] | None, observed: dict[str, Any]) -> dict[s
     if not recorded:
         return {"match": None, "diff": [], "recorded": "", "observed": observed.get("fingerprint", ""),
                 "reason": "no fingerprint recorded for this agent"}
-    expected = str(recorded.get("fingerprint") or compute(recorded))
-    actual = str(observed.get("fingerprint") or compute(observed))
+    # A stored digest is evidence only if it is reproducible from the identity
+    # fields beside it.  Trusting the stored string let a hand-edited record
+    # claim any fingerprint; recomputing turns that into a detected tamper
+    # instead of a match the caller would act on.
+    stored = str(recorded.get("fingerprint") or "").strip()
+    computed = compute(recorded)
+    if stored and stored != computed:
+        return {"match": False, "diff": [], "recorded": stored,
+                "observed": str(observed.get("fingerprint") or compute(observed)),
+                "reason": "recorded fingerprint is inconsistent with its identity fields; "
+                          "re-record before dispatch"}
+    observed_stored = str(observed.get("fingerprint") or "").strip()
+    actual = compute(observed)
+    if observed_stored and observed_stored != actual:
+        return {"match": False, "diff": [], "recorded": stored or computed,
+                "observed": observed_stored,
+                "reason": "observed fingerprint is inconsistent with its identity fields"}
+    expected = stored or computed
     if expected == actual:
         return {"match": True, "diff": [], "recorded": expected, "observed": actual, "reason": ""}
     left, right = canonical(recorded), canonical(observed)

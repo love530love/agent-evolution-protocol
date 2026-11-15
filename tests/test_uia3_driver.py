@@ -242,6 +242,73 @@ class StrictSessionProofTests(unittest.TestCase):
         self.assertEqual(result["evidence"]["session_switch"]["result"], "already-active")
         self.assertEqual(result["surface"]["target_id"], "hwnd:77|runtime:42.77")
 
+    def test_calibration_proves_the_route_without_focusing_or_writing(self):
+        profile = self.profile()
+        header = FakeElement(control_type="Text", name="Task chat", rect=FakeRect(420, 45, 700, 80))
+        model = FakeElement(control_type="Button", name="Model", rect=FakeRect(950, 45, 1100, 80))
+        composer = FakeElement(control_type="Edit", name="composer", rect=FakeRect(420, 800, 1100, 870))
+        driver = uia3.Uia3Driver(min_elements=1)
+        with patch.object(driver, "find_window", return_value=(FakeWindow([header, model, composer]), {"handle": 77})), \
+                patch.object(uia3.process_info, "image_path", return_value=profile["exe"]):
+            result = driver.calibrate_route(profile, profile["session_proof"])
+        self.assertTrue(result["valid"])
+        self.assertEqual(result["status"], "CALIBRATED")
+        self.assertEqual(result["composer_candidate_count"], 1)
+        self.assertEqual(composer.focused, 0)
+        self.assertEqual(composer.keys, [])
+        self.assertEqual(composer.clicks, 0)
+        self.assertFalse(result["desktop_input_performed"])
+        self.assertFalse(result["message_visible"])
+        self.assertFalse(result["agent_ack"])
+
+    def test_calibration_refuses_missing_or_ambiguous_composer(self):
+        profile = self.profile()
+        header = FakeElement(control_type="Text", name="Task chat", rect=FakeRect(420, 45, 700, 80))
+        model = FakeElement(control_type="Button", name="Model", rect=FakeRect(950, 45, 1100, 80))
+        driver = uia3.Uia3Driver(min_elements=1)
+        with patch.object(driver, "find_window", return_value=(FakeWindow([header, model]), {"handle": 77})), \
+                patch.object(uia3.process_info, "image_path", return_value=profile["exe"]):
+            missing = driver.calibrate_route(profile, profile["session_proof"])
+        self.assertFalse(missing["valid"])
+        self.assertEqual(missing["status"], "CALIBRATION_COMPOSER_NOT_FOUND")
+
+        first = FakeElement(control_type="Edit", name="composer", rect=FakeRect(420, 800, 760, 870))
+        second = FakeElement(control_type="Document", name="composer 2", rect=FakeRect(780, 800, 1100, 870))
+        with patch.object(driver, "find_window", return_value=(FakeWindow([header, model, first, second]), {"handle": 77})), \
+                patch.object(uia3.process_info, "image_path", return_value=profile["exe"]):
+            ambiguous = driver.calibrate_route(profile, profile["session_proof"])
+        self.assertFalse(ambiguous["valid"])
+        self.assertEqual(ambiguous["status"], "CALIBRATION_COMPOSER_AMBIGUOUS")
+        self.assertEqual(first.focused + second.focused, 0)
+
+    def test_calibration_reselects_only_the_exact_bounded_selector_then_reproofs(self):
+        profile = self.profile()
+        # A renderer can expose a container and a leaf with the same title and
+        # top-left point.  The container was deliberately excluded from marker
+        # matches; selector re-location must not accidentally click it anyway.
+        overlay = FakeElement(control_type="Pane", name="Task chat",
+                              rect=FakeRect(10, 120, 300, 200))
+        selector = FakeElement(control_type="Text", name="Task chat",
+                               rect=FakeRect(10, 120, 220, 160))
+        model = FakeElement(control_type="Button", name="Model", rect=FakeRect(950, 45, 1100, 80))
+        header = FakeElement(control_type="Text", name="Task chat", rect=FakeRect(420, 45, 700, 80))
+        composer = FakeElement(control_type="Edit", name="composer", rect=FakeRect(420, 800, 1100, 870))
+        initial = FakeWindow([overlay, selector, model])
+        selected = FakeWindow([header, model, composer])
+        driver = uia3.Uia3Driver(min_elements=1)
+        with patch.object(driver, "find_window", side_effect=[
+                (initial, {"handle": 77}), (selected, {"handle": 77}),
+                (selected, {"handle": 77}),
+        ]), patch.object(uia3.process_info, "image_path", return_value=profile["exe"]), \
+                patch.object(uia3.time, "sleep"):
+            result = driver.calibrate_route(profile, profile["session_proof"], select_original=True)
+        self.assertTrue(result["valid"])
+        self.assertTrue(result["selected_original"])
+        self.assertEqual(overlay.clicks, 0)
+        self.assertEqual(selector.clicks, 1)
+        self.assertEqual(composer.focused, 0)
+        self.assertEqual(composer.keys, [])
+
 
 class DeliverTests(unittest.TestCase):
     def test_valuepattern_write_is_proven_by_reading_the_event_id_back(self):

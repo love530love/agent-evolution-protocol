@@ -33,7 +33,13 @@ def main() -> None:
     except ImportError as exc:  # pragma: no cover - optional runtime
         raise SystemExit("MCP SDK is not installed; install agent-evolution-protocol[desktop]") from exc
 
-    from .coordination import agent_mcp_registry, client_registry, commander, transcript_bus
+    from .coordination import (
+        agent_mcp_registry,
+        client_registry,
+        commander,
+        mcp_lifecycle,
+        transcript_bus,
+    )
 
     mcp = FastMCP("AEP Federation")
 
@@ -85,7 +91,21 @@ def main() -> None:
         return {"agent": target, "workspace_id": _workspace(),
                 "events": transcript_bus.read_events(_root(), agent=target, limit=limit)}
 
-    mcp.run()
+    # A stdio host owns this process's stdin/stdout.  The record is strictly
+    # observational: it is not an agent ACK, a desktop delivery receipt, or a
+    # licence to deduplicate another client's stdio server.  In particular do
+    # not write diagnostics to stdout -- it is the MCP protocol stream.
+    record = mcp_lifecycle.register(
+        _root(), agent=_agent(), workspace_id=_workspace(),
+        server="aep-federation", transport="stdio",
+    )
+    stopped, heartbeat = mcp_lifecycle.start_heartbeat(_root(), record)
+    try:
+        mcp.run()
+    finally:
+        stopped.set()
+        heartbeat.join(timeout=1.0)
+        mcp_lifecycle.retire(_root(), pid=record["pid"], run_id=record["run_id"])
 
 
 if __name__ == "__main__":  # pragma: no cover - optional runtime

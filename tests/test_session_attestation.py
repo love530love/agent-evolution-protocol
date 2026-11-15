@@ -130,6 +130,32 @@ class SessionAttestationTests(unittest.TestCase):
         self.assertEqual(session_attestation.REASON_SURFACE,
                          self.validate(payload, surface=moved_surface)["reason"])
 
+    def test_recalibration_reference_invalidates_an_existing_attestation(self):
+        calibrated = {
+            **PROFILE,
+            "require_strict_session_attestation": True,
+            "session_proof": {
+                "session_region": {"left": 0.25, "top": 0.0, "right": 0.70, "bottom": 0.25},
+                "model_region": {"left": 0.70, "top": 0.0, "right": 1.0, "bottom": 0.25},
+                "selector_region": {"left": 0.0, "top": 0.0, "right": 0.25, "bottom": 1.0},
+                "composer_region": {"left": 0.25, "top": 0.75, "right": 1.0, "bottom": 1.0},
+            },
+            "route_calibration": {
+                "schema": "aep-client-route-calibration-v1",
+                "id": "AEP-CAL-20261113040000-abc123",
+                "digest": "sha256:" + "d" * 64,
+                "session_proof_digest": "sha256:" + "e" * 64,
+                "surface_digest": "sha256:" + "f" * 64,
+                "calibrated_at": "2026-11-13T04:00:00+00:00",
+            },
+        }
+        payload = self.build(profile=calibrated)
+        recalibrated = {**calibrated, "route_calibration": {
+            **calibrated["route_calibration"], "digest": "sha256:" + "1" * 64,
+        }}
+        self.assertEqual(session_attestation.REASON_PROFILE,
+                         self.validate(payload, profile=recalibrated)["reason"])
+
     def test_expired_future_and_malformed_timestamps_are_refused(self):
         payload = self.build(ttl_seconds=10)
         expired = self.validate(payload, moment=MOMENT + timedelta(seconds=10))

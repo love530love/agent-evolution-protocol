@@ -89,11 +89,12 @@ def _name(name):
     """Accept only a random, purpose-scoped AEP job object name.
 
     ``AEPValidation`` remains reserved for the fixed validation bootstrap.
-    ``AEPExternal`` is used by the separate external-CLI bootstrap.  Keeping
-    both prefixes narrow matters: opening an arbitrary named job would let a
+    ``AEPExternal`` is used by the separate external-CLI bootstrap and
+    ``AEPProbe`` owns one bounded desktop-MCP tool-discovery run.  Keeping
+    these prefixes narrow matters: opening an arbitrary named job would let a
     corrupted receipt point this module at an unrelated Windows job object.
     """
-    if not isinstance(name, str) or re.fullmatch(r"AEP(?:Validation|External)-[0-9a-f]{32}", name) is None:
+    if not isinstance(name, str) or re.fullmatch(r"AEP(?:Validation|External|Probe)-[0-9a-f]{32}", name) is None:
         raise ValueError("invalid AEP job name")
     return name
 

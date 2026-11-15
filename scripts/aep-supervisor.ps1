@@ -1,15 +1,30 @@
-param([int]$IntervalSeconds = 30, [int]$MaxTicks = 0)
-$ErrorActionPreference = "Stop"
-$env:PYTHONIOENCODING = "utf-8"
-$env:PYTHONUTF8 = "1"
-$OutputEncoding = [Console]::OutputEncoding
-$mutex = New-Object Threading.Mutex($false, "Global\AEP-Supervisor")
-if (-not $mutex.WaitOne(0)) { Write-Output "AEP supervisor already running; exiting duplicate instance."; exit 0 }
-$root = (Resolve-Path (Join-Path $PSScriptRoot ".." )).Path
-$ticks = 0
-while (($MaxTicks -eq 0) -or ($ticks -lt $MaxTicks)) {
-  & aep coord-commander tick --limit 20 2>&1 | Out-File -Append -Encoding utf8 (Join-Path $root "coordination\supervisor.log")
-  $ticks++
-  Start-Sleep -Seconds ([Math]::Max(5, $IntervalSeconds))
+#Requires -Version 7.0
+param(
+  [int]$IntervalSeconds = 30,
+  [int]$MaxTicks = 0,
+  [string]$CoordRoot = '',
+  [switch]$NoPerceive
+)
+
+$ErrorActionPreference = 'Stop'
+$env:PYTHONIOENCODING = 'utf-8'
+$env:PYTHONUTF8 = '1'
+$repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+if (-not $CoordRoot) { $CoordRoot = Join-Path $repoRoot '.agent-evolution\coordination' }
+$CoordRoot = [IO.Path]::GetFullPath($CoordRoot)
+
+# The persistent control loop is Python.  This wrapper deliberately contains
+# no mutex, retry loop, PATH-discovered `aep` executable, or per-tick child
+# process creation; it exists only for existing PowerShell/Task Scheduler users.
+$python = Join-Path $repoRoot '.tools\agent-runtime\Scripts\python.exe'
+if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
+  $python = (Get-Command python.exe -ErrorAction Stop).Source
 }
-$mutex.ReleaseMutex(); $mutex.Dispose()
+$env:PYTHONPATH = (Join-Path $repoRoot 'src') + [IO.Path]::PathSeparator + $env:PYTHONPATH
+$arguments = @('-m', 'agent_evolution_protocol.coordination.supervisor',
+               '--coord-root', $CoordRoot,
+               '--interval-seconds', [string][Math]::Max(1, $IntervalSeconds),
+               '--max-ticks', [string][Math]::Max(0, $MaxTicks))
+if ($NoPerceive) { $arguments += '--no-perceive' }
+& $python @arguments
+exit $LASTEXITCODE

@@ -76,6 +76,10 @@ PROFILE_FIELDS = (
     # valid under the new interpretation.
     "require_strict_session_attestation",
     "session_proof",
+    # A strict proof is calibrated per client route.  Its compact reference is
+    # policy, not mere metadata: recalibration must invalidate an older
+    # attestation rather than let stale geometry authorise a new write.
+    "route_calibration",
     "transport",
     "workspace_id",
     "session_provider",

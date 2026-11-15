@@ -429,10 +429,15 @@ class Uia3Driver:
             try:
                 rect = element.rectangle()
                 name = str(element.element_info.name or "")
+                control_type = str(element.element_info.control_type or "")
             except Exception:  # noqa: BLE001
                 continue
-            if name == desired["name"] and int(rect.left) == desired["rect"]["left"] and \
-                    int(rect.top) == desired["rect"]["top"]:
+            if (name == desired["name"] and
+                    control_type == desired["control_type"] and
+                    int(rect.left) == desired["rect"]["left"] and
+                    int(rect.top) == desired["rect"]["top"] and
+                    int(rect.right) == desired["rect"]["right"] and
+                    int(rect.bottom) == desired["rect"]["bottom"]):
                 selected_element = element
                 break
         if selected_element is None:
@@ -462,6 +467,103 @@ class Uia3Driver:
         must reject sidebar/search/whole-window marker collisions.
         """
         return self._active_session_probe(profile, allow_select=True)
+
+    def calibrate_route(self, profile: dict, session_proof: dict, *,
+                        select_original: bool = False) -> dict:
+        """Verify one four-region original-session route without writing text.
+
+        The normal dispatch path consumes a calibrated profile.  Calibration is
+        the prior, deliberately narrow operation: it only proves that the
+        current UIA tree has one active session marker, one model marker, and
+        one writable composer in operator-supplied bounded regions.  It does
+        not focus or type into the composer.  ``select_original`` is explicit
+        because it may click one uniquely matching sidebar row; after that
+        click the active regions are read again before returning success.
+        """
+        # Keep validation at the same boundary as the profile loader without
+        # importing it at module import time (ui_fallback lazily imports this
+        # module for the AutoDriver).
+        from agent_evolution_protocol.coordination import ui_fallback
+
+        try:
+            proof = ui_fallback.normalise_session_proof(session_proof, required=True)
+        except (TypeError, ValueError) as exc:
+            return {"valid": False, "status": "CALIBRATION_INVALID_PROOF",
+                    "reason": str(exc)[:400], "desktop_input_performed": False,
+                    "message_visible": False, "agent_ack": False,
+                    "task_result_readback": False}
+        candidate = dict(profile)
+        candidate["session_proof"] = proof
+        first = self._active_session_probe(candidate, allow_select=select_original)
+        if first.get("valid") is not True:
+            return {"valid": False, "status": "CALIBRATION_NOT_READY",
+                    "reason": str(first.get("reason") or "CALIBRATION_NOT_READY"),
+                    "capture": first.get("capture", {}),
+                    "desktop_input_performed": False,
+                    "message_visible": False, "agent_ack": False,
+                    "task_result_readback": False}
+
+        # Re-find and re-prove the same surface before examining composer
+        # geometry.  A renderer replacement or same-window session change
+        # between the first observation and this count makes calibration
+        # unusable, not merely stale.
+        wrapper, info = self.find_window(candidate)
+        if wrapper is None:
+            return {"valid": False, "status": "CALIBRATION_NOT_READY",
+                    "reason": "CALIBRATION_WINDOW_LOST", "desktop_input_performed": False,
+                    "message_visible": False, "agent_ack": False,
+                    "task_result_readback": False}
+        confirmed = self._active_session_probe(
+            candidate, allow_select=False, wrapper=wrapper, info=info,
+            expected_surface=first.get("surface"),
+        )
+        if confirmed.get("valid") is not True:
+            return {"valid": False, "status": "CALIBRATION_NOT_READY",
+                    "reason": str(confirmed.get("reason") or "CALIBRATION_SURFACE_CHANGED"),
+                    "capture": confirmed.get("capture", {}),
+                    "desktop_input_performed": False,
+                    "message_visible": False, "agent_ack": False,
+                    "task_result_readback": False}
+        composers = self.composer_candidates(wrapper, region=proof["composer_region"])
+        count = len(composers)
+        if count != 1:
+            return {"valid": False,
+                    "status": ("CALIBRATION_COMPOSER_NOT_FOUND" if count == 0
+                               else "CALIBRATION_COMPOSER_AMBIGUOUS"),
+                    "reason": ("CALIBRATION_COMPOSER_NOT_FOUND" if count == 0
+                               else "CALIBRATION_COMPOSER_AMBIGUOUS"),
+                    "composer_candidate_count": count,
+                    "capture": confirmed.get("capture", {}),
+                    "desktop_input_performed": False,
+                    "message_visible": False, "agent_ack": False,
+                    "task_result_readback": False}
+        evidence = dict(confirmed["evidence"])
+        # ``confirmed`` is intentionally a second, read-only probe; it reports
+        # the resulting active surface as already-active. Preserve whether the
+        # first probe had to choose the sole bounded selector without treating
+        # that click as an input or delivery success.
+        selected_original = bool(
+            first.get("evidence", {}).get("session_switch", {}).get("attempted"))
+        if selected_original:
+            evidence["calibration_session_selection"] = {
+                "attempted": True,
+                "result": "re-attested-after-selection",
+            }
+        return {
+            "valid": True,
+            "status": "CALIBRATED",
+            "session_proof": proof,
+            "surface": confirmed["surface"],
+            "capture": confirmed.get("capture", {}),
+            "evidence": evidence,
+            "selected_original": selected_original,
+            "composer_candidate_count": 1,
+            "composer_region": self._rect(composers[0]),
+            "desktop_input_performed": False,
+            "message_visible": False,
+            "agent_ack": False,
+            "task_result_readback": False,
+        }
 
     def select_session(self, profile: dict) -> dict:
         """Click the first element whose name carries the session marker."""

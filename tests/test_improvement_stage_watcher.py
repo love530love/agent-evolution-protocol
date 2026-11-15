@@ -85,7 +85,7 @@ class ImprovementStageWatcherTests(unittest.TestCase):
                           encoding="utf-8")
         return roster
 
-    def _wait(self, predicate, process, log, timeout=12):
+    def _wait(self, predicate, process, log, timeout=PWSH_HANG_GUARD):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if predicate():

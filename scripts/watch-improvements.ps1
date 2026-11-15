@@ -148,7 +148,12 @@ try {
             # output cannot indefinitely postpone recovery of a lost event.
             $remaining = ($nextRecovery - [DateTime]::UtcNow).TotalSeconds
             if ($remaining -le 0) { $pending = 3; break }
-            Wait-Event -Timeout ([Math]::Max(1, [Math]::Ceiling($remaining))) | Out-Null
+            # A FileSystemWatcher notification is normally enough to wake this
+            # loop.  Bound the wait nevertheless: a lost notification must not
+            # turn a requested .stop into a minute-long shutdown delay.  This
+            # is also deliberately independent of the 60-second authoritative
+            # recovery cadence above.
+            Wait-Event -Timeout ([Math]::Min(1, [Math]::Max(1, [Math]::Ceiling($remaining)))) | Out-Null
             $pending = Read-WatcherEvents
             if ($pending) {
                 # Coalesce an atomic publication's burst of filesystem notices.

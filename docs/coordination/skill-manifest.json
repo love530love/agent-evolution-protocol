@@ -1,7 +1,7 @@
 {
   "by_risk": {
     "irreversible": 15,
-    "mutating": 55,
+    "mutating": 56,
     "read-only": 21
   },
   "commands": [
@@ -2928,6 +2928,42 @@
     {
       "arguments": [
         {
+          "choices": [
+            "prune",
+            "status"
+          ],
+          "dest": "action",
+          "flags": [],
+          "kind": "positional",
+          "required": true
+        },
+        {
+          "default": 120,
+          "dest": "stale_after_seconds",
+          "flags": [
+            "--stale-after-seconds"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 86400,
+          "dest": "retention_seconds",
+          "flags": [
+            "--retention-seconds"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": true,
+      "name": "coord-mcp-lifecycle",
+      "purpose": "Inspect/prune AEP's own MCP lifecycle records, never generic processes.",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
           "dest": "metrics_file",
           "flags": [
             "--metrics-file"
@@ -3941,6 +3977,7 @@
       "arguments": [
         {
           "choices": [
+            "calibrate",
             "capture",
             "compose",
             "deliver",
@@ -4111,11 +4148,78 @@
           ],
           "kind": "option",
           "required": false
+        },
+        {
+          "dest": "proof_file",
+          "flags": [
+            "--proof-file"
+          ],
+          "help": "JSON with four normalized original-session proof regions; calibrate only",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "session_region",
+          "flags": [
+            "--session-region"
+          ],
+          "help": "LEFT,TOP,RIGHT,BOTTOM normalized to 0..1; calibrate only",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "model_region",
+          "flags": [
+            "--model-region"
+          ],
+          "help": "LEFT,TOP,RIGHT,BOTTOM normalized to 0..1; calibrate only",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "selector_region",
+          "flags": [
+            "--selector-region"
+          ],
+          "help": "LEFT,TOP,RIGHT,BOTTOM normalized to 0..1; calibrate only",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "composer_region",
+          "flags": [
+            "--composer-region"
+          ],
+          "help": "LEFT,TOP,RIGHT,BOTTOM normalized to 0..1; calibrate only",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "select_original",
+          "flags": [
+            "--select-original"
+          ],
+          "help": "calibrate only: click one unique selector candidate, then re-attest",
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "apply",
+          "flags": [
+            "--apply"
+          ],
+          "help": "calibrate only: atomically opt a successful calibration into the UI profile",
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
         }
       ],
       "documented": true,
       "name": "coord-uia",
-      "purpose": "Desktop transport probe: observe/capture, or deliver/compose to an original window.",
+      "purpose": "Desktop transport: calibrate is read-only; compose/deliver can write an original chat.",
       "risk": "irreversible"
     },
     {
@@ -5557,9 +5661,9 @@
       "risk": "mutating"
     }
   ],
-  "count": 91,
-  "digest": "sha256:7ffba5b00a5238ec5b0a09ddff85efd73d6bc2de0cde8c89dd838feff4005f8d",
-  "documented": 28,
+  "count": 92,
+  "digest": "sha256:a85dc15ea9f93c1e3bb2398459d1c6025a1fa224450057c1073c0def5f375472",
+  "documented": 29,
   "generated_from": "agent_evolution_protocol.cli:build_parser",
   "global_arguments": [
     {

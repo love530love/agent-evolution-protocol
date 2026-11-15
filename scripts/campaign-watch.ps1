@@ -8,6 +8,11 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$singleton = New-Object Threading.Mutex($false, 'Global\AEP-Campaign-Watch')
+if (-not $singleton.WaitOne(0)) {
+  Write-Output '{"status":"ALREADY_RUNNING","component":"campaign-watch"}'
+  exit 0
+}
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 if (-not $CoordRoot) { $CoordRoot = Join-Path $repoRoot 'coordination' }
 if (-not $BridgeRoot) { $BridgeRoot = Join-Path $repoRoot 'src\agent_evolution_protocol\coordination' }
@@ -87,4 +92,6 @@ try {
     Unregister-Event -SourceIdentifier $id -ErrorAction SilentlyContinue
   }
   foreach ($watcher in $watchers) { $watcher.Dispose() }
+  $singleton.ReleaseMutex()
+  $singleton.Dispose()
 }

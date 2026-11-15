@@ -4,10 +4,10 @@
 > 手改会让 `tests/test_skill_manifest.py` 失败——这是刻意的：
 > 上一版研究文档把 `schema=aep-next-action-v1` 写错了整整两天，因为散文不会报错。
 
-- 命令总数：**91**
-- 风险分布：read-only 21、mutating 55、irreversible 15
-- 用途已记录：**28** / 91（未记录 63，只允许减少）
-- 清单摘要：`sha256:7ffba5b00a5238ec5b0a09ddff85efd73d6bc2de0cde8c89dd838feff4005f8d`
+- 命令总数：**92**
+- 风险分布：read-only 21、mutating 56、irreversible 15
+- 用途已记录：**29** / 92（未记录 63，只允许减少）
+- 清单摘要：`sha256:a85dc15ea9f93c1e3bb2398459d1c6025a1fa224450057c1073c0def5f375472`
 
 风险分级是**声明**而不是推导：未登记的命令一律按 `mutating` 处理。
 把会写的命令标成 `read-only` 是这里唯一有代价的错误，所以默认值朝安全方向倒。
@@ -81,6 +81,7 @@
 | `coord-joint-case` | mutating | `ACTION --task --submission` | *未记录* |
 | `coord-legion` | mutating | `ACTION` | *未记录* |
 | `coord-loop-verdict` | mutating | `--event-id` | Recompute one handoff loop verdict from filesystem evidence. |
+| `coord-mcp-lifecycle` | mutating | `ACTION` | Inspect/prune AEP's own MCP lifecycle records, never generic processes. |
 | `coord-mechanism-audit` | read-only | `--metrics-file` | *未记录* |
 | `coord-onboarding` | mutating | `--agent` | *未记录* |
 | `coord-orca` | mutating | `ACTION` | *未记录* |
@@ -99,7 +100,7 @@
 | `coord-task-state` | mutating | `--agent --task --phase --goal` | *未记录* |
 | `coord-trajectory` | mutating | `ACTION` | Record, check and replay a run without letting the replay re-fire it. |
 | `coord-transcript` | irreversible | `ACTION` | Shared conversation bus so every agent can perceive every other session. |
-| `coord-uia` | irreversible | `ACTION --agent` | Desktop transport probe: observe/capture, or deliver/compose to an original window. |
+| `coord-uia` | irreversible | `ACTION --agent` | Desktop transport: calibrate is read-only; compose/deliver can write an original chat. |
 | `coord-vision` | read-only | `ACTION` | Ask a grounder where a control is, and compare it with a known answer. |
 | `coord-volley-plan` | mutating | `--manifest-file --results-file --quota-remaining` | *未记录* |
 | `coord-wake` | irreversible | `--from --to --task --reason` | *未记录* |

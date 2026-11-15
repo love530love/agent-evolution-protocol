@@ -27,9 +27,11 @@ class DesktopProviderTests(unittest.TestCase):
         providers.register(self.root, self.profile)
         result = SimpleNamespace(returncode=0, stdout=json.dumps({"tools": [
             {"name": "ui_find", "inputSchema": {"type": "object"}}]}), stderr="")
-        with patch.object(providers.subprocess, "run", return_value=result) as run:
+        with patch.object(providers, "_run_probe_worker", return_value=(result, {
+            "backend": "test", "timed_out": False, "process_tree_stopped_verified": True,
+        })) as run:
             receipt = providers.probe(self.root, "sbroenne")
-        self.assertNotIn("shell", run.call_args.kwargs)
+        self.assertEqual(run.call_args.kwargs["timeout"], 30)
         return receipt
 
     def test_export_is_explicit_and_does_not_leak_environment(self):
@@ -83,10 +85,14 @@ class DesktopProviderTests(unittest.TestCase):
 
     def test_probe_timeout_is_recorded_without_delivery_claim(self):
         providers.register(self.root, self.profile)
-        with patch.object(providers.subprocess, "run", side_effect=subprocess.TimeoutExpired("sdk", 40)):
+        timeout = subprocess.CompletedProcess([], 124, stdout="", stderr="")
+        with patch.object(providers, "_run_probe_worker", return_value=(timeout, {
+            "backend": "windows-job", "timed_out": True, "process_tree_stopped_verified": True,
+        })):
             result = providers.probe(self.root, "sbroenne")
         self.assertEqual(result["status"], "PROBE_FAILED")
         self.assertFalse(result["delivery_verified"])
+        self.assertTrue(result["containment"]["process_tree_stopped_verified"])
 
     def test_registration_rejects_shell_scripts_and_path_traversal(self):
         for update in ({"name": "../bad"}, {"args": "shell string"}, {"bindings": {"execute_anything": "x"}}, {"priority": True}):
@@ -97,7 +103,9 @@ class DesktopProviderTests(unittest.TestCase):
         providers.register(self.root, {**self.profile, "env": {"ANONYMIZED_TELEMETRY": "false"}})
         failure = SimpleNamespace(returncode=2, stdout=json.dumps({
             "error": "Connection closed", "server_stderr": "Cannot find module key_sender.node"}), stderr="")
-        with patch.object(providers.subprocess, "run", return_value=failure):
+        with patch.object(providers, "_run_probe_worker", return_value=(failure, {
+            "backend": "test", "timed_out": False, "process_tree_stopped_verified": True,
+        })):
             result = providers.probe(self.root, "sbroenne")
         self.assertEqual(result["status"], "PROBE_FAILED")
         self.assertIn("key_sender.node", result["server_stderr"])

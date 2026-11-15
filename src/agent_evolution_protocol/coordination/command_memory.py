@@ -70,6 +70,39 @@ RULES = {
 ORDER = ("long_path", "encoding", "parameter_binding", "command_not_found", "path_or_cwd",
          "permission", "quoting", "shell_version")
 MAX_EXCERPT = 4000
+REDACTED = "<redacted>"
+_SECRET_KEY = (r"[A-Za-z0-9_.-]*(?:password|passwd|pwd|secret|token|api[_-]?key|"
+               r"apikey|access[_-]?key|secret[_-]?key|client[_-]?secret|authorization|"
+               r"cookie|private[_-]?key)[A-Za-z0-9_.-]*")
+#: Applied before anything is persisted.  This memory ingests chat excerpts and
+#: command output, which routinely carry live credentials; storing them would
+#: turn a diagnostic aid into a secret archive.
+_SECRET_PATTERNS = (
+    re.compile(r"(?i)\b(authorization\s*[:=]\s*)(?:(?:bearer|basic|token)\s+)?[^\s,;\"']+"),
+    re.compile(r"(?i)\b((?:set-)?cookie\s*[:=]\s*)[^\r\n]+"),
+    re.compile(r"(?i)([\"']?" + _SECRET_KEY + r"[\"']?\s*[:=]\s*)(?:\"[^\"]*\"|'[^']*'|[^\s,;}]+)"),
+    re.compile(r"(?i)\b(bearer\s+)[A-Za-z0-9._~+/=-]{8,}"),
+    re.compile(r"(?i)\b(basic\s+)[A-Za-z0-9+/=]{8,}"),
+    re.compile(r"(?i)(--?(?:password|passwd|token|secret|api-key|access-key|secret-key)\s+)"
+               r"(?:\"[^\"]*\"|'[^']*'|\S+)"),
+)
+#: These patterns match the credential itself, so the whole match is replaced.
+_TOKEN_PATTERNS = (
+    re.compile(r"\b(?:sk-[A-Za-z0-9_-]{8,})"),
+    re.compile(r"\b(?:AKIA[0-9A-Z]{16})\b"),
+    re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,})\b"),
+    re.compile(r"\b(?:eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})\b"),
+)
+
+
+def redact(text: str) -> str:
+    """Replace credential-shaped substrings while keeping the surrounding key."""
+    value = str(text or "")
+    for pattern in _SECRET_PATTERNS:
+        value = pattern.sub(lambda match: match.group(1) + REDACTED, value)
+    for pattern in _TOKEN_PATTERNS:
+        value = pattern.sub(REDACTED, value)
+    return value
 
 
 def root_dir(coord_root: Path) -> Path:
@@ -127,11 +160,12 @@ def record(coord_root: Path, *, agent: str, command: str, output: str,
         raise ValueError("unknown category hint")
     category = category_hint or classify(output or command)
     outcome = "reported" if exit_code is None else "observed_success" if exit_code == 0 else "observed_failure"
-    sig = signature(output or command, category)
+    sig = signature(redact(output or command), category)
     at = datetime.now(timezone.utc)
     item = {"id": at.strftime("%Y%m%dT%H%M%S%fZ") + "-" + uuid4().hex[:12],
-            "at": at.isoformat(), "agent": agent, "source": source, "command": command[:2000],
-            "output_excerpt": output[-MAX_EXCERPT:], "exit_code": exit_code,
+            "at": at.isoformat(), "agent": agent, "source": source,
+            "command": redact(command)[:2000],
+            "output_excerpt": redact(output)[-MAX_EXCERPT:], "exit_code": exit_code,
             "outcome": outcome, "category": category, "signature": sig,
             "evidence": evidence,
             "trust": "chat_report_only" if exit_code is None else "process_exit_observed_not_semantic_success"}
