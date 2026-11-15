@@ -15,7 +15,7 @@
 ## 计划任务
 
 - 名称：`AEP-Nightly-Codex`
-- 窗口：`2026-11-15 20:30` → `2026-11-16 04:05`（本地时间），每 30 分钟一次，窗口结束自动停止。
+- 窗口：`2026-11-15 20:30` → `2026-11-16 04:30`（本地时间），每 30 分钟一次，窗口结束自动停止。
 - 启动器：`coordination/nightly_loop/tick.vbs` → `tick.cmd` → `aep --coord-root ... coord-nightly-loop run`。
 - 任务以当前用户、最低权限、交互式登录令牌运行；不使用管理员权限，不修改 UAC。
 - 日志：`coordination/nightly_loop/task.log`；状态：`coordination/nightly_loop/state.json`；报告：`coordination/nightly_loop/report.md`。
