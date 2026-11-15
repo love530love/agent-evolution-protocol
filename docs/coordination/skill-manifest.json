@@ -1,7 +1,7 @@
 {
   "by_risk": {
     "irreversible": 15,
-    "mutating": 57,
+    "mutating": 58,
     "read-only": 21
   },
   "commands": [
@@ -1429,6 +1429,88 @@
       "documented": true,
       "name": "coord-client",
       "purpose": "Name, find, anchor and open the desktop clients the legion can command.",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "choices": [
+            "result",
+            "threads"
+          ],
+          "dest": "action",
+          "flags": [],
+          "kind": "positional",
+          "required": true
+        },
+        {
+          "default": "C:\\Users\\love\\.codex\\state_5.sqlite",
+          "dest": "state_db",
+          "flags": [
+            "--state-db"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "thread_id",
+          "flags": [
+            "--thread-id"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": "",
+          "dest": "title_marker",
+          "flags": [
+            "--title-marker"
+          ],
+          "help": "substring of the thread title",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": "",
+          "dest": "cwd_marker",
+          "flags": [
+            "--cwd-marker"
+          ],
+          "help": "substring of the thread working directory",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "marker",
+          "flags": [
+            "--marker"
+          ],
+          "help": "result marker for action=result",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "since",
+          "flags": [
+            "--since"
+          ],
+          "help": "ignore task_complete events older than this ISO time",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 20,
+          "dest": "limit",
+          "flags": [
+            "--limit"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": true,
+      "name": "coord-codex-rollout",
+      "purpose": "Read a Codex Desktop thread result from its local rollout, read-only.",
       "risk": "mutating"
     },
     {
@@ -5717,9 +5799,9 @@
       "risk": "mutating"
     }
   ],
-  "count": 93,
-  "digest": "sha256:0f3601ea1d6f624d6aa3af08ac2f3755ea2e72b714341f9a1cdcd6875d4cbe08",
-  "documented": 30,
+  "count": 94,
+  "digest": "sha256:321e67dc25a28fcb2ac8e7028c53cf3c49f55e2dff2cf67e073a48c8c1f460b6",
+  "documented": 31,
   "generated_from": "agent_evolution_protocol.cli:build_parser",
   "global_arguments": [
     {

@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import re
+import sqlite3
 import subprocess
 import sys
 import shutil
@@ -29,6 +30,7 @@ from agent_evolution_protocol.coordination.joint_attack import open_case as open
 from agent_evolution_protocol.coordination.capability_roster import declare as declare_capabilities, match as match_capabilities
 from agent_evolution_protocol.coordination.mechanism_audit import audit as audit_mechanism
 from agent_evolution_protocol.coordination import a11y
+from agent_evolution_protocol.coordination import codex_rollout
 from agent_evolution_protocol.coordination import process_info
 from agent_evolution_protocol.coordination import project_evidence
 from agent_evolution_protocol.coordination import uia_argv
@@ -3242,6 +3244,31 @@ def coord_transcript(args: argparse.Namespace) -> None:
 
 
 
+def coord_codex_rollout(args: argparse.Namespace) -> None:
+    """Read a Codex Desktop thread result from its local rollout, read-only."""
+    state_db = Path(args.state_db)
+    try:
+        if args.action == "threads":
+            rows = codex_rollout.find_threads(
+                state_db, title_marker=args.title_marker,
+                cwd_marker=args.cwd_marker, limit=args.limit)
+            print(json.dumps({"schema": codex_rollout.SCHEMA, "threads": rows},
+                             ensure_ascii=False, indent=2))
+            return
+        if not args.marker:
+            raise ProtocolError("result requires --marker")
+        if args.thread_id:
+            result = codex_rollout.result_for_thread(
+                state_db, args.thread_id, args.marker, since=args.since)
+        else:
+            result = codex_rollout.find_result(
+                state_db, args.marker, title_marker=args.title_marker,
+                cwd_marker=args.cwd_marker, since=args.since, limit=args.limit)
+    except (FileNotFoundError, OSError, sqlite3.Error) as exc:
+        raise ProtocolError(f"cannot read Codex state database: {exc}") from exc
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
 def coord_project_evidence(args: argparse.Namespace) -> None:
     """Seal, verify or inspect time-bounded advisory evidence from another project."""
     root = coord_root(args)
@@ -4039,6 +4066,21 @@ def build_parser() -> argparse.ArgumentParser:
     pe.add_argument("--max-age-seconds", type=float,
                     default=project_evidence.DEFAULT_MAX_AGE_SECONDS)
     pe.set_defaults(func=coord_project_evidence)
+    rollout = commands.add_parser(
+        "coord-codex-rollout",
+        help="read a Codex Desktop thread result from its local rollout, read-only")
+    rollout.add_argument("action", choices=("threads", "result"))
+    rollout.add_argument("--state-db", type=Path,
+                         default=codex_rollout.DEFAULT_STATE_DB)
+    rollout.add_argument("--thread-id")
+    rollout.add_argument("--title-marker", default="",
+                         help="substring of the thread title")
+    rollout.add_argument("--cwd-marker", default="",
+                         help="substring of the thread working directory")
+    rollout.add_argument("--marker", help="result marker for action=result")
+    rollout.add_argument("--since", help="ignore task_complete events older than this ISO time")
+    rollout.add_argument("--limit", type=int, default=20)
+    rollout.set_defaults(func=coord_codex_rollout)
     relay = commands.add_parser("coord-relay-drill", help="one-shot relay drill: plan or execute in-turn multi-agent dispatch")
     relay.add_argument("--bridge-root", type=Path); relay.add_argument("--apply", action="store_true"); relay.set_defaults(func=coord_relay_drill)
 

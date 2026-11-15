@@ -4,10 +4,10 @@
 > 手改会让 `tests/test_skill_manifest.py` 失败——这是刻意的：
 > 上一版研究文档把 `schema=aep-next-action-v1` 写错了整整两天，因为散文不会报错。
 
-- 命令总数：**93**
-- 风险分布：read-only 21、mutating 57、irreversible 15
-- 用途已记录：**30** / 93（未记录 63，只允许减少）
-- 清单摘要：`sha256:0f3601ea1d6f624d6aa3af08ac2f3755ea2e72b714341f9a1cdcd6875d4cbe08`
+- 命令总数：**94**
+- 风险分布：read-only 21、mutating 58、irreversible 15
+- 用途已记录：**31** / 94（未记录 63，只允许减少）
+- 清单摘要：`sha256:321e67dc25a28fcb2ac8e7028c53cf3c49f55e2dff2cf67e073a48c8c1f460b6`
 
 风险分级是**声明**而不是推导：未登记的命令一律按 `mutating` 处理。
 把会写的命令标成 `read-only` 是这里唯一有代价的错误，所以默认值朝安全方向倒。
@@ -62,6 +62,7 @@
 | `coord-claim-renew` | mutating | `--agent --task` | Extend the caller's claim lease through the normal ``aep`` entrypoint. |
 | `coord-clawchat` | irreversible | `--sender --target --event-id` | *未记录* |
 | `coord-client` | mutating | `ACTION` | Name, find, anchor and open the desktop clients the legion can command. |
+| `coord-codex-rollout` | mutating | `ACTION` | Read a Codex Desktop thread result from its local rollout, read-only. |
 | `coord-commander` | irreversible | `ACTION` | Queue directives, run the unattended loop, and prove every transition. |
 | `coord-delivery-audit` | read-only | `—` | Read-only evidence ladder for all locally recorded deliveries. |
 | `coord-delivery-status` | read-only | `--to --id` | Report observed mailbox state; never infer model receipt from file presence. |
