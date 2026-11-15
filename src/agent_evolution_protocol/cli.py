@@ -3258,7 +3258,12 @@ def coord_codex_rollout(args: argparse.Namespace) -> None:
             return
         if not args.marker:
             raise ProtocolError("result requires --marker")
-        if args.thread_id:
+        if args.action == "submission":
+            if not args.thread_id:
+                raise ProtocolError("submission requires --thread-id")
+            result = codex_rollout.submission_for_thread(
+                state_db, args.thread_id, args.marker, since=args.since)
+        elif args.thread_id:
             result = codex_rollout.result_for_thread(
                 state_db, args.thread_id, args.marker, since=args.since)
         else:
@@ -4090,7 +4095,7 @@ def build_parser() -> argparse.ArgumentParser:
     rollout = commands.add_parser(
         "coord-codex-rollout",
         help="read a Codex Desktop thread result from its local rollout, read-only")
-    rollout.add_argument("action", choices=("threads", "result"))
+    rollout.add_argument("action", choices=("threads", "result", "submission"))
     rollout.add_argument("--state-db", type=Path,
                          default=codex_rollout.DEFAULT_STATE_DB)
     rollout.add_argument("--thread-id")
@@ -4098,8 +4103,8 @@ def build_parser() -> argparse.ArgumentParser:
                          help="substring of the thread title")
     rollout.add_argument("--cwd-marker", default="",
                          help="substring of the thread working directory")
-    rollout.add_argument("--marker", help="result marker for action=result")
-    rollout.add_argument("--since", help="ignore task_complete events older than this ISO time")
+    rollout.add_argument("--marker", help="event id for submission; result marker for result")
+    rollout.add_argument("--since", help="ignore events older than this ISO time")
     rollout.add_argument("--limit", type=int, default=20)
     rollout.set_defaults(func=coord_codex_rollout)
     nightly = commands.add_parser(

@@ -11,6 +11,7 @@
   4. 客户端路径与当前 Codex 版本一致。
 - 结果以 Codex rollout 的 `task_complete.last_agent_message` 为独立回读源；UIA 的 `task_delivered=true` 只等于 `MESSAGE_VISIBLE`，不是 ACK。
 - 结果不明、投递不确定或 60 分钟内无结果：只 HOLD，不重发、不切换通道、不新开会话。宽限刻意大于 30 分钟 tick 间隔，避免“结果在两次 tick 之间完成却被判超时”。
+- 投递不确定时，额外用同一 thread 的 rollout 用户消息做独立确认；只接受 `UserMessage`，不接受助手回显或工具输出。
 
 ## 计划任务
 
@@ -22,20 +23,23 @@
 
 ## 当前证据
 
-- AEP：`v0.6.37` → `v0.6.38` → `v0.6.39` → `v0.6.40`，最新提交 `dc2537f`，已普通推送 `origin/main`。
-- AEP 全量回归：`1770 passed, 2 skipped`（排除已知陈旧的 `tests/test_ui_profile_examples.py`）。
+- AEP：`v0.6.37` → `v0.6.38` → `v0.6.39` → `v0.6.40` → `v0.6.41`（rollout 投递确认），`v0.6.41` 代码与文档提交后普通推送 `origin/main`。
+- AEP 全量回归：`1775 passed, 2 skipped`（排除已知陈旧的 `tests/test_ui_profile_examples.py`）。
 - 第 1 轮事件 `AEP-NL-20261115-2005-01`：
   - 投递回执 `task_delivered=true`，事件见证控件为当前 `设计自进化架构` 文档；
   - rollout 回读 `task_complete`，结果行含 `AEP-RESULT:AEP-NL-20261115-2005-01`；
   - AEGS 功能提交 `3d27cfe`，治理证据提交 `b8dedae`；
   - AEGS 自报 `16 passed, 0 skipped, 11.00s`。
-- 第 2 轮事件 `AEP-NL-20261115-2005-02` 已发送；Codex 正在实现 JSONL 账本跨进程单写入者锁，等待 rollout 回读。
+- 第 2 轮事件 `AEP-NL-20261115-2005-02` 已回读：AEGS 功能提交 `9584c69`、治理证据提交 `da11ca8`；自报 `18 passed / 0 skipped, 10.95s`。
+- 第 3 轮事件 `AEP-NL-20261115-2005-03`：UI 回执为 `submitted-unconfirmed`，但同一 thread 的 rollout 用户消息在 `2026-11-15T12:13:12.091Z` 证明已送达（message id `01a1df20-3419-7af1-beff-a58879af5609`）。已按该独立证据恢复为 `sent`，没有重发。
+- `v0.6.41` 把这条恢复逻辑固化：UI 回执不确定时，先在本 thread rollout 中确认用户消息；确认则记 `DELIVER_RECOVERED` 并继续等待结果，未确认才 HOLD。
 
 ## 早间检查
 
 ```powershell
 aep --coord-root K:\PythonProjects5\agent-evolution-protocol\coordination coord-nightly-loop status
 Get-Content K:\PythonProjects5\agent-evolution-protocol\coordination\nightly_loop\report.md
+aep --coord-root K:\PythonProjects5\agent-evolution-protocol\coordination coord-codex-rollout submission --thread-id 01a09509-b3fb-7d92-9749-b1199c13938f --marker AEP-NL-20261115-2005-03
 Get-Content K:\PythonProjects5\agent-evolution-protocol\coordination\nightly_loop\task.log -Tail 100
 schtasks /Query /TN "AEP-Nightly-Codex" /V /FO LIST
 ```
@@ -61,6 +65,7 @@ python -m aegs.cli journal status .
 
 - 若 Windows 会话被锁屏或 Codex 被关闭，下一 tick 会在 preflight HOLD，不会盲发；这是设计行为，不是链路已通。锁屏下 UIA 可能仍能读树，但模拟输入/OCR 可能失败，必须按 tick 回执判断。
 - 单个任务超过 60 分钟仍无结果会终态 HOLD，不重发；8 小时窗口内剩余任务随之停止。
+- `submitted-unconfirmed` 的 rollout 确认默认最多等 20 秒；若 rollout 不可读或滞后，仍按不确定 HOLD，不会改走其他通道重发。
 - 原始 UIA `session_marker` 可能在侧栏命中非活动会话，因此它只作辅助；主闸门是“全局最新 thread + 活动视图事件指纹 + rollout 回读”。
 - AEGS 的 `PASS` 只是项目证据，不是 AEP 授权、claim/lease、ACK 或任务完成判定。
 - `tests/test_ui_profile_examples.py` 的 `qoder_cn` 模板陈旧失败在本次工作前已存在，未混入本次改动。

@@ -16,6 +16,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 from typing import Any, Callable
 
 from agent_evolution_protocol.coordination import codex_rollout
@@ -32,6 +33,7 @@ PROVEN_NOT_SENT = {
 }
 DEFAULT_RESULT_GRACE_SECONDS = 1500.0
 DEFAULT_MAX_SENDS = 12
+DEFAULT_DELIVERY_CONFIRM_SECONDS = 20.0
 
 
 def _now() -> datetime:
@@ -270,6 +272,11 @@ class SystemAdapter:
             Path(self.config.get("state_db") or codex_rollout.DEFAULT_STATE_DB),
             thread_id, marker, since=since)
 
+    def submission(self, thread_id: str, marker: str) -> dict[str, Any]:
+        return codex_rollout.submission_for_thread(
+            Path(self.config.get("state_db") or codex_rollout.DEFAULT_STATE_DB),
+            thread_id, marker)
+
     def git_snapshot(self, repo: Path) -> dict[str, Any]:
         def run(*args: str) -> str:
             try:
@@ -443,6 +450,26 @@ def _stop(state: dict[str, Any], status: str, reason: str, now: datetime) -> Non
     state["updated_at"] = _iso(now)
 
 
+def _delivery_submission(adapter: Any, state: dict[str, Any], event_id: str,
+                          config: dict[str, Any]) -> dict[str, Any]:
+    seconds = max(0.0, float(config.get(
+        "delivery_confirm_seconds", DEFAULT_DELIVERY_CONFIRM_SECONDS)))
+    deadline = time.monotonic() + seconds
+    last: dict[str, Any] = {"status": codex_rollout.ABSENT, "message_seen": False}
+    while True:
+        try:
+            last = adapter.submission(str(state["bound_thread_id"]), str(event_id))
+        except Exception as exc:
+            return {"status": codex_rollout.UNREADABLE, "message_seen": False,
+                    "reason": str(exc)}
+        if last.get("status") == codex_rollout.SEEN and last.get("message_seen") is True:
+            return last
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return last
+        time.sleep(min(5.0, remaining))
+
+
 def tick(root: Path, config_path: Path, *, now: datetime | None = None,
          adapter: Any | None = None) -> dict[str, Any]:
     now = now or _now()
@@ -580,11 +607,34 @@ def tick(root: Path, config_path: Path, *, now: datetime | None = None,
                                                 "status": status_text}, now)
             _write_json(target["state"], state)
             return _finalize_report(root, state, adapter, now)
+        submission = _delivery_submission(adapter, state, item["event_id"], config)
+        if (submission.get("status") == codex_rollout.SEEN
+                and submission.get("message_seen") is True):
+            submitted_at = str(submission.get("submitted_at") or "") or _iso(now)
+            item["status"] = "sent"
+            item["sent_at"] = submitted_at
+            item["submission"] = submission
+            state["send_count"] = int(state.get("send_count", 0)) + 1
+            state["status"] = "SENT"
+            state["reason"] = ("delivery confirmed by the bound thread rollout; "
+                               "no resend")
+            state["finished"] = False
+            _record(state, "DELIVER_RECOVERED", {
+                "event_id": item["event_id"],
+                "receipt_status": status_text,
+                "submitted_at": submitted_at,
+                "message_id": submission.get("message_id", ""),
+                "turn_id": submission.get("turn_id", ""),
+                "rollout_sha256": submission.get("rollout_sha256", ""),
+            }, now)
+            _write_json(target["state"], state)
+            return _finalize_report(root, state, adapter, now)
         item["status"] = "uncertain"
         _stop(state, "HOLD_UNCERTAIN_DELIVERY",
               f"delivery outcome is uncertain ({status_text}); no retry", now)
         _record(state, "DELIVER_UNCERTAIN", {"event_id": item["event_id"],
-                                             "status": status_text}, now)
+                                             "status": status_text,
+                                             "submission_status": submission.get("status", "")}, now)
         _write_json(target["state"], state)
         return _finalize_report(root, state, adapter, now)
 

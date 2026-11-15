@@ -1436,6 +1436,7 @@
         {
           "choices": [
             "result",
+            "submission",
             "threads"
           ],
           "dest": "action",
@@ -1485,7 +1486,7 @@
           "flags": [
             "--marker"
           ],
-          "help": "result marker for action=result",
+          "help": "event id for submission; result marker for result",
           "kind": "option",
           "required": false
         },
@@ -1494,7 +1495,7 @@
           "flags": [
             "--since"
           ],
-          "help": "ignore task_complete events older than this ISO time",
+          "help": "ignore events older than this ISO time",
           "kind": "option",
           "required": false
         },
@@ -5829,7 +5830,7 @@
     }
   ],
   "count": 95,
-  "digest": "sha256:e3a10b4549e852c5e4249de05590bbbb6b7c10e3952e7265ba6bbcf51a2a80a3",
+  "digest": "sha256:06be84548c417bad837951ce8c6b45a129690da662867f45fe3447b2e50779b3",
   "documented": 32,
   "generated_from": "agent_evolution_protocol.cli:build_parser",
   "global_arguments": [

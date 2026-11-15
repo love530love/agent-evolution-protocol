@@ -135,6 +135,119 @@ def read_result(thread: dict[str, Any], marker: str, *,
             "rollout_sha256": digest}
 
 
+def _content_text(content: Any) -> str:
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for row in content:
+        if isinstance(row, dict) and isinstance(row.get("text"), str):
+            parts.append(row["text"])
+    return "\n".join(parts)
+
+
+def read_submission(thread: dict[str, Any], marker: str, *,
+                    since: datetime | str | None = None) -> dict[str, Any]:
+    """The newest user message containing *marker* in the thread rollout.
+
+    This is delivery evidence, not completion evidence: only a user message is
+    accepted, never an assistant message or tool output.  It lets a caller
+    confirm an uncertain UI send without resending it.
+    """
+    if not isinstance(thread, dict):
+        raise ValueError("thread must be an object")
+    needle = re.sub(r"\s+", "", str(marker or ""))
+    if not needle:
+        raise ValueError("marker must not be empty")
+    rollout = _path(thread.get("rollout_path", ""))
+    base = {
+        "schema": SCHEMA,
+        "thread_id": str(thread.get("thread_id", "")),
+        "title": str(thread.get("title", "")),
+        "cwd": str(thread.get("cwd", "")),
+        "rollout_path": str(rollout),
+        "marker": str(marker),
+        "status": ABSENT,
+        "message_seen": False,
+        "message_id": "",
+        "turn_id": "",
+        "submitted_at": "",
+        "rollout_sha256": "",
+    }
+    if not rollout.is_file():
+        return {**base, "status": UNREADABLE, "reason": "rollout_missing"}
+    since_at = None
+    if since is not None:
+        parsed = parse_iso_or_none(since) if isinstance(since, str) else since
+        if parsed is None:
+            return {**base, "status": UNREADABLE, "reason": "since_invalid"}
+        since_at = parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    try:
+        data = rollout.read_bytes()
+    except OSError:
+        return {**base, "status": UNREADABLE, "reason": "rollout_unreadable"}
+    digest = sha256(data).hexdigest()
+    found: dict[str, Any] | None = None
+    for raw in data.decode("utf-8", errors="replace").splitlines():
+        if not raw.strip():
+            continue
+        try:
+            event = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        if event.get("type") == "event_msg" and payload.get("type") == "item_completed":
+            item = payload.get("item")
+            if not isinstance(item, dict) or item.get("type") != "UserMessage":
+                continue
+            turn_id = str(payload.get("turn_id", ""))
+        elif (event.get("type") == "response_item"
+              and payload.get("type") == "message"
+              and payload.get("role") == "user"):
+            item = payload
+            turn_id = str(item.get("turn_id", ""))
+        else:
+            continue
+        text = _content_text(item.get("content"))
+        if needle not in re.sub(r"\s+", "", text):
+            continue
+        timestamp = str(event.get("timestamp", ""))
+        observed = parse_iso_or_none(timestamp)
+        if since_at is not None and observed is not None:
+            if (observed if observed.tzinfo else observed.replace(tzinfo=timezone.utc)) < since_at:
+                continue
+        found = {
+            "message_id": str(item.get("id", "")),
+            "turn_id": turn_id,
+            "submitted_at": timestamp,
+        }
+    if found is None:
+        return {**base, "rollout_sha256": digest}
+    return {**base, **found, "status": SEEN, "message_seen": True,
+            "rollout_sha256": digest}
+
+
+def submission_for_thread(state_db: Path, thread_id: str, marker: str, *,
+                          since: datetime | str | None = None) -> dict[str, Any]:
+    con = _connect(state_db)
+    try:
+        row = con.execute(
+            "SELECT id, title, cwd, updated_at, rollout_path FROM threads WHERE id = ?",
+            (str(thread_id),)).fetchone()
+    finally:
+        con.close()
+    if row is None:
+        return {"schema": SCHEMA, "thread_id": str(thread_id), "status": NO_THREAD,
+                "message_seen": False, "marker": str(marker),
+                "reason": "thread_not_found"}
+    thread = {"thread_id": row["id"], "title": row["title"], "cwd": row["cwd"],
+              "updated_at": row["updated_at"], "rollout_path": str(_path(row["rollout_path"]))}
+    return read_submission(thread, marker, since=since)
+
+
 def result_for_thread(state_db: Path, thread_id: str, marker: str, *,
                       since: datetime | str | None = None) -> dict[str, Any]:
     con = _connect(state_db)

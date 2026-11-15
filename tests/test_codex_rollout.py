@@ -75,6 +75,45 @@ class RolloutTests(unittest.TestCase):
         missing = codex_rollout.result_for_thread(self.db, "thread-x", MARKER)
         self.assertEqual(missing["status"], codex_rollout.NO_THREAD)
 
+    def test_a_user_message_confirms_submission_without_completion(self):
+        event = "AEP-NL-20261115-2005-03"
+        self._rollout(
+            {"timestamp": NOW.isoformat(), "type": "event_msg",
+             "payload": {"type": "item_completed", "turn_id": "turn-2",
+                         "item": {"type": "UserMessage", "id": "msg-2",
+                                  "content": [{"type": "text",
+                                               "text": event + "\nwork"}]}}},
+            {"timestamp": NOW.isoformat(), "type": "response_item",
+             "payload": {"type": "message", "role": "assistant",
+                         "content": [{"type": "output_text", "text": event}]}},
+        )
+        result = codex_rollout.submission_for_thread(self.db, "thread-1", event)
+        self.assertEqual(result["status"], codex_rollout.SEEN)
+        self.assertTrue(result["message_seen"])
+        self.assertEqual(result["message_id"], "msg-2")
+        self.assertEqual(result["turn_id"], "turn-2")
+        self.assertNotIn("task_result_readback", result)
+
+    def test_an_assistant_echo_is_not_a_submission(self):
+        event = "AEP-NL-20261115-2005-03"
+        self._rollout(
+            {"timestamp": NOW.isoformat(), "type": "response_item",
+             "payload": {"type": "message", "role": "assistant",
+                         "content": [{"type": "output_text", "text": event}]}},
+            {"timestamp": NOW.isoformat(), "type": "event_msg",
+             "payload": {"type": "task_complete", "turn_id": "turn-2",
+                         "last_agent_message": event}},
+        )
+        result = codex_rollout.read_submission(
+            {"thread_id": "thread-1", "rollout_path": str(self.rollout)}, event)
+        self.assertEqual(result["status"], codex_rollout.ABSENT)
+        self.assertFalse(result["message_seen"])
+
+    def test_submission_for_missing_thread_is_no_thread(self):
+        result = codex_rollout.submission_for_thread(self.db, "thread-x", "AEP-NL-x")
+        self.assertEqual(result["status"], codex_rollout.NO_THREAD)
+        self.assertFalse(result["message_seen"])
+
     def test_marker_is_required(self):
         with self.assertRaises(ValueError):
             codex_rollout.read_result({"rollout_path": str(self.rollout)}, " ")

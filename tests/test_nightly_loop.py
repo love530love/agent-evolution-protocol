@@ -24,6 +24,7 @@ def _config(root: Path, tasks: int = 2) -> Path:
         "peer_repo": str(root),
         "fingerprint": "PREVIOUS-EVENT",
         "result_grace_seconds": 1200,
+        "delivery_confirm_seconds": 0,
         "max_sends": 5,
         "tasks": [
             {"title": f"task {index}", "prompt":
@@ -42,6 +43,7 @@ class FakeAdapter:
         self.receipt = receipt or {"report": {"status": "delivered", "task_delivered": True}}
         self.deliveries: list[tuple[str, str]] = []
         self.results: dict[str, dict] = {}
+        self.submissions: dict[str, dict] = {}
         self.transcript = "previous: PREVIOUS-EVENT"
 
     def threads(self):
@@ -62,6 +64,10 @@ class FakeAdapter:
 
     def result(self, thread_id, marker, since):
         return self.results.get(marker, {"status": "absent", "task_result_readback": False})
+
+    def submission(self, thread_id, marker):
+        return self.submissions.get(
+            marker, {"status": "absent", "message_seen": False})
 
     def git_snapshot(self, repo):
         return {"head": "abc", "branch": "main", "status": "", "log": "abc test"}
@@ -128,6 +134,50 @@ def test_uncertain_delivery_holds_and_never_retries(tmp_path):
     assert first["status"] == "HOLD_UNCERTAIN_DELIVERY"
     assert second["status"] == "HOLD_UNCERTAIN_DELIVERY"
     assert len(adapter.deliveries) == 1
+
+
+def test_uncertain_delivery_confirmed_by_rollout_is_not_resent(tmp_path):
+    adapter = FakeAdapter(receipt={"report": {"status": "submitted-unconfirmed",
+                                              "task_delivered": False}})
+    adapter.submissions["AEP-NL-TESTRUN-01"] = {
+        "status": "seen", "message_seen": True, "message_id": "MSG",
+        "turn_id": "TURN", "submitted_at": "2026-11-15T12:00:01Z",
+        "rollout_sha256": "sha",
+    }
+    config = _config(tmp_path)
+    start = _now()
+    first = nightly_loop.tick(tmp_path, config, now=start, adapter=adapter)
+    assert first["status"] == "SENT"
+    assert first["send_count"] == 1
+    state = _state(tmp_path)
+    assert state["items"][0]["status"] == "sent"
+    assert state["items"][0]["sent_at"] == "2026-11-15T12:00:01Z"
+    assert state["history"][-1]["action"] == "DELIVER_RECOVERED"
+    adapter.results["AEP-RESULT:AEP-NL-TESTRUN-01"] = {
+        "status": "seen", "task_result_readback": True, "turn_id": "TURN",
+        "completed_at": "2026-11-15T12:01:00Z",
+        "message": "AEP-RESULT:AEP-NL-TESTRUN-01\ncommit: cafe\ntests: 1 passed",
+        "rollout_sha256": "sha",
+    }
+    second = nightly_loop.tick(tmp_path, config, now=start + timedelta(minutes=10),
+                                adapter=adapter)
+    assert second["status"] == "RESULT_RECORDED"
+    assert second["cursor"] == 1
+    assert len(adapter.deliveries) == 1
+
+
+def test_uncertain_delivery_holds_when_rollout_has_no_submission(tmp_path):
+    adapter = FakeAdapter(receipt={"report": {"status": "submitted-unconfirmed",
+                                              "task_delivered": False}})
+    config = _config(tmp_path)
+    start = _now()
+    first = nightly_loop.tick(tmp_path, config, now=start, adapter=adapter)
+    assert first["status"] == "HOLD_UNCERTAIN_DELIVERY"
+    assert first["send_count"] == 0
+    assert len(adapter.deliveries) == 1
+    state = _state(tmp_path)
+    assert state["items"][0]["status"] == "uncertain"
+    assert state["history"][-1]["payload"]["submission_status"] == "absent"
 
 
 def test_missing_result_after_grace_holds_without_retry(tmp_path):
