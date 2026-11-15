@@ -29,6 +29,7 @@
 - [反平庸/反坍缩协议](docs/coordination/MULTI_AGENT_ANTI_COLLAPSE_PROTOCOL.md)
 - [红皇后—鲶鱼—创造性破坏复盘](docs/coordination/RED_QUEEN_CATFISH_CREATIVE_DESTRUCTION_RETROSPECTIVE_20260928.md)
 - [每 Agent MCP Bundle 与会话感知派工](docs/AGENT_MCP_BUNDLES.zh-CN.md)
+- [能力、借鉴项目与外部生态总复盘 v0.6.35](docs/ECOSYSTEM_CAPABILITY_REVIEW_v0.6.35.zh-CN.md)
 - [MCP 进程生命周期、Windows Job 收束与单实例控制面](docs/coordination/MCP_PROCESS_LIFECYCLE.md)
 - [第三方执行生态与接入验收门](docs/THIRD_PARTY_EXECUTION_ECOSYSTEM.zh-CN.md)
 - [能力运行时安装与冒烟验收](docs/CAPABILITY_RUNTIME_INSTALL.zh-CN.md)

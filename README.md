@@ -63,6 +63,8 @@ This preserves a machine-readable report and evidence under a unique run directo
 
 [总体系与能力状态](docs/SYSTEM_OVERVIEW.zh-CN.md) · [协同推理工作流](docs/COLLABORATIVE_REASONING_FRAMEWORK.zh-CN.md) · [v0.6.35 发布说明](docs/releases/v0.6.35.md)
 
+[能力与外部生态总复盘](docs/ECOSYSTEM_CAPABILITY_REVIEW_v0.6.35.zh-CN.md) · 区分已实现、本机探测、候选参考与真实生产闭环状态。
+
 An evidence-driven governance protocol for multi-agent systems that need diversity without coordination collapse.
 
 ## Portable desktop capabilities (preview)
