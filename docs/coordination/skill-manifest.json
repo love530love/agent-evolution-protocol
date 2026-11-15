@@ -1,7 +1,7 @@
 {
   "by_risk": {
     "irreversible": 15,
-    "mutating": 58,
+    "mutating": 59,
     "read-only": 21
   },
   "commands": [
@@ -3061,6 +3061,35 @@
     {
       "arguments": [
         {
+          "choices": [
+            "report",
+            "run",
+            "status",
+            "stop"
+          ],
+          "dest": "action",
+          "flags": [],
+          "kind": "positional",
+          "required": true
+        },
+        {
+          "dest": "config",
+          "flags": [
+            "--config"
+          ],
+          "help": "JSON loop config; defaults to coordination/nightly_loop/config.json",
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": true,
+      "name": "coord-nightly-loop",
+      "purpose": "Advance the bounded unattended relay loop by one safe step.",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
           "dest": "agent",
           "flags": [
             "--agent"
@@ -5799,9 +5828,9 @@
       "risk": "mutating"
     }
   ],
-  "count": 94,
-  "digest": "sha256:321e67dc25a28fcb2ac8e7028c53cf3c49f55e2dff2cf67e073a48c8c1f460b6",
-  "documented": 31,
+  "count": 95,
+  "digest": "sha256:e3a10b4549e852c5e4249de05590bbbb6b7c10e3952e7265ba6bbcf51a2a80a3",
+  "documented": 32,
   "generated_from": "agent_evolution_protocol.cli:build_parser",
   "global_arguments": [
     {

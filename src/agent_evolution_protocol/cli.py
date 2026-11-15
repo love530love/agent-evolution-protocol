@@ -31,6 +31,7 @@ from agent_evolution_protocol.coordination.capability_roster import declare as d
 from agent_evolution_protocol.coordination.mechanism_audit import audit as audit_mechanism
 from agent_evolution_protocol.coordination import a11y
 from agent_evolution_protocol.coordination import codex_rollout
+from agent_evolution_protocol.coordination import nightly_loop
 from agent_evolution_protocol.coordination import process_info
 from agent_evolution_protocol.coordination import project_evidence
 from agent_evolution_protocol.coordination import uia_argv
@@ -3269,6 +3270,26 @@ def coord_codex_rollout(args: argparse.Namespace) -> None:
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
+def coord_nightly_loop(args: argparse.Namespace) -> None:
+    """Advance the bounded unattended relay loop by one safe step."""
+    root = coord_root(args)
+    config = args.config or (Path(root) / "nightly_loop" / "config.json")
+    try:
+        if args.action == "run":
+            payload = nightly_loop.tick(root, config)
+        elif args.action == "status":
+            payload = nightly_loop.status(root, config)
+        elif args.action == "stop":
+            payload = nightly_loop.stop(root, config)
+        else:
+            payload = nightly_loop.status(root, config)
+            payload["report_text"] = Path(payload.get("report", "")).read_text(
+                encoding="utf-8", errors="replace")
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise ProtocolError(f"nightly loop failed: {exc}") from exc
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
 def coord_project_evidence(args: argparse.Namespace) -> None:
     """Seal, verify or inspect time-bounded advisory evidence from another project."""
     root = coord_root(args)
@@ -4081,6 +4102,13 @@ def build_parser() -> argparse.ArgumentParser:
     rollout.add_argument("--since", help="ignore task_complete events older than this ISO time")
     rollout.add_argument("--limit", type=int, default=20)
     rollout.set_defaults(func=coord_codex_rollout)
+    nightly = commands.add_parser(
+        "coord-nightly-loop",
+        help="bounded unattended relay loop: one deliver or one readback per tick")
+    nightly.add_argument("action", choices=("run", "status", "stop", "report"))
+    nightly.add_argument("--config", type=Path,
+                         help="JSON loop config; defaults to coordination/nightly_loop/config.json")
+    nightly.set_defaults(func=coord_nightly_loop)
     relay = commands.add_parser("coord-relay-drill", help="one-shot relay drill: plan or execute in-turn multi-agent dispatch")
     relay.add_argument("--bridge-root", type=Path); relay.add_argument("--apply", action="store_true"); relay.set_defaults(func=coord_relay_drill)
 

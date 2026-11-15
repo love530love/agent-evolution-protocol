@@ -4,10 +4,10 @@
 > 手改会让 `tests/test_skill_manifest.py` 失败——这是刻意的：
 > 上一版研究文档把 `schema=aep-next-action-v1` 写错了整整两天，因为散文不会报错。
 
-- 命令总数：**94**
-- 风险分布：read-only 21、mutating 58、irreversible 15
-- 用途已记录：**31** / 94（未记录 63，只允许减少）
-- 清单摘要：`sha256:321e67dc25a28fcb2ac8e7028c53cf3c49f55e2dff2cf67e073a48c8c1f460b6`
+- 命令总数：**95**
+- 风险分布：read-only 21、mutating 59、irreversible 15
+- 用途已记录：**32** / 95（未记录 63，只允许减少）
+- 清单摘要：`sha256:e3a10b4549e852c5e4249de05590bbbb6b7c10e3952e7265ba6bbcf51a2a80a3`
 
 风险分级是**声明**而不是推导：未登记的命令一律按 `mutating` 处理。
 把会写的命令标成 `read-only` 是这里唯一有代价的错误，所以默认值朝安全方向倒。
@@ -84,6 +84,7 @@
 | `coord-loop-verdict` | mutating | `--event-id` | Recompute one handoff loop verdict from filesystem evidence. |
 | `coord-mcp-lifecycle` | mutating | `ACTION` | Inspect/prune AEP's own MCP lifecycle records, never generic processes. |
 | `coord-mechanism-audit` | read-only | `--metrics-file` | *未记录* |
+| `coord-nightly-loop` | mutating | `ACTION` | Advance the bounded unattended relay loop by one safe step. |
 | `coord-onboarding` | mutating | `--agent` | *未记录* |
 | `coord-orca` | mutating | `ACTION` | *未记录* |
 | `coord-policy` | read-only | `ACTION --plan --window` | Validate a proposed action plan without touching the desktop. |
