@@ -137,6 +137,7 @@ def new_state(config: dict[str, Any], now: datetime) -> dict[str, Any]:
         "bound_thread_id": str(config["bound_thread_id"]),
         "title_marker": str(config["title_marker"]),
         "cwd_marker": str(config["cwd_marker"]),
+        "peer_repo": str(config["peer_repo"]),
         "fingerprint": str(config["fingerprint"]),
         "cursor": 0,
         "send_count": 0,
@@ -407,6 +408,8 @@ def _finalize_report(root: Path, state: dict[str, Any], adapter: Any,
     report = "\n".join(lines).rstrip() + "\n"
     target["report"].parent.mkdir(parents=True, exist_ok=True)
     target["report"].write_text(report, encoding="utf-8")
+    pending_item = next((row for row in state.get("items", [])
+                         if row.get("status") not in {"result"}), None)
     status = {
         "schema": SCHEMA,
         "run_id": state["run_id"],
@@ -419,8 +422,12 @@ def _finalize_report(root: Path, state: dict[str, Any], adapter: Any,
         "fingerprint": state.get("fingerprint", ""),
         "aep_head": aep.get("head", ""),
         "aegs_head": peer.get("head", ""),
-        "pending": next((item for item in state.get("items", [])
-                         if item.get("status") not in {"result"}), None),
+        "pending": ({
+            "task_id": pending_item.get("task_id"),
+            "event_id": pending_item.get("event_id"),
+            "title": pending_item.get("title"),
+            "status": pending_item.get("status"),
+        } if pending_item else None),
         "report": str(target["report"]),
         "updated_at": _iso(now),
     }
