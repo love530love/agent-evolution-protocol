@@ -10,26 +10,26 @@
   3. composer 就绪、可驱动；
   4. 客户端路径与当前 Codex 版本一致。
 - 结果以 Codex rollout 的 `task_complete.last_agent_message` 为独立回读源；UIA 的 `task_delivered=true` 只等于 `MESSAGE_VISIBLE`，不是 ACK。
-- 结果不明、投递不确定或 29 分钟内无结果：只 HOLD，不重发、不切换通道、不新开会话。
+- 结果不明、投递不确定或 60 分钟内无结果：只 HOLD，不重发、不切换通道、不新开会话。宽限刻意大于 30 分钟 tick 间隔，避免“结果在两次 tick 之间完成却被判超时”。
 
 ## 计划任务
 
 - 名称：`AEP-Nightly-Codex`
-- 窗口：`2026-11-15 20:30` → `2026-11-16 04:30`（本地时间），每 30 分钟一次，窗口结束自动停止。
+- 窗口：`2026-11-15 20:30` → `2026-11-16 04:35`（本地时间），每 30 分钟一次，最后一次触发 `04:30`，用于在 `04:01` 运行截止后落最终报告；`04:35` 自动停止。
 - 启动器：`coordination/nightly_loop/tick.vbs` → `tick.cmd` → `aep --coord-root ... coord-nightly-loop run`。
 - 任务以当前用户、最低权限、交互式登录令牌运行；不使用管理员权限，不修改 UAC。
 - 日志：`coordination/nightly_loop/task.log`；状态：`coordination/nightly_loop/state.json`；报告：`coordination/nightly_loop/report.md`。
 
 ## 当前证据
 
-- AEP：`v0.6.37` → `v0.6.38` → `v0.6.39` → `v0.6.40`，最新提交 `791aa17`，已普通推送 `origin/main`。
+- AEP：`v0.6.37` → `v0.6.38` → `v0.6.39` → `v0.6.40`，最新提交 `dc2537f`，已普通推送 `origin/main`。
 - AEP 全量回归：`1770 passed, 2 skipped`（排除已知陈旧的 `tests/test_ui_profile_examples.py`）。
 - 第 1 轮事件 `AEP-NL-20261115-2005-01`：
   - 投递回执 `task_delivered=true`，事件见证控件为当前 `设计自进化架构` 文档；
   - rollout 回读 `task_complete`，结果行含 `AEP-RESULT:AEP-NL-20261115-2005-01`；
   - AEGS 功能提交 `3d27cfe`，治理证据提交 `b8dedae`；
   - AEGS 自报 `16 passed, 0 skipped, 11.00s`。
-- 第 2 轮事件 `AEP-NL-20261115-2005-02` 已发送，等待回读。
+- 第 2 轮事件 `AEP-NL-20261115-2005-02` 已发送；Codex 正在实现 JSONL 账本跨进程单写入者锁，等待 rollout 回读。
 
 ## 早间检查
 
@@ -59,7 +59,8 @@ python -m aegs.cli journal status .
 
 ## 已知限制
 
-- 若 Windows 会话被锁屏或 Codex 被关闭，下一 tick 会在 preflight HOLD，不会盲发；这是设计行为，不是链路已通。
+- 若 Windows 会话被锁屏或 Codex 被关闭，下一 tick 会在 preflight HOLD，不会盲发；这是设计行为，不是链路已通。锁屏下 UIA 可能仍能读树，但模拟输入/OCR 可能失败，必须按 tick 回执判断。
+- 单个任务超过 60 分钟仍无结果会终态 HOLD，不重发；8 小时窗口内剩余任务随之停止。
 - 原始 UIA `session_marker` 可能在侧栏命中非活动会话，因此它只作辅助；主闸门是“全局最新 thread + 活动视图事件指纹 + rollout 回读”。
 - AEGS 的 `PASS` 只是项目证据，不是 AEP 授权、claim/lease、ACK 或任务完成判定。
 - `tests/test_ui_profile_examples.py` 的 `qoder_cn` 模板陈旧失败在本次工作前已存在，未混入本次改动。
