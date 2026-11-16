@@ -10,7 +10,7 @@ $ErrorActionPreference = 'Stop'
 $env:PYTHONIOENCODING = 'utf-8'
 $env:PYTHONUTF8 = '1'
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-if (-not $CoordRoot) { $CoordRoot = Join-Path $repoRoot '.agent-evolution\coordination' }
+if (-not $CoordRoot) { $CoordRoot = Join-Path $repoRoot 'coordination' }
 $CoordRoot = [IO.Path]::GetFullPath($CoordRoot)
 
 # The persistent control loop is Python.  This wrapper deliberately contains

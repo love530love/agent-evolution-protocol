@@ -1,0 +1,47 @@
+# Windows 常驻控制平面
+
+## 结论
+
+AEP 可以具备类似 Tailscale 的常驻能力，但必须拆成两个进程域。把它们混成一个
+“高权限后台自动点桌面”的服务，会落入 Windows Session 0 隔离：服务可能健康，
+却看不到用户登录会话里的 Qoder、WorkBuddy 或 CodeBuddy 窗口。
+
+| 层 | 生命周期 | 责任 | 明确不做 |
+|---|---|---|---|
+| AEP Core Host | Windows 服务或登录后常驻 | 工作区、租约、订单、心跳、接力、审计、失败分类 | 聚焦窗口、输入、发送 |
+| AEP Desktop Host | 每个交互用户会话一个登录任务 | 会话发现、严格原会话认证、桌面输入、消息可见与回读 | 自行规划、绕过订单、创建新会话 |
+| Elevated Desktop Worker | 按订单短暂启动 | 对高完整性目标执行一个已批准订单 | 轮询队列、启动客户端、重放不确定投递 |
+
+弱 Agent 只写入工作区事件或订单；它不需要安装 UIA、MCP、截图模型或拥有桌面权限。
+中央调度器根据订单的会话绑定、完整性等级和执行器能力，将同一事件交给合格的
+Desktop Host。执行器回传的是分层事实，而不是笼统的“成功”。
+
+```text
+Agent intent -> durable order -> Core Host lease -> Desktop Host
+  -> SESSION_LOCATED -> INPUT_SUBMITTED -> MESSAGE_VISIBLE
+  -> AGENT_ACK -> TASK_RESULT_READBACK
+```
+
+## 已有落地部件
+
+- `coordination.supervisor`：单实例锁、持久心跳、异常不退出的有界 tick；
+- `wake_daemon`：事件队列、每事件锁、去重、冷却、审计；
+- `scripts/aep-supervisor.ps1`：PowerShell 7 登录会话包装；
+- `scripts/register-supervisor-task.ps1`：注册 `AEP-DesktopHost` 登录任务；
+- `scripts/run-elevated-desktop-order.ps1` 与
+  `scripts/start-elevated-desktop-order-task.ps1`：高完整性精确订单执行链。
+
+Desktop Host 的默认协作根统一为仓库的 `coordination`，而不是历史遗留的
+`.agent-evolution\\coordination`。每个 Host 的单实例锁和心跳必须以该根为边界，
+从而避免同机多个 Agent 宿主相互拉起重复 MCP/stdio 进程。
+
+## 推荐部署顺序
+
+1. 先以登录任务部署 Desktop Host，并核验 `runtime/aep-supervisor.heartbeat.json`。
+2. 为需要提升权限的客户端注册单订单 Elevated Worker；先执行只读 probe，再执行
+   同一事件的 dispatch。
+3. 最后再部署 Core Host 服务。它只处理持久状态、心跳和调度；桌面执行永远经由
+   已登记的交互会话 Host。
+
+任何一层重启都不得把 `SENDING`、`UNCERTAIN` 或未读回的旧订单重新输入。恢复时
+必须先读取同一事件的会话回执，再决定继续、接力或 HOLD。
