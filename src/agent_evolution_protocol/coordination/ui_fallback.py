@@ -1156,6 +1156,43 @@ def _run_impl(profile: dict, message: str, *, event_id: str, receipt_path: Path,
                          hint=observation.get("hint", ""), **blocked)
             _atomic(receipt_path, state)
             return state
+        # Bind the original conversation *before* considering readiness.  The
+        # old ordering asked whether whichever chat happened to be foreground
+        # was ready, then attempted session selection much later.  That made a
+        # stale/wrong foreground conversation able to defer an order forever
+        # and, worse, made its busy indicator look like evidence about the
+        # intended conversation.  For the non-strict legacy route, capture,
+        # select only a unique profiled marker when necessary, then refresh the
+        # observation from that selected surface.  Strict routes do their
+        # bounded-tree attestation below and never use this broad fallback.
+        preflight_capture = ""
+        if not profile.get("require_strict_session_attestation"):
+            preflight_capture = driver.capture(profile)
+            if not _evidence_present(preflight_capture, profile["session_marker"],
+                                     profile.get("session_evidence_markers", [])):
+                selected = driver.select_session(profile)
+                state["session_selection"] = selected
+                preflight_capture = driver.capture(profile)
+            if not _evidence_present(preflight_capture, profile["session_marker"],
+                                     profile.get("session_evidence_markers", [])):
+                state.update(state="SESSION_NOT_VERIFIED",
+                             session_marker=profile["session_marker"],
+                             session_evidence_markers=list(profile.get("session_evidence_markers", [])),
+                             session_marker_present=bool(profile["session_marker"] in preflight_capture),
+                             captured_chars=len(preflight_capture))
+                _atomic(receipt_path, state)
+                return state
+            # Session selection can change both active chat and readiness.
+            # Re-read it instead of applying the old chat's activity state.
+            observation = driver.observe(profile)
+            blocked = drivability_block(observation)
+            if blocked:
+                state.update(state="EXECUTOR_TOO_LOW", pid=observation.get("pid"),
+                             reason="UIPI refuses input from a lower integrity level, so nothing was typed",
+                             hint=observation.get("hint", ""), **blocked)
+                _atomic(receipt_path, state)
+                return state
+
         # A visible window is not necessarily ready for another task.  In
         # particular, Qoder/WorkBuddy can keep the composer visible while a
         # tool run is still active.  Never type over that run: defer and let
@@ -1231,12 +1268,17 @@ def _run_impl(profile: dict, message: str, *, event_id: str, receipt_path: Path,
             reference=vision_grounding.Region(**reference_region) if reference_region else None,
             min_confidence=min_confidence)
         state["route"] = route
-        if profile["transport"] == "uia" and route["locate_source"] != "uia":
+        if (profile["transport"] == "uia" and route["locate_source"] != "uia"
+                and not profile.get("require_strict_session_attestation")):
             # The uia transport types through a control UIA itself identified.
             # A region from a model or a profile cannot be handed to
             # ValuePattern, and the only alternative the adapter offers is a
             # blind paste into whatever has focus -- which is why the located
-            # box is recorded here instead of acted on.
+            # box is recorded here instead of acted on.  A strict profile is
+            # the exception: its calibrated composer region is the bounded
+            # identification, and the attestation re-probes that exact region
+            # after focus.  A whole-tree second editable control (Chromium's
+            # webview Document) therefore must not veto the bounded route.
             ambiguous = bool(observation.get("input_ambiguous")) or bool(observation.get("input_found"))
             state.update(state="WINDOW_OR_INPUT_AMBIGUOUS" if ambiguous else "NO_SAFE_COMPOSER",
                          located_by=route["locate_source"],
@@ -1244,6 +1286,8 @@ def _run_impl(profile: dict, message: str, *, event_id: str, receipt_path: Path,
                          route_reason=route["reason"] or "TRANSPORT_CANNOT_USE_LOCATED_REGION")
             _atomic(receipt_path, state)
             return state
+        if profile.get("require_strict_session_attestation"):
+            state["route_gate"] = "strict-bounded-region"
         state["pid"] = pid
         strict_attestation = None
         if profile.get("require_strict_session_attestation"):
@@ -1292,25 +1336,11 @@ def _run_impl(profile: dict, message: str, *, event_id: str, receipt_path: Path,
             # input; that authorization came from the bounded-region proof.
             before = driver.capture(profile)
         else:
-            before = driver.capture(profile)
-            if not _evidence_present(before, profile["session_marker"],
-                                     profile.get("session_evidence_markers", [])):
-                selected = driver.select_session(profile)
-                state["session_selection"] = selected
-                before = driver.capture(profile)
-            if not _evidence_present(before, profile["session_marker"],
-                                     profile.get("session_evidence_markers", [])):
-                # Record what was looked for.  A profile whose marker does not match
-                # the live window is indistinguishable from "the session is gone"
-                # unless the receipt names the marker, and a one-character typo in
-                # a local profile then stalls every tick forever.
-                state.update(state="SESSION_NOT_VERIFIED",
-                             session_marker=profile["session_marker"],
-                             session_evidence_markers=list(profile.get("session_evidence_markers", [])),
-                             session_marker_present=bool(profile["session_marker"] in before),
-                             captured_chars=len(before))
-                _atomic(receipt_path, state)
-                return state
+            # The non-strict route selected and verified the target before the
+            # readiness gate above.  Reuse that exact capture for replay/model
+            # checks; it avoids consulting a different conversation later in
+            # the same delivery attempt.
+            before = preflight_capture
             if not _evidence_present(before, profile["model_marker"],
                                      profile.get("model_evidence_markers", [])):
                 # Record what was looked for, for the same reason the session branch
@@ -1344,7 +1374,7 @@ def _run_impl(profile: dict, message: str, *, event_id: str, receipt_path: Path,
         # still verifies the paste before clicking send; the uia path has no
         # such mode, which is why it deferred above instead of pasting blind.
         composer_ratios = None
-        if route["locate_source"] in {"vision", "geometry"}:
+        if strict_attestation is None and route["locate_source"] in {"vision", "geometry"}:
             composer_ratios = _composer_ratios(route.get("region"), window)
             if composer_ratios is None:
                 state.update(state="ROUTE_REGION_UNUSABLE",

@@ -52,8 +52,10 @@ class FakeDriver:
         self.ratios = []
         self.expected_surfaces = []
         self.attestation = attestation
+        self.call_trace = []
 
     def observe(self, profile):
+        self.call_trace.append("observe")
         if self.no_window:
             return {"status": "NO_WINDOW"}
         report = {"status": "window-observed", "pid": 1234, "input_found": self.input_found,
@@ -76,6 +78,7 @@ class FakeDriver:
         return report
 
     def capture(self, profile):
+        self.call_trace.append("capture")
         self.captured += 1
         text = ("Original task chat " if self.session else "Other chat ")
         text += "Model X" if self.model else "Different model"
@@ -84,6 +87,7 @@ class FakeDriver:
         return text
 
     def select_session(self, profile):
+        self.call_trace.append("select")
         self.selected += 1
         self.session = True
         return {"status": "session-selection-attempted"}
@@ -218,6 +222,20 @@ class UiFallbackTests(unittest.TestCase):
         self.assertTrue(Path(proof["attestation_path"]).is_file())
         self.assertTrue(Path(proof["evidence_path"]).is_file())
 
+    def test_strict_attestation_bounds_the_composer_when_the_full_tree_is_ambiguous(self):
+        profile = self.strict_profile()
+        self.record_strict_fingerprint(profile)
+        driver = FakeDriver(attestation=self.strict_attestation,
+                            input_candidate_count=2, input_ambiguous=True,
+                            window_size={"width": 1920, "height": 1080})
+        result = ui.run(profile, "Analyze the error", event_id="EVT-STRICT-AMBIG",
+                        receipt_path=self.receipt, lock_path=self.lock,
+                        driver=driver, poll_seconds=0.1)
+        self.assertEqual(result["state"], "AGENT_REPLY_VERIFIED")
+        self.assertEqual(result["route_gate"], "strict-bounded-region")
+        self.assertEqual(driver.sent, 1)
+        self.assertEqual(driver.ratios, [None])
+
     def test_strict_direct_relay_requires_a_recorded_matching_fingerprint(self):
         profile = self.strict_profile()
         driver = FakeDriver(attestation=self.strict_attestation)
@@ -270,6 +288,18 @@ class UiFallbackTests(unittest.TestCase):
         self.assertEqual(result["state"], "AGENT_REPLY_VERIFIED")
         self.assertTrue(result["agent_accepted"])
         self.assertIn("I found a new approach", result["reply_excerpt"])
+
+    def test_selects_original_session_before_readiness_is_evaluated(self):
+        # Readiness belongs to the target conversation, not whatever chat was
+        # foreground when the task runner woke up.
+        profile = {**PROFILE, "require_activity_ready": True}
+        driver = FakeDriver(session=False, activity_state="ready")
+        result = ui.run(profile, "Analyze the error", event_id="EVT-SELECT-READY",
+                        receipt_path=self.receipt, lock_path=self.lock,
+                        driver=driver, poll_seconds=0.1)
+        self.assertEqual(result["state"], "AGENT_REPLY_VERIFIED")
+        self.assertLess(driver.call_trace.index("select"), len(driver.call_trace) - 1)
+        self.assertEqual(driver.call_trace[driver.call_trace.index("select") + 2], "observe")
 
     def test_uncertain_send_is_never_automatically_retried(self):
         driver = FakeDriver(send_status="input-not-confirmed")
