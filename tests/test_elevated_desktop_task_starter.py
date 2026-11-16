@@ -18,7 +18,8 @@ class ElevatedDesktopTaskStarterTests(unittest.TestCase):
             "ORDER_ID_MISMATCH", "EVENT_ID_MISMATCH", "ORDER_NOT_DEPOSITED",
             "LAUNCH_FORBIDDEN", "ORDER_EXPIRED", "RECEIPT_ALREADY_EXISTS",
             "TASK_NOT_REGISTERED", "TASK_RUNLEVEL_INVALID", "TASK_LOGON_TYPE_INVALID",
-            "Start-ScheduledTask", "TASK_START_REQUESTED",
+            "Get-ScheduledTask", "schtasks.exe /Query", "InteractiveToken",
+            "HighestAvailable", "Start-ScheduledTask", "TASK_START_REQUESTED",
             "delivery_success = $false", "task_delivered = $false", "agent_accepted = $false",
         ):
             with self.subTest(token=token):

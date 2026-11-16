@@ -172,15 +172,41 @@ if (-not $Register) {
 }
 
 $userId = if ($env:USERDOMAIN) { "$env:USERDOMAIN\$env:USERNAME" } else { $env:USERNAME }
-$action = New-ScheduledTaskAction -Execute $pwsh -Argument $argument
-$principal = New-ScheduledTaskPrincipal -UserId $userId -LogonType Interactive -RunLevel Highest
-$settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew `
-    -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
-$task = New-ScheduledTask -Action $action -Principal $principal -Settings $settings
+$scheduledTasks = Get-Command New-ScheduledTaskAction -ErrorAction SilentlyContinue
+if ($scheduledTasks) {
+    $action = New-ScheduledTaskAction -Execute $pwsh -Argument $argument
+    $principal = New-ScheduledTaskPrincipal -UserId $userId -LogonType Interactive -RunLevel Highest
+    $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew `
+        -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
+    $task = New-ScheduledTask -Action $action -Principal $principal -Settings $settings
 
-Register-ScheduledTask -TaskName $TaskName -InputObject $task `
-    -Description "AEP exact-order elevated desktop worker; on-demand only; no client launch" `
-    -Force | Out-Null
+    Register-ScheduledTask -TaskName $TaskName -InputObject $task `
+        -Description "AEP exact-order elevated desktop worker; on-demand only; no client launch" `
+        -Force | Out-Null
+} else {
+    # PowerShell 7 intentionally does not ship the Windows ScheduledTasks
+    # module.  Use Task Scheduler's native XML path instead of forcing callers
+    # to paste a second shell command.  No Trigger element means this task is
+    # on-demand only; it cannot become a recurring elevated daemon.
+    $escape = { param([string]$Value) [System.Security.SecurityElement]::Escape($Value) }
+    $xml = @"
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo><Description>AEP exact-order elevated desktop worker; on-demand only; no client launch</Description></RegistrationInfo>
+  <Principals><Principal id="Author"><UserId>$(& $escape $userId)</UserId><LogonType>InteractiveToken</LogonType><RunLevel>HighestAvailable</RunLevel></Principal></Principals>
+  <Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><ExecutionTimeLimit>PT5M</ExecutionTimeLimit><AllowStartOnDemand>true</AllowStartOnDemand><Enabled>true</Enabled></Settings>
+  <Actions Context="Author"><Exec><Command>$(& $escape $pwsh)</Command><Arguments>$(& $escape $argument)</Arguments><WorkingDirectory>$(& $escape $repo)</WorkingDirectory></Exec></Actions>
+</Task>
+"@
+    $xmlPath = Join-Path ([IO.Path]::GetTempPath()) ("aep-elevated-task-" + [guid]::NewGuid().ToString("N") + ".xml")
+    try {
+        [IO.File]::WriteAllText($xmlPath, $xml, [Text.UTF8Encoding]::new($false))
+        & schtasks.exe /Create /TN $TaskName /XML $xmlPath /F
+        if ($LASTEXITCODE -ne 0) { throw "schtasks registration failed with exit code $LASTEXITCODE" }
+    } finally {
+        Remove-Item -LiteralPath $xmlPath -Force -ErrorAction SilentlyContinue
+    }
+}
 
 $plan["dry_run"] = $false
 $plan["system_changed"] = $true

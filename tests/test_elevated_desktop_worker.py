@@ -131,6 +131,7 @@ class ElevatedDesktopWorkerBehaviorTests(unittest.TestCase):
             "LogonType Interactive", "MultipleInstances IgnoreNew",
             "ExecutionTimeLimit", "New-ScheduledTask -Action",
             "ORDER_NOT_DEPOSITED", "LAUNCH_FORBIDDEN", "Register-ScheduledTask",
+            "schtasks.exe /Create", "InteractiveToken", "HighestAvailable",
             "RECEIPT_PATH_MUST_BE_CANONICAL", "PYTHON_NOT_APPROVED",
             "commander\\receipts\\elevated",
         ):

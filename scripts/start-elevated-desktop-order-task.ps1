@@ -48,10 +48,22 @@ if (Test-Path -LiteralPath $receipt -PathType Leaf) {
     throw "RECEIPT_ALREADY_EXISTS: $receipt"
 }
 
-$task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-if ($null -eq $task) { throw "TASK_NOT_REGISTERED: $TaskName" }
-if ($task.Principal.RunLevel -ne "Highest") { throw "TASK_RUNLEVEL_INVALID" }
-if ($task.Principal.LogonType -ne "Interactive") { throw "TASK_LOGON_TYPE_INVALID" }
+$scheduledTasks = Get-Command Get-ScheduledTask -ErrorAction SilentlyContinue
+if ($scheduledTasks) {
+    $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    if ($null -eq $task) { throw "TASK_NOT_REGISTERED: $TaskName" }
+    if ($task.Principal.RunLevel -ne "Highest") { throw "TASK_RUNLEVEL_INVALID" }
+    if ($task.Principal.LogonType -ne "Interactive") { throw "TASK_LOGON_TYPE_INVALID" }
+} else {
+    # Match the PowerShell 7 registration fallback: use the scheduler's own
+    # persisted XML and fail closed if it is not the exact interactive,
+    # highest-available principal contract.
+    $xml = & schtasks.exe /Query /TN $TaskName /XML 2>&1
+    if ($LASTEXITCODE -ne 0 -or -not $xml) { throw "TASK_NOT_REGISTERED: $TaskName" }
+    $xmlText = ($xml -join [Environment]::NewLine)
+    if ($xmlText -notmatch '<RunLevel>HighestAvailable</RunLevel>') { throw "TASK_RUNLEVEL_INVALID" }
+    if ($xmlText -notmatch '<LogonType>InteractiveToken</LogonType>') { throw "TASK_LOGON_TYPE_INVALID" }
+}
 
 $result = [ordered]@{
     schema = "aep.elevated-desktop-task-start.v1"
