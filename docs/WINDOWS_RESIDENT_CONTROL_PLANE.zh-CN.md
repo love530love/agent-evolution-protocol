@@ -24,7 +24,10 @@ Agent intent -> durable order -> Core Host lease -> Desktop Host
 
 ## 已有落地部件
 
-- `coordination.supervisor`：单实例锁、持久心跳、异常不退出的有界 tick；
+- `coordination.core_host`：只处理持久状态与 DAG 的单实例常驻循环；它
+  强制 `dispatch=False`，没有任何 GUI 调用路径；
+- `coordination.supervisor`：Desktop Host 的单实例锁、持久心跳、异常不退出
+  的有界 GUI tick；
 - `wake_daemon`：事件队列、每事件锁、去重、冷却、审计；
 - `scripts/aep-supervisor.ps1`：PowerShell 7 登录会话包装；
 - `scripts/register-supervisor-task.ps1`：注册 `AEP-DesktopHost` 登录任务；
@@ -37,11 +40,16 @@ Desktop Host 的默认协作根统一为仓库的 `coordination`，而不是历�
 
 ## 推荐部署顺序
 
-1. 先以登录任务部署 Desktop Host，并核验 `runtime/aep-supervisor.heartbeat.json`。
-2. 为需要提升权限的客户端注册单订单 Elevated Worker；先执行只读 probe，再执行
+1. 先运行 `scripts/aep-core-host.ps1 -MaxTicks 1`，核验
+   `runtime/aep-core-host.heartbeat.json` 的 `ui_touched=false`；它可随后由
+   开机任务或 Windows 服务托管。
+2. 再以登录任务部署 Desktop Host，并核验 `runtime/aep-supervisor.heartbeat.json`。
+3. 为需要提升权限的客户端注册单订单 Elevated Worker；先执行只读 probe，再执行
    同一事件的 dispatch。
-3. 最后再部署 Core Host 服务。它只处理持久状态、心跳和调度；桌面执行永远经由
-   已登记的交互会话 Host。
+
+Core Host 与 Desktop Host 绝不能共同持有同一把锁，且 Core Host 不得启动每个
+Agent 私有的 MCP/stdio 服务器。它只持久化订单，并由已经登记、健康且处于登录态的
+Desktop Host 领取；这是避免多宿主重复拉起 166 个 MCP 进程的边界。
 
 任何一层重启都不得把 `SENDING`、`UNCERTAIN` 或未读回的旧订单重新输入。恢复时
 必须先读取同一事件的会话回执，再决定继续、接力或 HOLD。
