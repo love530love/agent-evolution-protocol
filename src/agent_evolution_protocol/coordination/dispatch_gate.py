@@ -73,11 +73,17 @@ ACK_TOKEN = "AEP-ACK"
 #: All patterns stay tight so a prose word cannot pass for an id, and the safety
 #: property is unchanged: exactly one *distinct* id, and it must equal the
 #: order's.  Widening the vocabulary is not the same as relaxing the check.
+# Keep this namespace deliberately narrow.  A task name such as ``AEP-TASK-1``
+# is not an event id and must never count as a second event in the body.
+AEP_ID_PATTERN = r"AEP-(?:WAKE|PULSE|EVENT)-[A-Za-z0-9][A-Za-z0-9_.-]{0,127}"
 EVT_ID_PATTERN = r"EVT-[A-Za-z0-9][A-Za-z0-9_-]{5,}"
 STAMP_ID_PATTERN = r"[0-9]{8}T[0-9]{12}Z-[0-9a-f]{8}"
 WAKE_ID_PATTERN = r"WAKE-[A-Za-z0-9][A-Za-z0-9_.-]{0,127}"
 PULSE_ID_PATTERN = r"PULSE-[0-9A-F]{20}"
-EVENT = re.compile(rf"\b(?:{WAKE_ID_PATTERN}|{PULSE_ID_PATTERN}|{EVT_ID_PATTERN}|{STAMP_ID_PATTERN})\b")
+# ``AEP-WAKE-...`` must precede the bare ``WAKE-...`` alternative: a hyphen is
+# a word boundary, so placing WAKE first silently strips the AEP namespace and
+# makes an otherwise exact order refuse itself before any UI action.
+EVENT = re.compile(rf"\b(?:{AEP_ID_PATTERN}|{WAKE_ID_PATTERN}|{PULSE_ID_PATTERN}|{EVT_ID_PATTERN}|{STAMP_ID_PATTERN})\b")
 _STAMP_ID = re.compile(rf"^{STAMP_ID_PATTERN}$")
 
 TASK_MARKER = re.compile(r"\[AEP:([^\]\s]+)\]")

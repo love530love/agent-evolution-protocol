@@ -333,6 +333,15 @@ class WakeIdContractTests(unittest.TestCase):
         verdict = dispatch_gate.check(_order(self.root), profile=PROFILE)
         self.assertEqual(verdict["verdict"], "send")
 
+    def test_an_aep_wake_id_is_not_stripped_to_bare_wake(self):
+        event_id = "AEP-WAKE-20261116-QODER-02"
+        order = commander.submit_order(
+            self.root, target="qoder", task="AEP-TASK-1",
+            text=f"please ack {event_id}\\nAEP-ACK:{event_id}",
+            sender="kernel", event_id=event_id)
+        verdict = dispatch_gate.check(order, profile=PROFILE)
+        self.assertEqual(verdict["verdict"], "send", verdict["detail"])
+
     def test_two_distinct_mailbox_ids_are_refused(self):
         order = self._stamp_order()
         order["text"] += "\nstale AEP-ACK:20261102T073800053005Z-4971a759"
