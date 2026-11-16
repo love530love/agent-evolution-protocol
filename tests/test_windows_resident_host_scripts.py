@@ -21,6 +21,8 @@ def test_registration_runs_the_pwsh_wrapper_in_the_interactive_logon_session():
         "AEP-DesktopHost", "[string]$CoordRoot", "Get-Command pwsh.exe",
         "scripts\\aep-supervisor.ps1", "-CoordRoot", "-IntervalSeconds",
         "New-ScheduledTaskTrigger -AtLogOn", "MultipleInstances IgnoreNew",
-        "ExecutionTimeLimit", "AEP interactive desktop host",
+        "ExecutionTimeLimit", "AEP interactive desktop host", "[switch]$ObserveOnly",
+        "-ObserveOnly", "[switch]$Start", "Get-Command Register-ScheduledTask",
+        "schtasks.exe", "run-aep-supervisor.cmd",
     ):
         assert token in registration

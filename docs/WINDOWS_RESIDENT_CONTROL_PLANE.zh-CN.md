@@ -44,6 +44,8 @@ Desktop Host 的默认协作根统一为仓库的 `coordination`，而不是历�
    `runtime/aep-core-host.heartbeat.json` 的 `ui_touched=false`；它可随后由
    开机任务或 Windows 服务托管。
 2. 再以登录任务部署 Desktop Host，并核验 `runtime/aep-supervisor.heartbeat.json`。
+   初次部署必须传 `-ObserveOnly`；只有完成精确订单、会话绑定与发送前确认后，
+   才能替换为 dispatch 模式。
 3. 为需要提升权限的客户端注册单订单 Elevated Worker；先执行只读 probe，再执行
    同一事件的 dispatch。
 
