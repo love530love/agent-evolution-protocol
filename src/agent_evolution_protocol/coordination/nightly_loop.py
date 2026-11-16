@@ -30,10 +30,27 @@ PROVEN_NOT_SENT = {
     "session-not-found", "session-not-verified", "model-not-verified",
     "window-or-input-ambiguous", "uia3-write-failed",
     "transcript-captured", "window-focused-no-delivery",
+    "input-read-only", "window-not-unique", "session-marker-missing",
+    "composer-hint-required", "window-not-fully-visible", "window-focus-denied",
 }
+# A foreign draft is not a transport failure.  Retrying cannot help and
+# replacing it would destroy somebody else's text, so this stops the run.
+DRAFT_CONFLICT = {"composer-not-empty"}
 DEFAULT_RESULT_GRACE_SECONDS = 1500.0
 DEFAULT_MAX_SENDS = 12
 DEFAULT_DELIVERY_CONFIRM_SECONDS = 20.0
+DEFAULT_PREFLIGHT_HOLD_BUDGET = 4
+DEFAULT_NOT_SENT_RETRY_BUDGET = 3
+STDERR_STATUS = (
+    ("COMPOSER_NOT_EMPTY", "composer-not-empty"),
+    ("NO_INPUT_CONTROL", "no_input_control"),
+    ("INPUT_READ_ONLY", "input-read-only"),
+    ("WINDOW_NOT_UNIQUE", "window-not-unique"),
+    ("SESSION_MARKER_MISSING", "session-marker-missing"),
+    ("COMPOSER_HINT_REQUIRED", "composer-hint-required"),
+    ("WINDOW_NOT_FULLY_VISIBLE", "window-not-fully-visible"),
+    ("WINDOW_FOCUS_DENIED", "window-focus-denied"),
+)
 
 
 def _now() -> datetime:
@@ -214,6 +231,23 @@ def _aep_command() -> list[str]:
             "from agent_evolution_protocol.cli import main; import sys; sys.exit(main())"]
 
 
+def _status_from_stderr(text: str) -> str:
+    """Recover a machine-readable refusal from a script that threw.
+
+    A pre-write refusal is not an uncertain delivery.  Losing its status made
+    the loop freeze N08 at 2026-11-16T02:06:48Z: the composer held 523
+    characters, the PowerShell adapter refused to overwrite them, and the
+    non-JSON stderr became NO_RECEIPT, which the loop treats as a possible
+    write.  The structured report path now covers the common case; this is the
+    conservative fallback for older adapters and other pre-write throws.
+    """
+    upper = (text or "").upper()
+    for token, status in STDERR_STATUS:
+        if token in upper:
+            return status
+    return ""
+
+
 class SystemAdapter:
     """The only class allowed to touch the desktop or the Codex state DB."""
 
@@ -229,8 +263,9 @@ class SystemAdapter:
         try:
             return json.loads(text)
         except json.JSONDecodeError:
-            return {"status": f"CLI_EXIT_{completed.returncode}",
-                    "task_delivered": False, "stderr": completed.stderr[-1200:]}
+            stderr = completed.stderr[-1200:]
+            status = _status_from_stderr(stderr) or f"CLI_EXIT_{completed.returncode}"
+            return {"status": status, "task_delivered": False, "stderr": stderr}
 
     def observe(self) -> dict[str, Any]:
         out_file = paths(self.root)["base"] / "observe.txt"
@@ -324,7 +359,15 @@ def _preflight(state: dict[str, Any], adapter: Any) -> tuple[bool, dict[str, Any
     if activity.get("state") != "ready":
         return False, {"reason": "CLIENT_NOT_READY", "activity": activity}
     if observation.get("input_found") is not True:
-        return False, {"reason": "COMPOSER_NOT_FOUND"}
+        return False, {
+            "reason": "COMPOSER_NOT_FOUND",
+            "input_candidate_count": observation.get("input_candidate_count"),
+            "input_viable_count": observation.get("input_viable_count"),
+            "input_rejected": observation.get("input_rejected"),
+            "window_size": observation.get("window_size"),
+            "input_region": observation.get("input_region"),
+            "transcript_sha256": observation.get("transcript_sha256", ""),
+        }
     if observation.get("drivable") is not True:
         return False, {"reason": "CLIENT_NOT_DRIVABLE"}
     fingerprint = str(state.get("fingerprint") or "")
@@ -415,6 +458,8 @@ def _finalize_report(root: Path, state: dict[str, Any], adapter: Any,
         f"- 活动指纹：`{state.get('fingerprint', '')}`",
         f"- 已发送：{state.get('send_count', 0)} 轮；队列游标：{state.get('cursor', 0)}/{len(state.get('items', []))}",
         f"- 停止原因：`{state.get('reason') or 'none'}`",
+        *([f"- 原始截止：`{state['original_deadline']}`（恢复次数：{state.get('resume_count', 0)}）"]
+          if state.get("original_deadline") else []),
         "",
         "## 轮次",
         "",
@@ -435,6 +480,24 @@ def _finalize_report(root: Path, state: dict[str, Any], adapter: Any,
             continue
         lines += [f"### `{item.get('event_id')}`", "", "```text",
                   str(result["message"]).strip(), "```", ""]
+    recovery_actions = {
+        "DELIVER_NOT_SENT", "DELIVER_RECOVERED", "DELIVER_MANUAL_RECOVERY",
+        "DELIVER_DRAFT_CONFLICT", "DELIVER_BUDGET_EXHAUSTED",
+        "PREFLIGHT_BUDGET_EXHAUSTED", "DELIVER_UNCERTAIN",
+    }
+    recovery = [row for row in state.get("history", [])
+                if row.get("action") in recovery_actions]
+    if recovery:
+        lines += ["## 恢复记录", ""]
+        for row in recovery[-12:]:
+            payload = row.get("payload") or {}
+            detail = ", ".join(
+                f"{key}={payload[key]}" for key in
+                ("event_id", "status", "submitted_at", "message_id", "retry",
+                 "consecutive", "existing_len", "requested_len")
+                if payload.get(key) not in (None, ""))
+            lines.append(f"- `{row.get('at')}` `{row.get('action')}` {detail}")
+        lines.append("")
     lines += [
         "## 仓库快照",
         "",
@@ -458,6 +521,8 @@ def _finalize_report(root: Path, state: dict[str, Any], adapter: Any,
         "- `task_delivered=true` 只代表事件 ID 从同一会话回读，等于 `MESSAGE_VISIBLE`；不是 ACK。",
         "- 每轮结果以 Codex 本地 rollout 的 `task_complete.last_agent_message` 为准，属于独立 `TASK_RESULT_READBACK` 通道。",
         "- 出现结果不明或超时，本运行只 HOLD，不重发、不切换服务、不新开会话。",
+        "- 可证明未写入的重发必须先经 rollout 确认无提交；连续失败有预算，不会耗尽整个窗口。",
+        "- 草稿只有在与待发文本逐字一致时才可复用；未知草稿一律 HOLD，不覆盖。",
         "- AEGS 的 PASS 只是项目证据，不是 AEP 授权、claim/lease 或任务完成判定。",
         "",
         "## 回滚",
@@ -480,6 +545,10 @@ def _finalize_report(root: Path, state: dict[str, Any], adapter: Any,
         "stopped": state.get("stopped", False),
         "cursor": state.get("cursor", 0),
         "send_count": state.get("send_count", 0),
+        "original_deadline": state.get("original_deadline", ""),
+        "resume_count": state.get("resume_count", 0),
+        "preflight_hold_count": state.get("preflight_hold_count", 0),
+        "preflight_hold_reason": state.get("preflight_hold_reason", ""),
         "bound_thread_id": state["bound_thread_id"],
         "fingerprint": state.get("fingerprint", ""),
         "aep_head": aep.get("head", ""),
@@ -503,6 +572,46 @@ def _stop(state: dict[str, Any], status: str, reason: str, now: datetime) -> Non
     state["reason"] = reason
     state["finished"] = status not in {"AWAITING_RESULT", "SENT", "READY"}
     state["updated_at"] = _iso(now)
+
+
+def _remember_receipt(item: dict[str, Any], receipt: dict[str, Any]) -> None:
+    previous = item.get("receipt")
+    if isinstance(previous, dict) and previous is not receipt:
+        history = item.setdefault("receipt_history", [])
+        history.append(previous)
+        item["receipt_history"] = history[-10:]
+    item["receipt"] = receipt
+
+
+def _preflight_hold(state: dict[str, Any], evidence: dict[str, Any],
+                    budget: int, now: datetime) -> bool:
+    """Count consecutive identical preflight failures and stop when stuck.
+
+    On 2026-11-15/16 COMPOSER_NOT_FOUND repeated from 00:30 to 02:30 while the
+    composer was visible but geometrically rejected.  The run then burned the
+    remaining window and reported a deadline timeout, which hid the actual
+    fault.  A bounded count turns that into an explicit, early hold.
+    """
+    reason = str(evidence.get("reason") or "UNKNOWN")
+    if state.get("preflight_hold_reason") == reason:
+        state["preflight_hold_count"] = int(state.get("preflight_hold_count") or 0) + 1
+    else:
+        state["preflight_hold_reason"] = reason
+        state["preflight_hold_count"] = 1
+    count = int(state["preflight_hold_count"])
+    _record(state, "PREFLIGHT_HOLD",
+            {**evidence, "consecutive": count, "budget": budget}, now)
+    if count >= budget:
+        _stop(state, "HOLD_PREFLIGHT_BUDGET",
+              f"preflight reason {reason} repeated {count} ticks; stopping before the window is exhausted",
+              now)
+        _record(state, "PREFLIGHT_BUDGET_EXHAUSTED",
+                {"reason": reason, "consecutive": count, "budget": budget}, now)
+        return True
+    state["status"] = "HOLD_PREFLIGHT"
+    state["reason"] = reason
+    state["finished"] = False
+    return False
 
 
 def _delivery_submission(adapter: Any, state: dict[str, Any], event_id: str,
@@ -581,6 +690,8 @@ def tick(root: Path, config_path: Path, *, now: datetime | None = None,
                 item["fields"] = _extract(result.get("message", ""))
                 state["fingerprint"] = item["event_id"]
                 state["cursor"] = cursor + 1
+                state["preflight_hold_reason"] = ""
+                state["preflight_hold_count"] = 0
                 _record(state, "RESULT_READBACK", {
                     "event_id": item["event_id"],
                     "turn_id": result.get("turn_id", ""),
@@ -627,12 +738,13 @@ def tick(root: Path, config_path: Path, *, now: datetime | None = None,
 
         ok, evidence = _preflight(state, adapter)
         if not ok:
-            state["status"] = "HOLD_PREFLIGHT"
-            state["reason"] = evidence.get("reason", "preflight failed")
-            state["finished"] = False
-            _record(state, "PREFLIGHT_HOLD", evidence, now)
+            budget = int(config.get("preflight_hold_budget",
+                                    DEFAULT_PREFLIGHT_HOLD_BUDGET))
+            _preflight_hold(state, evidence, budget, now)
             _write_json(target["state"], state)
             return _finalize_report(root, state, adapter, now)
+        state["preflight_hold_reason"] = ""
+        state["preflight_hold_count"] = 0
 
         text = (str(item["prompt"]).replace("{event_id}", item["event_id"])
                 .replace("{marker}", item["marker"]))
@@ -641,10 +753,12 @@ def tick(root: Path, config_path: Path, *, now: datetime | None = None,
         receipt = adapter.deliver(item["event_id"], text)
         report = _report_of(receipt)
         delivered = report.get("task_delivered") is True
-        item["receipt"] = receipt
+        _remember_receipt(item, receipt)
         item["sent_at"] = _iso(now)
         if delivered:
             item["status"] = "sent"
+            item.pop("not_sent_retries", None)
+            item.pop("not_sent_reason", None)
             state["send_count"] = int(state.get("send_count", 0)) + 1
             state["status"] = "SENT"
             state["reason"] = "event id read back from the bound view; awaiting rollout result"
@@ -655,15 +769,12 @@ def tick(root: Path, config_path: Path, *, now: datetime | None = None,
             _write_json(target["state"], state)
             return _finalize_report(root, state, adapter, now)
         status_text = str(report.get("status") or "NO_RECEIPT").strip()
-        if status_text.lower() in PROVEN_NOT_SENT:
-            item["status"] = "queued"
-            state["status"] = "RETRYABLE_NOT_SENT"
-            state["reason"] = f"adapter proved no input: {status_text}"
-            state["finished"] = False
-            _record(state, "DELIVER_NOT_SENT", {"event_id": item["event_id"],
-                                                "status": status_text}, now)
-            _write_json(target["state"], state)
-            return _finalize_report(root, state, adapter, now)
+        status_key = status_text.lower()
+
+        # A local read-back can fail after the message was submitted.  Ask the
+        # rollout before requeueing or declaring uncertainty: it is the same
+        # independent channel used for results, and it is the only proof that
+        # a retry would duplicate a turn.
         submission = _delivery_submission(adapter, state, item["event_id"], config)
         if (submission.get("status") == codex_rollout.SEEN
                 and submission.get("message_seen") is True):
@@ -671,6 +782,8 @@ def tick(root: Path, config_path: Path, *, now: datetime | None = None,
             item["status"] = "sent"
             item["sent_at"] = submitted_at
             item["submission"] = submission
+            item.pop("not_sent_retries", None)
+            item.pop("not_sent_reason", None)
             state["send_count"] = int(state.get("send_count", 0)) + 1
             state["status"] = "SENT"
             state["reason"] = ("delivery confirmed by the bound thread rollout; "
@@ -688,8 +801,56 @@ def tick(root: Path, config_path: Path, *, now: datetime | None = None,
                             _rollout_evidence(item), now)
             _write_json(target["state"], state)
             return _finalize_report(root, state, adapter, now)
+        if status_key in DRAFT_CONFLICT:
+            # The adapter refused before writing.  Replacing a draft we cannot
+            # prove is ours would destroy user content, so this is a terminal
+            # hold, not a retry.
+            item["status"] = "held"
+            item.pop("sent_at", None)
+            item.pop("submission", None)
+            _stop(state, "HOLD_DRAFT_CONFLICT",
+                  "composer already held a different draft; refusing to overwrite it",
+                  now)
+            _record(state, "DELIVER_DRAFT_CONFLICT", {
+                "event_id": item["event_id"],
+                "status": status_text,
+                "existing_len": report.get("existing_len"),
+                "requested_len": report.get("requested_len"),
+                "existing_sha256": report.get("existing_sha256", ""),
+                "requested_sha256": report.get("requested_sha256", ""),
+            }, now)
+            _write_json(target["state"], state)
+            return _finalize_report(root, state, adapter, now)
+        if status_key in PROVEN_NOT_SENT:
+            item.pop("sent_at", None)
+            item.pop("submission", None)
+            previous_reason = str(item.get("not_sent_reason") or "")
+            retries = int(item.get("not_sent_retries") or 0)
+            retries = retries + 1 if previous_reason == status_key else 1
+            item["not_sent_reason"] = status_key
+            item["not_sent_retries"] = retries
+            budget = int(config.get("not_sent_retry_budget",
+                                    DEFAULT_NOT_SENT_RETRY_BUDGET))
+            if retries >= budget:
+                item["status"] = "held"
+                _stop(state, "HOLD_DELIVERY_BUDGET",
+                      f"delivery was provably not sent {retries} times "
+                      f"({status_text}); stopping", now)
+                _record(state, "DELIVER_BUDGET_EXHAUSTED", {
+                    "event_id": item["event_id"], "status": status_text,
+                    "retry": retries, "budget": budget}, now)
+            else:
+                item["status"] = "queued"
+                state["status"] = "RETRYABLE_NOT_SENT"
+                state["reason"] = f"adapter proved no input: {status_text}"
+                state["finished"] = False
+                _record(state, "DELIVER_NOT_SENT", {
+                    "event_id": item["event_id"], "status": status_text,
+                    "retry": retries, "budget": budget}, now)
+            _write_json(target["state"], state)
+            return _finalize_report(root, state, adapter, now)
         previous_event_id = str(report.get("previous_event_id") or "")
-        if (status_text.lower() == "session_uncertain"
+        if (status_key == "session_uncertain"
                 and previous_event_id
                 and previous_event_id != item["event_id"]):
             previous = next((row for row in items
@@ -705,6 +866,7 @@ def tick(root: Path, config_path: Path, *, now: datetime | None = None,
                 item["status"] = "queued"
                 item["requeued_from"] = status_text
                 item.pop("sent_at", None)
+                item.pop("submission", None)
                 state["status"] = "RETRYABLE_NOT_SENT"
                 state["reason"] = ("session lease was blocked by a prior event now "
                                    "proven settled; no input was sent")
@@ -740,8 +902,12 @@ def status(root: Path, config_path: Path, *, now: datetime | None = None) -> dic
         "stopped": state.get("stopped", False),
         "started_at": state.get("started_at"),
         "deadline": state.get("deadline"),
+        "original_deadline": state.get("original_deadline", ""),
+        "resume_count": state.get("resume_count", 0),
         "cursor": state.get("cursor", 0),
         "send_count": state.get("send_count", 0),
+        "preflight_hold_count": state.get("preflight_hold_count", 0),
+        "preflight_hold_reason": state.get("preflight_hold_reason", ""),
         "fingerprint": state.get("fingerprint"),
         "items": [{"task_id": item.get("task_id"), "event_id": item.get("event_id"),
                    "title": item.get("title"), "status": item.get("status"),

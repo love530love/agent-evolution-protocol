@@ -23,8 +23,8 @@
 
 ## 当前证据
 
-- AEP：`v0.6.37` → `v0.6.38` → `v0.6.39` → `v0.6.40` → `v0.6.41`（rollout 投递确认）→ `v0.6.42`（租约结算与 lease 阻塞恢复），代码与文档提交后普通推送 `origin/main`。
-- AEP 全量回归：`1776 passed, 2 skipped`（排除已知陈旧的 `tests/test_ui_profile_examples.py`）。
+- AEP：`v0.6.37` → `v0.6.38` → `v0.6.39` → `v0.6.40` → `v0.6.41`（rollout 投递确认）→ `v0.6.42`（租约结算与 lease 阻塞恢复）→ `v0.6.43`（投递重试前 rollout 复核、草稿冲突终态、预算与诊断），代码与文档提交后普通推送 `origin/main`。
+- AEP 全量回归（`v0.6.43`）：`1781 passed, 2 skipped`；唯一失败 `tests/test_campaign_watcher_integration.py` 的原因是外部 Codex 启动的 `campaign-watch.ps1`（PID 20772）持有全局互斥量 `Global\AEP-Campaign-Watch`，测试无法再起第二个 watcher，与本次改动无关，未终止他人常驻进程。排除已知陈旧的 `tests/test_ui_profile_examples.py`。
 - 第 1 轮事件 `AEP-NL-20261115-2005-01`：
   - 投递回执 `task_delivered=true`，事件见证控件为当前 `设计自进化架构` 文档；
   - rollout 回读 `task_complete`，结果行含 `AEP-RESULT:AEP-NL-20261115-2005-01`；
@@ -36,6 +36,13 @@
 - `v0.6.41` 把这条恢复逻辑固化：UI 回执不确定时，先在本 thread rollout 中确认用户消息；确认则记 `DELIVER_RECOVERED` 并继续等待结果，未确认才 HOLD。
 - 第 4 轮首次投递被共享 session lease 拦下（`SESSION_UNCERTAIN`，未触达输入）：第 3 轮的 `submitted-unconfirmed` 在 `session_leases` 留下 `UNCERTAIN`。已用 rollout 双向证据（同一 event 的 `UserMessage` 与 `task_complete`）执行 `session_lease.reconcile`，租约变为 `RECONCILED`。
 - `v0.6.42` 固化两条规则：结果回读或 `DELIVER_RECOVERED` 时自动用 rollout 证据 reconcile 该会话租约；若投递被 lease 拦住、收到 `SESSION_UNCERTAIN` 且 `previous_event_id` 已被 rollout 证明结算，则本事件证明未输入，记为 `DELIVER_NOT_SENT` 并重排，不重发上一事件。
+- 第 5 轮 `AEP-NL-20261115-2005-05`：AEGS 提交 `e1f88d0`，本地账本外部锚点；自报 `25 passed / 0 skipped, 13.81s`；独立复核 anchor 检查 PASS。
+- 第 6 轮 `AEP-NL-20261115-2005-06`：AEGS 提交 `60e79d8`，高风险审批门禁；自报 `28 passed / 0 skipped, 15.95s`。
+- 第 7 轮 `AEP-NL-20261115-2005-07`：AEGS 提交 `c409b7a`，文档漂移门禁与 ADR-0007 绑定；自报 `32 passed / 0 skipped, 17.51s`。
+- 第 8 轮 `AEP-NL-20261115-2005-08`：`10:06` 投递被 `COMPOSER_NOT_EMPTY` 正确拒绝（composer 已有 523 字草稿），Python 旧逻辑误判 `NO_RECEIPT` 并冻结为 `uncertain`。人工只读核验：截图草稿内容与 N08 待发文本一致、rollout 中无 N08 用户消息、未发生输入；随后复用草稿直接触发 Send（不重打），composer 清空，rollout 用户消息 `01a1e220-1bee-78e2-b921-2ceda3a065e8` 于 `2026-11-16T02:11:57.551Z` 确认送达。`02:16:44.479Z` 回读 `task_complete`：AEGS 提交 `e698188`，自报 `32 passed / 0 skipped, 16.60s`。
+- N08 独立复核（`2026-11-16T02:20Z`）：AEGS `main` 与 `origin/main` 同为 `756c2e0`，工作区干净；`32 passed in 14.42s`；`takeover` PASS（handoff `HO-1b9a3291c517`）；`doctor` 的 state/handoff 与外部锚点均 PASS；journal 镜像 `62/62` 且 ledger/journal head 相同；`evidence export` 指纹 `e698188`、`dirty_non_governance=false`。
+- 最终 tick：`status=FINISHED_QUEUE`，cursor `8/8`，send_count `8`，原始截止与恢复次数已写入报告；计划任务 `Next Run Time` 为 `N/A`，窗口按 `04:35` EndBoundary 自动收口。
+- `v0.6.43` 针对 N08 事故固化：任何重试或 HOLD 前先查同一 thread 的 rollout 用户消息；草稿与待发文本逐字一致才复用，不一致记 `HOLD_DRAFT_CONFLICT` 终态；证明未发送的重试和 preflight HOLD 都有预算；composer 选择增加 8% 底部容差并保留拒绝诊断；报告展示原始截止、恢复次数与恢复记录。
 
 ## 早间检查
 

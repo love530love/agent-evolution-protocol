@@ -272,3 +272,120 @@ def test_report_contains_evidence_and_rollback(tmp_path):
     assert "schtasks /Delete" in report
     status = json.loads((tmp_path / "nightly_loop" / "status.json").read_text(encoding="utf-8"))
     assert status["aep_head"] == "abc"
+
+
+def test_proven_not_sent_requeues_without_stale_send_time(tmp_path):
+    adapter = FakeAdapter(receipt={
+        "status": "input-not-confirmed", "task_delivered": False})
+    config = _config(tmp_path)
+    start = _now()
+    first = nightly_loop.tick(tmp_path, config, now=start, adapter=adapter)
+    assert first["status"] == "RETRYABLE_NOT_SENT"
+    assert first["finished"] is False
+    state = _state(tmp_path)
+    item = state["items"][0]
+    assert item["status"] == "queued"
+    assert not item.get("sent_at")
+    assert state["send_count"] == 0
+    report = (tmp_path / "nightly_loop" / "report.md").read_text(encoding="utf-8")
+    assert "## 恢复记录" in report
+    assert "DELIVER_NOT_SENT" in report
+    adapter.receipt = {"report": {"status": "delivered", "task_delivered": True}}
+    second = nightly_loop.tick(tmp_path, config, now=start + timedelta(minutes=30),
+                               adapter=adapter)
+    assert second["status"] == "SENT"
+    assert second["send_count"] == 1
+
+
+def test_proven_not_sent_retries_are_bounded(tmp_path):
+    adapter = FakeAdapter(receipt={
+        "status": "input-not-confirmed", "task_delivered": False})
+    config_path = _config(tmp_path)
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["not_sent_retry_budget"] = 2
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    start = _now()
+    first = nightly_loop.tick(tmp_path, config_path, now=start, adapter=adapter)
+    second = nightly_loop.tick(tmp_path, config_path,
+                               now=start + timedelta(minutes=30), adapter=adapter)
+    assert first["status"] == "RETRYABLE_NOT_SENT"
+    assert second["status"] == "HOLD_DELIVERY_BUDGET"
+    assert len(adapter.deliveries) == 2
+    state = _state(tmp_path)
+    assert state["items"][0]["status"] == "held"
+    assert any(row["action"] == "DELIVER_BUDGET_EXHAUSTED"
+               for row in state["history"])
+
+
+def test_foreign_draft_is_a_terminal_hold_not_a_retry(tmp_path):
+    adapter = FakeAdapter(receipt={"report": {
+        "status": "composer-not-empty", "task_delivered": False,
+        "existing_len": 523, "requested_len": 480,
+        "existing_sha256": "aaa", "requested_sha256": "bbb"}})
+    config = _config(tmp_path)
+    start = _now()
+    first = nightly_loop.tick(tmp_path, config, now=start, adapter=adapter)
+    second = nightly_loop.tick(tmp_path, config,
+                               now=start + timedelta(minutes=30), adapter=adapter)
+    assert first["status"] == "HOLD_DRAFT_CONFLICT"
+    assert first["finished"] is True
+    assert second["status"] == "HOLD_DRAFT_CONFLICT"
+    assert len(adapter.deliveries) == 1
+    state = _state(tmp_path)
+    assert state["items"][0]["status"] == "held"
+    assert not state["items"][0].get("sent_at")
+    assert any(row["action"] == "DELIVER_DRAFT_CONFLICT"
+               for row in state["history"])
+
+
+def test_repeated_preflight_failure_stops_on_budget(tmp_path):
+    adapter = FakeAdapter()
+    adapter.observe = lambda: {
+        "activity_evidence": {"state": "ready"}, "input_found": False,
+        "input_candidate_count": 1, "input_viable_count": 0,
+        "input_rejected": [{"reason": "OUTSIDE_WINDOW: bottom=54"}],
+        "drivable": True, "transcript_text": adapter.transcript,
+        "transcript_sha256": "x", "pid": 1}
+    config_path = _config(tmp_path)
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["preflight_hold_budget"] = 2
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    start = _now()
+    first = nightly_loop.tick(tmp_path, config_path, now=start, adapter=adapter)
+    second = nightly_loop.tick(tmp_path, config_path,
+                               now=start + timedelta(minutes=30), adapter=adapter)
+    assert first["status"] == "HOLD_PREFLIGHT"
+    assert second["status"] == "HOLD_PREFLIGHT_BUDGET"
+    assert second["finished"] is True
+    assert not adapter.deliveries
+    state = _state(tmp_path)
+    assert state["preflight_hold_count"] == 2
+    hold = next(row for row in state["history"] if row["action"] == "PREFLIGHT_HOLD")
+    assert hold["payload"]["input_rejected"][0]["reason"].startswith("OUTSIDE_WINDOW")
+    assert any(row["action"] == "PREFLIGHT_BUDGET_EXHAUSTED"
+               for row in state["history"])
+
+
+def test_report_includes_original_deadline_after_resume(tmp_path):
+    adapter = FakeAdapter()
+    config = _config(tmp_path)
+    start = _now()
+    nightly_loop.tick(tmp_path, config, now=start, adapter=adapter)
+    state = _state(tmp_path)
+    state["original_deadline"] = "2026-11-15T20:00:00Z"
+    state["resume_count"] = 1
+    (tmp_path / "nightly_loop" / "state.json").write_text(
+        json.dumps(state), encoding="utf-8")
+    nightly_loop.tick(tmp_path, config, now=start + timedelta(minutes=5),
+                      adapter=adapter)
+    report = (tmp_path / "nightly_loop" / "report.md").read_text(encoding="utf-8")
+    assert "原始截止" in report
+    assert "2026-11-15T20:00:00Z" in report
+    assert "恢复次数：1" in report
+
+
+def test_stderr_pre_write_refusal_is_classified():
+    assert nightly_loop._status_from_stderr(
+        "Exception: COMPOSER_NOT_EMPTY: the selected control already holds 523 characters"
+    ) == "composer-not-empty"
+    assert nightly_loop._status_from_stderr("unrelated failure") == ""

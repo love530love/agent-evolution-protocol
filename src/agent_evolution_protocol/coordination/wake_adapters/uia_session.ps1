@@ -812,6 +812,16 @@ function Get-InputCandidates {
   try { $window = $Root.Current.BoundingRectangle } catch { }
   $hasWindow = [bool]($window -and $window.Width -gt 0 -and $window.Height -gt 0)
   $tolerance = 8
+  # Measured 2026-11-16 on ChatGPT 26.1111.2228: the real ProseMirror composer
+  # (the one holding the 523-character N08 draft) reported bottom=1713 in a
+  # window ending at 1659.  A flat 8px rule therefore rejected the only visible
+  # composer, observe said input_found=false, and the loop held COMPOSER_NOT_FOUND
+  # five times.  Allow a proportional bottom overhang -- the control this rule
+  # was built to reject is the 6223px-tall markdown editor, still far outside --
+  # and require the centre to remain inside the window.
+  $bottomTolerance = if ($hasWindow) {
+    [Math]::Max($tolerance, [int][Math]::Ceiling($window.Height * 0.08))
+  } else { $tolerance }
   $candidates = @()
   foreach ($element in $edits) {
     try {
@@ -831,9 +841,11 @@ function Get-InputCandidates {
         left   = [int][Math]::Ceiling($window.Left - $rect.Left)
         right  = [int][Math]::Ceiling($rect.Right - $window.Right)
       }
-      $worst = ($overflow.Values | Measure-Object -Maximum).Maximum
-      if ($worst -gt $tolerance) {
-        $reject = "OUTSIDE_WINDOW: overflow top=$($overflow.top) bottom=$($overflow.bottom) left=$($overflow.left) right=$($overflow.right) rect=$([int]$rect.Left),$([int]$rect.Top) $([int]$rect.Width)x$([int]$rect.Height) window=$([int]$window.Left),$([int]$window.Top) $([int]$window.Width)x$([int]$window.Height)"
+      $centerInside = (($rect.Top + ($rect.Height / 2)) -le ($window.Bottom + $tolerance))
+      if (-not $centerInside -or $overflow.top -gt $tolerance -or
+          $overflow.left -gt $tolerance -or $overflow.right -gt $tolerance -or
+          $overflow.bottom -gt $bottomTolerance) {
+        $reject = "OUTSIDE_WINDOW: overflow top=$($overflow.top) bottom=$($overflow.bottom) left=$($overflow.left) right=$($overflow.right); centre_inside=$centerInside; rect=$([int]$rect.Left),$([int]$rect.Top) $([int]$rect.Width)x$([int]$rect.Height) window=$([int]$window.Left),$([int]$window.Top) $([int]$window.Width)x$([int]$window.Height)"
       } elseif ($rect.Height -gt ($window.Height * 3)) {
         $reject = "SCROLLED_CONTAINER: height=$([int]$rect.Height) exceeds three window heights ($([int]$window.Height))"
       }
@@ -963,6 +975,40 @@ function Select-InputElement {
       [ordered]@{ focusable = $_.Focusable; top = $_.Top; bottom = $_.Bottom; width = $_.Width
         name = $_.Name; hint_match = $_.HintMatch; lower_band = $_.LowerBand; score = $_.Score }
     })
+  }
+}
+
+function Get-InputRejectionDiagnostics {
+  # Select-InputElement returns $null in -Soft mode when every editable control
+  # is rejected.  The observe report used to drop the candidates and reasons
+  # with it, so COMPOSER_NOT_FOUND was unfalsifiable.  This keeps the evidence
+  # without changing the selection contract.
+  param($Root)
+  $candidates = Get-InputCandidates -Root $Root
+  $viable = @($candidates | Where-Object { -not $_.Rejected })
+  $rejected = @($candidates | Where-Object { $_.Rejected } | ForEach-Object {
+    [ordered]@{ name = $_.Name; top = $_.Top; bottom = $_.Bottom
+      width = $_.Width; height = $_.Height; reason = $_.Rejected }
+  })
+  return [pscustomobject]@{
+    Element        = $null
+    CandidateCount = $candidates.Count
+    ViableCount    = $viable.Count
+    Rejected       = $rejected
+    List           = @()
+    SelectedReason = ''
+    Ambiguous      = $false
+  }
+}
+
+function Get-AepSha256 {
+  param([string]$Value)
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes([string]$Value)
+    return ([BitConverter]::ToString($sha.ComputeHash($bytes)) -replace '-', '').ToLowerInvariant()
+  } finally {
+    $sha.Dispose()
   }
 }
 
@@ -1424,6 +1470,7 @@ if ($SessionMarker.Trim()) {
 }
 
 $selection = Select-InputElement -Root $root -Soft -Hints $inputHints
+$inputDiagnostics = if ($selection) { $selection } else { Get-InputRejectionDiagnostics -Root $root }
 $activity = Get-ActivityEvidence -Root $root -Hwnd $window.Hwnd `
   -InputFound ([bool]$selection) -InputAmbiguous $(if ($selection) { [bool]$selection.Ambiguous } else { $false }) `
   -Ocr:$OcrVerify -InterjectHints $InterjectHints `
@@ -1510,12 +1557,12 @@ if ($Mode -eq 'observe') {
     path_matched_root      = $window.PathMatchedRoot
     launched               = $launched
     input_found            = [bool]$selection
-    input_candidate_count  = $(if ($selection) { $selection.CandidateCount } else { 0 })
-    input_viable_count     = $(if ($selection) { $selection.ViableCount } else { 0 })
-    input_rejected         = $(if ($selection) { $selection.Rejected } else { @() })
-    input_selected_reason  = $(if ($selection) { $selection.SelectedReason } else { '' })
-    input_ambiguous        = $(if ($selection) { $selection.Ambiguous } else { $false })
-    input_candidates       = $(if ($selection) { $selection.List } else { @() })
+    input_candidate_count  = $inputDiagnostics.CandidateCount
+    input_viable_count     = $inputDiagnostics.ViableCount
+    input_rejected         = $inputDiagnostics.Rejected
+    input_selected_reason  = $inputDiagnostics.SelectedReason
+    input_ambiguous        = $inputDiagnostics.Ambiguous
+    input_candidates       = $inputDiagnostics.List
     window_size            = $windowRegion
     input_region           = $inputRegion
     activity_state         = $activity.state
@@ -1611,7 +1658,8 @@ if ($Mode -eq 'capture') {
     transcript_preview  = $(if ($body.Length -gt 600) { $body.Substring(0, 600) } else { $body })
     event_id_visible    = [bool]($EventId -and $body.Contains($EventId))
     input_found         = [bool]$selection
-    input_candidate_count = $(if ($selection) { $selection.CandidateCount } else { 0 })
+    input_candidate_count = $inputDiagnostics.CandidateCount
+    input_rejected      = $inputDiagnostics.Rejected
     task_delivered      = $false
     method              = 'uia-capture'
     foreground_changed  = $true
@@ -2070,11 +2118,37 @@ if ($selection) {
       }
     }
     if ($existing.Trim() -and -not $existingIsPlaceholder) {
-      $refusal = "COMPOSER_NOT_EMPTY: the selected control already holds $($existing.Length) characters; refusing to replace them. Select the chat composer, or clear the draft."
-      throw 'COMPOSER_NOT_EMPTY'
+      $normalizedExisting = (($existing -replace "`r`n", "`n").Trim())
+      $normalizedText = (($Text -replace "`r`n", "`n").Trim())
+      if ($normalizedExisting -eq $normalizedText) {
+        # The composer already holds exactly this message.  Submitting it is
+        # the continuation of the interrupted attempt, not a replacement of
+        # somebody's draft: on 2026-11-15T16:00Z the type succeeded but the
+        # send did not, and every later tick refused to touch the draft.
+        $writeMethod = 'existing-draft-reused'
+      } else {
+        # Structured refusal: the Python loop must be able to tell "no write
+        # happened, and retrying cannot help" from an uncertain send.
+        Write-Report @{
+          status            = 'composer-not-empty'
+          pid               = $window.Pid
+          title             = $window.Title
+          event_id          = $EventId
+          task_delivered    = $false
+          composer_not_empty = $true
+          existing_len      = $existing.Length
+          existing_sha256   = Get-AepSha256 $normalizedExisting
+          requested_len     = $Text.Length
+          requested_sha256  = Get-AepSha256 $normalizedText
+          method            = 'uia-deliver'
+          note              = 'the selected control holds a different draft; refusing to overwrite it'
+        }
+        return
+      }
+    } else {
+      $valuePattern.SetValue($Text)
+      $writeMethod = 'uia-valuepattern'
     }
-    $valuePattern.SetValue($Text)
-    $writeMethod = 'uia-valuepattern'
   } catch {
     if ($readOnly) { throw 'INPUT_READ_ONLY: target input is read-only' }
     # A refusal must terminate.  Falling through to clipboard-paste would move
@@ -2104,7 +2178,8 @@ if ($selection -and -not $inputVerified) {
     pid              = $window.Pid
     title            = $window.Title
     input_found      = [bool]$selection
-    input_candidate_count = $(if ($selection) { $selection.CandidateCount } else { 0 })
+    input_candidate_count = $inputDiagnostics.CandidateCount
+    input_rejected   = $inputDiagnostics.Rejected
     write_method     = $writeMethod
     input_focused    = $focused
     typed_preview    = $(if ($typedValue.Length -gt 200) { $typedValue.Substring(0, 200) } else { $typedValue })
