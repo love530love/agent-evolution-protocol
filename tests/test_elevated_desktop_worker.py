@@ -127,12 +127,9 @@ class ElevatedDesktopWorkerBehaviorTests(unittest.TestCase):
 
         for token in (
             "[string]$OrderId", "[string]$EventId", "[string]$ReceiptPath",
-            "[switch]$Register", "[switch]$ProbeOnly", "if (-not $Register)", "RunLevel Highest",
-            "LogonType Interactive", "MultipleInstances IgnoreNew",
-            "ExecutionTimeLimit", "New-ScheduledTask -Action",
-            "ORDER_NOT_DEPOSITED", "LAUNCH_FORBIDDEN", "Register-ScheduledTask",
-            "schtasks.exe /Create", "InteractiveToken", "HighestAvailable",
-            "$PSVersionTable.PSEdition",
+            "[switch]$Register", "[switch]$ProbeOnly", "if (-not $Register)",
+            "ORDER_NOT_DEPOSITED", "LAUNCH_FORBIDDEN", "schtasks.exe /Create",
+            "InteractiveToken", "HighestAvailable", "AllowStartOnDemand",
             "RECEIPT_PATH_MUST_BE_CANONICAL", "PYTHON_NOT_APPROVED",
             "commander\\receipts\\elevated",
         ):
@@ -140,8 +137,10 @@ class ElevatedDesktopWorkerBehaviorTests(unittest.TestCase):
                 self.assertIn(token, text)
 
         before, after = text.split("if (-not $Register)", 1)
-        self.assertNotIn("Register-ScheduledTask", before)
-        self.assertIn("Register-ScheduledTask", after)
+        self.assertNotIn("schtasks.exe /Create", before)
+        self.assertIn("schtasks.exe /Create", after)
+        self.assertNotIn("Register-ScheduledTask", text)
+        self.assertNotIn("New-ScheduledTask", text)
         self.assertNotIn("Start-ScheduledTask", text)
         self.assertNotIn("Start-Process", text)
 
