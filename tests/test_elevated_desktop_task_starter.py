@@ -19,14 +19,14 @@ class ElevatedDesktopTaskStarterTests(unittest.TestCase):
             "LAUNCH_FORBIDDEN", "ORDER_EXPIRED", "RECEIPT_ALREADY_EXISTS",
             "TASK_NOT_REGISTERED", "TASK_RUNLEVEL_INVALID", "TASK_LOGON_TYPE_INVALID",
             "Get-ScheduledTask", "schtasks.exe /Query", "InteractiveToken",
-            "HighestAvailable", "$PSVersionTable.PSEdition", "Start-ScheduledTask", "TASK_START_REQUESTED",
+            "HighestAvailable", "$PSVersionTable.PSEdition", "schtasks.exe /Run",
+            "TASK_START_FAILED", "TASK_START_REQUESTED",
             "delivery_success = $false", "task_delivered = $false", "agent_accepted = $false",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, text)
-        start = text.index("Start-ScheduledTask")
-        self.assertGreater(start, text.index("if ($Apply)"))
         self.assertNotIn("Register-ScheduledTask", text)
+        self.assertNotIn("Start-ScheduledTask", text)
         self.assertNotIn("commander.dispatch", text)
 
 

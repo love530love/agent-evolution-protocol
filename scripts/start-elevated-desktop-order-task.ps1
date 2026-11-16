@@ -86,7 +86,10 @@ $result = [ordered]@{
     session_created = $false
 }
 if ($Apply) {
-    Start-ScheduledTask -TaskName $TaskName
+    # Use the native scheduler for the final start as well.  This keeps the
+    # register/query/run path identical under Windows PowerShell and pwsh.
+    & schtasks.exe /Run /TN $TaskName
+    if ($LASTEXITCODE -ne 0) { throw "TASK_START_FAILED: schtasks exit code $LASTEXITCODE" }
     $result["note"] = "Exact task start requested. Read the worker and commander receipts; task start is not delivery proof."
 } else {
     $result["note"] = "No task started. Re-run with -Apply after reviewing the exact-order task."
