@@ -98,6 +98,15 @@ class ProjectEvidenceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             pe.seal(raw(), workspace_id="../aegs", now=NOW)
 
+    def test_windows_root_is_valid_when_tests_run_on_posix(self):
+        receipt = pe.seal(raw(repo_root="F:\\PythonProjects1\\AEGS"),
+                           workspace_id="aegs", now=NOW)
+        self.assertEqual(receipt["repo_root"], "F:/PythonProjects1/AEGS")
+
+    def test_posix_root_is_valid_when_tests_run_on_windows(self):
+        receipt = pe.seal(raw(repo_root="/srv/aegs"), workspace_id="aegs", now=NOW)
+        self.assertEqual(receipt["repo_root"], "/srv/aegs")
+
 
 if __name__ == "__main__":
     unittest.main()

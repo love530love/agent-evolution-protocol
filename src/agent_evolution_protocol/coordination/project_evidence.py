@@ -16,7 +16,9 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 import json
+import ntpath
 from pathlib import Path
+import posixpath
 import re
 from typing import Any
 
@@ -64,7 +66,10 @@ def _workspace_id(value: str) -> str:
 
 def _repo_root(value: str) -> str:
     text = str(value or "").strip()
-    if not text or not Path(text).is_absolute():
+    # Evidence crosses Windows workstations and POSIX CI workers.  ``Path``
+    # only recognises the current host's syntax, so use both lexical grammars:
+    # the field records provenance and is not dereferenced here.
+    if not text or not (ntpath.isabs(text) or posixpath.isabs(text)):
         raise ValueError("repo_root must be an absolute path")
     return text.replace("\\", "/").rstrip("/")
 

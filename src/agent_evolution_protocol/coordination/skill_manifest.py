@@ -91,7 +91,14 @@ def _jsonable(value: Any) -> Any:
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
     if isinstance(value, Path):
-        return str(value)
+        # The committed CLI interface must not change with account names or
+        # operating-system path separators.  Runtime argparse defaults stay
+        # real Paths; only their generated description is symbolic.
+        try:
+            relative_to_home = value.relative_to(Path.home())
+        except ValueError:
+            return str(value)
+        return "$HOME" if str(relative_to_home) == "." else "$HOME/" + relative_to_home.as_posix()
     if isinstance(value, (list, tuple)):
         return [_jsonable(item) for item in value]
     return str(value)

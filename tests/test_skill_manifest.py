@@ -206,6 +206,11 @@ class DescribeArgumentTests(unittest.TestCase):
         self.assertEqual(rows["paths"]["nargs"], "*")
         self.assertEqual(rows["paths"]["default"], [])
 
+    def test_default_path_under_home_is_rendered_portably(self):
+        rows = self._describe(lambda parser: parser.add_argument(
+            "--state-db", type=Path, default=Path.home() / ".codex" / "state.sqlite"))
+        self.assertEqual(rows["state_db"]["default"], "$HOME/.codex/state.sqlite")
+
 
 class ResearchDocTests(unittest.TestCase):
     """The absorption doc quotes counts, so the counts have to be true.
