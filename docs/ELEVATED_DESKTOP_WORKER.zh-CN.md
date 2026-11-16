@@ -96,8 +96,22 @@ pwsh -File K:\PythonProjects5\agent-evolution-protocol\scripts\register-elevated
 
 The registered task is intentionally `RunLevel Highest`, `LogonType Interactive`,
 `MultipleInstances IgnoreNew`, and has a five-minute execution limit.  It has
-no trigger and this helper never calls `Start-ScheduledTask`; an operator or a
-future separately-audited dispatcher must start the exact reviewed task.
+no trigger.  AEP ships a separate exact-order starter for unattended control
+planes after the registration has been reviewed:
+
+```powershell
+pwsh -File K:\PythonProjects5\agent-evolution-protocol\scripts\start-elevated-desktop-order-task.ps1 `
+  -OrderId $id -EventId $event -CoordRoot $root -Apply
+```
+
+The starter reads the same durable order again and refuses unless it is still
+`DEPOSITED`, unexpired, `allow_launch: false`, and its receipt does not already
+exist.  It also validates that the named task is `Highest` + `Interactive`
+before issuing `Start-ScheduledTask`.  It starts exactly one registered task;
+it cannot register a task, change its arguments, launch a client, create a
+conversation, or claim delivery.  Its `TASK_START_REQUESTED` result is only
+process-start evidence; read the worker and commander receipts for later
+delivery facts.
 
 ## Limits and next acceptance step
 
