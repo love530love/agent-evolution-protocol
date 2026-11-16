@@ -4,7 +4,8 @@
 
 - 仓库：`https://github.com/love530love/agent-evolution-protocol.git`
 - 分支：`main`
-- AEP HEAD：`a144c90656ca1b886084cef221b5fa30a2ef5ac7`（与 `origin/main` 相同）
+- AEP v0.6.43 代码提交：`a144c90656ca1b886084cef221b5fa30a2ef5ac7`（首次推送时的 `origin/main`）
+- 本交接文档为基线之后的独立文档提交；复核当前 HEAD 以 `git log -1 --oneline` 为准
 - 版本：`0.6.43`
 - 对端 AEGS：`F:\PythonProjects1\AEGS`，`main @ 756c2e0925b2d836f8d53d9003f8e378adc64edb`（与 `origin/main` 相同，工作区干净）
 - 交接人：`qoder_cn`
@@ -89,7 +90,7 @@ python -m aegs.cli evidence export .
 ## 后续执行者首个工作顺序
 
 1. 读 `aep --coord-root ... coord-digest --agent <your_agent>`、`aep inspect --markdown` 与本交接；核对 claim 是否过期，写前重新 claim。
-2. `git status --short` 与 `git log -1` 确认 HEAD `a144c90`；不要覆盖用户未提交文件。
+2. `git status --short` 与 `git log -1` 确认工作树与当前 HEAD；用 `git merge-base --is-ancestor a144c90 HEAD` 确认 v0.6.43 已在历史中；不要覆盖用户未提交文件。
 3. 跑 `tests/test_nightly_loop.py`；全量回归时按上面的 watcher 条件解读唯一失败。
 4. 复核 AEGS `756c2e0` 与 N08 证据；如需继续协作，先与用户确认新的夜里窗口与任务队列，再以新 `run_id` 重建 `state.json`。
 5. 若要提升验收级别，优先争取一次真实的 `AGENT_ACK`，再谈“队友已完成”。
@@ -99,7 +100,7 @@ python -m aegs.cli evidence export .
 
 | 证据 | 路径 / 值 |
 | --- | --- |
-| AEP 提交 | `a144c90656ca1b886084cef221b5fa30a2ef5ac7` |
+| AEP v0.6.43 代码提交 | `a144c90656ca1b886084cef221b5fa30a2ef5ac7` |
 | AEP 版本 | `0.6.43` |
 | 夜跑状态 | `coordination/nightly_loop/state.json`（`FINISHED_QUEUE`） |
 | 早间报告 | `coordination/nightly_loop/report.md` |
