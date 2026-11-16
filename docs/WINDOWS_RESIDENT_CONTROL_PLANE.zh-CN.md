@@ -51,5 +51,9 @@ Core Host 与 Desktop Host 绝不能共同持有同一把锁，且 Core Host 不
 Agent 私有的 MCP/stdio 服务器。它只持久化订单，并由已经登记、健康且处于登录态的
 Desktop Host 领取；这是避免多宿主重复拉起 166 个 MCP 进程的边界。
 
+使用 `scripts/aep-resident-status.ps1` 检查两类心跳。只有 Core 与 Desktop
+同时新鲜时，报告才会显示 `control_plane=READY`；即使如此，`delivery_claim` 仍为
+`NONE`，直到某张订单留下原会话可见消息、目标 ACK 与结果回读证据。
+
 任何一层重启都不得把 `SENDING`、`UNCERTAIN` 或未读回的旧订单重新输入。恢复时
 必须先读取同一事件的会话回执，再决定继续、接力或 HOLD。

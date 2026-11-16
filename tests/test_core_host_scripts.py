@@ -12,6 +12,15 @@ def test_core_host_wrapper_starts_python_module_without_a_per_tick_child_process
     assert "Start-Process" not in source
 
 
+def test_short_cmd_launcher_avoids_schtasks_command_length_limit():
+    source = (ROOT / "scripts" / "run-aep-core-host.cmd").read_text(encoding="utf-8")
+    assert "where pwsh.exe" in source
+    assert "aep-core-host.ps1" in source
+    registration = (ROOT / "scripts" / "register-core-host-task.ps1").read_text(encoding="utf-8")
+    assert "run-aep-core-host.cmd" in registration
+    assert "schtasks /TR limit" in registration
+
+
 def test_core_host_registration_defaults_to_user_logon_and_gates_system_mode():
     source = (ROOT / "scripts" / "register-core-host-task.ps1").read_text(encoding="utf-8")
     assert "[switch]$RunAsSystem" in source
@@ -19,4 +28,6 @@ def test_core_host_registration_defaults_to_user_logon_and_gates_system_mode():
     assert "New-ScheduledTaskTrigger -AtLogOn" in source
     assert "New-ScheduledTaskTrigger -AtStartup" in source
     assert "DriveType -ne [IO.DriveType]::Fixed" in source
+    assert "Get-Command Register-ScheduledTask" in source
+    assert "schtasks.exe" in source
     assert "AEP Core Host: durable coordination only; never desktop automation" in source
