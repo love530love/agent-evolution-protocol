@@ -48,7 +48,13 @@ if (Test-Path -LiteralPath $receipt -PathType Leaf) {
     throw "RECEIPT_ALREADY_EXISTS: $receipt"
 }
 
-$scheduledTasks = Get-Command Get-ScheduledTask -ErrorAction SilentlyContinue
+# See the registration helper: PowerShell 7 compatibility proxies can be
+# discoverable but cannot reliably invoke the ScheduledTasks parameter sets.
+$scheduledTasks = if ($PSVersionTable.PSEdition -eq "Desktop") {
+    Get-Command Get-ScheduledTask -ErrorAction SilentlyContinue
+} else {
+    $null
+}
 if ($scheduledTasks) {
     $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
     if ($null -eq $task) { throw "TASK_NOT_REGISTERED: $TaskName" }

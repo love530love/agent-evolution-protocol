@@ -172,7 +172,14 @@ if (-not $Register) {
 }
 
 $userId = if ($env:USERDOMAIN) { "$env:USERDOMAIN\$env:USERNAME" } else { $env:USERNAME }
-$scheduledTasks = Get-Command New-ScheduledTaskAction -ErrorAction SilentlyContinue
+# PowerShell 7 may surface a Windows PowerShell compatibility proxy for this
+# cmdlet.  It advertises the command but rejects the principal parameter set at
+# invocation time, so command discovery alone is not a capability check.
+$scheduledTasks = if ($PSVersionTable.PSEdition -eq "Desktop") {
+    Get-Command New-ScheduledTaskAction -ErrorAction SilentlyContinue
+} else {
+    $null
+}
 if ($scheduledTasks) {
     $action = New-ScheduledTaskAction -Execute $pwsh -Argument $argument
     $principal = New-ScheduledTaskPrincipal -UserId $userId -LogonType Interactive -RunLevel Highest
