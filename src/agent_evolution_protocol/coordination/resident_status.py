@@ -60,11 +60,18 @@ def status(root: Path, *, max_age_seconds: float = 90.0,
     # core/desktop.  It becomes relevant only for a particular high-integrity
     # order and must not make the whole control plane look dead.
     required = (core, desktop)
+    desktop_mode = str((desktop.get("heartbeat") or {}).get("mode") or "dispatch")
+    if not all(row["healthy"] for row in required):
+        control_plane = "HOLD"
+    elif desktop_mode == "observe-only":
+        control_plane = "OBSERVE_ONLY"
+    else:
+        control_plane = "READY"
     return {
         "schema": "aep-resident-status-v1", "at": now.isoformat(),
         "coord_root": str(Path(root).resolve()), "max_age_seconds": max_age_seconds,
         "planes": {row["plane"]: row for row in (core, desktop, high_integrity)},
-        "control_plane": "READY" if all(row["healthy"] for row in required) else "HOLD",
+        "control_plane": control_plane,
         "delivery_claim": "NONE",
         "note": "READY means resident coordination loops are healthy; it does not prove a message was delivered or acknowledged.",
         "execution_started": False,

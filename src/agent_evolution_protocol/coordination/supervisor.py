@@ -70,8 +70,16 @@ def _exclusive_lock(root: Path) -> Iterator[None]:
 
 
 def watch(root: Path, *, interval_seconds: float = 30.0, max_ticks: int = 0,
-          perceive_first: bool = True, stream: TextIO | None = None) -> int:
-    """Run one commander loop or report that an equivalent loop already owns it."""
+          perceive_first: bool = True, dispatch: bool = True,
+          stream: TextIO | None = None) -> int:
+    """Run the interactive Desktop Host, optionally in receipt-only mode.
+
+    ``dispatch=False`` is deliberately narrower than a dry run: it reads
+    already-arrived ACK evidence and updates only the associated durable order
+    state.  It never focuses a window, discovers a composer or types text.  It
+    is the safe way to prove that the logged-in host can stay alive before a
+    separately approved order is allowed to use its desktop hand.
+    """
     if interval_seconds < 1:
         raise ValueError("interval_seconds must be at least one second")
     if max_ticks < 0:
@@ -83,7 +91,8 @@ def watch(root: Path, *, interval_seconds: float = 30.0, max_ticks: int = 0,
         started_payload = {"status": "STARTED", "at": started,
                            "coord_root": str(root.resolve()),
                            "interval_seconds": interval_seconds,
-                           "perceive_first": perceive_first, "tick": 0}
+                           "perceive_first": perceive_first, "tick": 0,
+                           "mode": "dispatch" if dispatch else "observe-only"}
         _heartbeat(root, started_payload)
         print(json.dumps(started_payload | {"pid": os.getpid()}, ensure_ascii=False),
               file=output, flush=True)
@@ -92,7 +101,9 @@ def watch(root: Path, *, interval_seconds: float = 30.0, max_ticks: int = 0,
             tick_started = time.monotonic()
             at = datetime.now(timezone.utc).isoformat()
             try:
-                result = commander.tick(root, perceive_first=perceive_first)
+                result = (commander.tick(root, perceive_first=perceive_first) if dispatch
+                          else {"at": at, "perceived": {"skipped": True},
+                                "acks": commander.check_acks(root), "dispatched": []})
                 count += 1
                 payload = {
                     "status": "TICK_COMPLETED", "at": result.get("at", at), "tick": count,
@@ -100,6 +111,7 @@ def watch(root: Path, *, interval_seconds: float = 30.0, max_ticks: int = 0,
                     "duration_seconds": round(time.monotonic() - tick_started, 3),
                     "dispatched": result.get("dispatched") or [],
                     "perceived": bool(result.get("perceived") and not result["perceived"].get("skipped")),
+                    "mode": "dispatch" if dispatch else "observe-only",
                 }
                 _heartbeat(root, payload)
                 print(json.dumps(payload, ensure_ascii=False), file=output, flush=True)
@@ -124,10 +136,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--interval-seconds", type=float, default=30.0)
     parser.add_argument("--max-ticks", type=int, default=0)
     parser.add_argument("--no-perceive", action="store_true")
+    parser.add_argument("--observe-only", action="store_true",
+                        help="read same-event ACK evidence only; never touch a window or dispatch")
     args = parser.parse_args(argv)
     try:
         return watch(args.coord_root, interval_seconds=args.interval_seconds,
-                     max_ticks=args.max_ticks, perceive_first=not args.no_perceive)
+                     max_ticks=args.max_ticks, perceive_first=not args.no_perceive,
+                     dispatch=not args.observe_only)
     except AlreadyRunning as exc:
         print(json.dumps({"status": "ALREADY_RUNNING", "coord_root": str(args.coord_root.resolve()),
                           "detail": str(exc)}, ensure_ascii=False), flush=True)

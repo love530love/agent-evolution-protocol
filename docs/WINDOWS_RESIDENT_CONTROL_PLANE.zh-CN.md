@@ -55,5 +55,9 @@ Desktop Host 领取；这是避免多宿主重复拉起 166 个 MCP 进程的边
 同时新鲜时，报告才会显示 `control_plane=READY`；即使如此，`delivery_claim` 仍为
 `NONE`，直到某张订单留下原会话可见消息、目标 ACK 与结果回读证据。
 
+部署初期可运行 `scripts/aep-supervisor.ps1 -ObserveOnly`。该模式只读取已经进入
+协作区的同事件 ACK，不会发现窗口、写入输入框或派发订单；状态报告会显示
+`OBSERVE_ONLY`，而不是错误地把它称为可发送的 `READY`。
+
 任何一层重启都不得把 `SENDING`、`UNCERTAIN` 或未读回的旧订单重新输入。恢复时
 必须先读取同一事件的会话回执，再决定继续、接力或 HOLD。

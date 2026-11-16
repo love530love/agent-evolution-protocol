@@ -37,3 +37,15 @@ def test_watch_rejects_invalid_intervals_before_starting_a_loop(tmp_path):
             pass
         else:  # pragma: no cover - assertion clarity
             raise AssertionError("invalid supervisor settings were accepted")
+
+
+def test_observe_only_reads_ack_evidence_without_calling_desktop_dispatch(tmp_path):
+    output = StringIO()
+    with patch.object(supervisor.commander, "tick") as tick, \
+            patch.object(supervisor.commander, "check_acks", return_value={"acked": []}) as check:
+        assert supervisor.watch(tmp_path, interval_seconds=1, max_ticks=1,
+                                dispatch=False, stream=output) == 0
+    assert tick.call_count == 0
+    assert check.call_count == 1
+    heartbeat = (tmp_path / "runtime" / "aep-supervisor.heartbeat.json").read_text(encoding="utf-8")
+    assert '"mode": "observe-only"' in heartbeat
