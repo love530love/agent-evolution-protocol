@@ -8,20 +8,30 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$singleton = New-Object Threading.Mutex($false, 'Global\AEP-Campaign-Watch')
-if (-not $singleton.WaitOne(0)) {
-  Write-Output '{"status":"ALREADY_RUNNING","component":"campaign-watch"}'
-  exit 0
-}
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 if (-not $CoordRoot) { $CoordRoot = Join-Path $repoRoot 'coordination' }
 if (-not $BridgeRoot) { $BridgeRoot = Join-Path $repoRoot 'src\agent_evolution_protocol\coordination' }
 $CoordRoot = [IO.Path]::GetFullPath($CoordRoot)
 if (-not $PSBoundParameters.ContainsKey('BridgeRoot')) { $BridgeRoot = $CoordRoot }
 $BridgeRoot = [IO.Path]::GetFullPath($BridgeRoot)
+$lockRoot = [IO.Path]::TrimEndingDirectorySeparator($CoordRoot)
+if ($IsWindows) { $lockRoot = $lockRoot.ToUpperInvariant() }
+$lockKey = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($lockRoot)))
+$singleton = [Threading.Mutex]::new($false, "Global\AEP-Campaign-Watch-$lockKey")
+try {
+  $ownsMutex = $singleton.WaitOne(0)
+} catch [Threading.AbandonedMutexException] {
+  $ownsMutex = $true
+}
+if (-not $ownsMutex) {
+  $singleton.Dispose()
+  Write-Output '{"status":"ALREADY_RUNNING","component":"campaign-watch"}'
+  exit 0
+}
+$watchers = @()
+try {
 $python = (Get-Command $Python -ErrorAction Stop).Source
 $env:PYTHONPATH = (Join-Path $repoRoot 'src') + [IO.Path]::PathSeparator + $env:PYTHONPATH
-
 $campaignEvents = Join-Path $CoordRoot 'campaign\events'
 $presenceAgents = Join-Path $CoordRoot 'presence\agents'
 $delegationInbox = Join-Path $CoordRoot 'delegation\inbox'
@@ -35,7 +45,6 @@ $wakeQueue = Join-Path $BridgeRoot 'wake_queue'
 [void](New-Item -ItemType Directory -Path $bridgeJournalEvents -Force)
 [void](New-Item -ItemType Directory -Path $wakeQueue -Force)
 
-$watchers = @()
 foreach ($row in @(@{ Path = $campaignEvents; Id = 'AepCampaignEvent' },
                    @{ Path = $presenceAgents; Id = 'AepPresenceEvent' },
                    @{ Path = $delegationInbox; Id = 'AepDelegationEvent' },
@@ -64,7 +73,6 @@ function Invoke-CampaignTick {
   }
 }
 
-try {
   Invoke-CampaignTick
   if ($ReadyFile) {
     if (Test-Path -LiteralPath $ReadyFile) { throw 'ReadyFile already exists; use a fresh readiness path.' }
