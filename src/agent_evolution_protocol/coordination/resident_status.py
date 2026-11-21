@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import json
+from math import isfinite
 from pathlib import Path
 from typing import Any
 
@@ -34,10 +35,13 @@ def _plane(name: str, row: dict[str, Any] | None, *, now: datetime, max_age_seco
         at = datetime.fromisoformat(str(raw_time))
         if at.tzinfo is None:
             raise ValueError("timezone required")
-        age = max(0.0, (now - at.astimezone(timezone.utc)).total_seconds())
+        age = (now - at.astimezone(timezone.utc)).total_seconds()
     except (TypeError, ValueError):
         return {"plane": name, "status": "INVALID", "healthy": False,
                 "reason": "HEARTBEAT_TIMESTAMP_INVALID", "heartbeat": row}
+    if age < 0:
+        return {"plane": name, "status": "INVALID", "healthy": False,
+                "reason": "HEARTBEAT_TIMESTAMP_IN_FUTURE", "heartbeat": row}
     healthy = row.get("status") in {"STARTED", "CYCLE_COMPLETED", "TICK_COMPLETED"} and age <= max_age_seconds
     return {"plane": name, "status": "HEALTHY" if healthy else "STALE_OR_FAILED",
             "healthy": healthy, "age_seconds": round(age, 3), "heartbeat": row}
@@ -46,8 +50,9 @@ def _plane(name: str, row: dict[str, Any] | None, *, now: datetime, max_age_seco
 def status(root: Path, *, max_age_seconds: float = 90.0,
            now: datetime | None = None) -> dict[str, Any]:
     """Read all resident-plane heartbeats without starting tasks or clients."""
-    if isinstance(max_age_seconds, bool) or max_age_seconds <= 0:
-        raise ValueError("max_age_seconds must be positive")
+    if (isinstance(max_age_seconds, bool) or not isinstance(max_age_seconds, (int, float))
+            or not isfinite(max_age_seconds) or max_age_seconds <= 0):
+        raise ValueError("max_age_seconds must be finite and positive")
     now = now or datetime.now(timezone.utc)
     runtime = Path(root) / "runtime"
     core = _plane("core", _read(runtime / "aep-core-host.heartbeat.json"),
