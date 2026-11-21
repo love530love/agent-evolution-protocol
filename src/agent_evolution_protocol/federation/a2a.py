@@ -85,21 +85,32 @@ class A2AAdapter:
             self.crashes += 1
             if not self.restart:
                 return False
+            self.close()
         self._start()
         return True
 
     def close(self):
-        if self._process is None:
+        process = self._process
+        if process is None:
             return
         try:
-            self._process.stdin.close()
+            process.stdin.close()
         except (OSError, ValueError):
             pass
         try:
-            self._process.wait(timeout=2)
+            process.wait(timeout=2)
         except subprocess.TimeoutExpired:
-            self._process.kill()
+            process.kill()
+            process.wait(timeout=2)
+        # A descendant may still hold stdout. Closing a pipe from another
+        # thread can block, so only close it after the reader exits.
+        if self._reader is not None:
+            self._reader.join(timeout=0.2)
+            if not self._reader.is_alive():
+                process.stdout.close()
         self._process = None
+        self._reader = None
+        self._queue = None
 
     def __enter__(self):
         self._ensure()
