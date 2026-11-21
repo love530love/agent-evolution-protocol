@@ -36,6 +36,7 @@ from agent_evolution_protocol.coordination import overlay_audit
 from agent_evolution_protocol.coordination import dispatch_contract
 from agent_evolution_protocol.coordination import dispatch_gate
 from agent_evolution_protocol.coordination import ack_protocol
+from agent_evolution_protocol.coordination import instruction_revision
 from agent_evolution_protocol.coordination import session_fingerprint
 from agent_evolution_protocol.coordination.overlay_detector import classify
 from agent_evolution_protocol.coordination.provider_readback import receipt as make_readback, accepted as readback_accepted
@@ -154,6 +155,9 @@ def _switch_surface(root: Path, order: dict, *, blocked_target: str,
 
     Returns the re-dispatched result, or ``None`` when there is nowhere to go.
     """
+    if order.get("source_chat"):
+        # A fanout recipient is part of the order's identity.
+        return None
     if int(order.get("surface_switches") or 0) >= SURFACE_SWITCH_LIMIT:
         return None
     candidates = _continuation_surfaces(root, order, blocked_target=blocked_target)
@@ -245,7 +249,19 @@ def _gate_refusal(root: Path, order: dict, *, profile_row: dict,
 
 
 def dispatch(root: Path, *, order: dict) -> dict:
-    if str(order.get("task", "")).startswith("improvement:"):
+    if order.get("source_chat"):
+        from .battle_orders import TaskWriterBusy
+
+        try:
+            with instruction_revision.lock(root, order["workspace_id"], order["task"]):
+                return _dispatch_order(root, order=order)
+        except TaskWriterBusy:
+            return _persisted_order(root, order["id"])
+    return _dispatch_order(root, order=order)
+
+
+def _dispatch_order(root: Path, *, order: dict) -> dict:
+    if not order.get("source_chat") and str(order.get("task", "")).startswith("improvement:"):
         from .battle_orders import _task_writer_lock
         with _task_writer_lock(Path(root), "improvement-dispatch"):
             current = next((row for row in _orders(root) if row.get("id") == order.get("id")), None)
@@ -262,6 +278,18 @@ def dispatch(root: Path, *, order: dict) -> dict:
             return current
         if current.get("state") != "DEPOSITED" or not _preinput_retryable(current):
             return current
+        if current.get("source_chat"):
+            if str(current.get("task", "")).startswith("improvement:"):
+                return _record_attempt(root, current, state="CEASED",
+                                       note="IMPROVEMENT_REQUIRES_DEDICATED_DISPATCH")
+            try:
+                stale = instruction_revision.stale(root, current)
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                return _record_attempt(root, current, state="CEASED",
+                                       note=f"INSTRUCTION_REVISION_UNREADABLE: {exc}")
+            if stale:
+                return _record_attempt(root, current, state="CEASED",
+                                       note="INSTRUCTION_REVISION_SUPERSEDED")
         if datetime.now(timezone.utc) > datetime.fromisoformat(current["expires_at"]):
             return _record_attempt(root, order, state="FAILED", note="EXPIRED")
         # Keep the lock through delivery and durably fence process death before
@@ -420,6 +448,11 @@ def _dispatch(root: Path, *, order: dict) -> dict:
                 note=f"ORIGINAL_SESSION_PROFILE_INVALID: {exc}; no desktop input attempted",
             )
     order["session_id"] = str(profile_row.get("session_marker") or "").strip()
+    if order.get("urgent_interject") and order.get("transport") == "cdp":
+        return _record_attempt(
+            root, order, state="DEFERRED",
+            note="INTERJECT_TRANSPORT_UNSUPPORTED: CDP has no busy-turn insertion contract",
+        )
     if strict_attestation:
         # CDP has no DOM-bound equivalent of the calibrated active-session
         # UIA proof yet.  Never let a strict profile bypass that proof merely
@@ -431,6 +464,8 @@ def _dispatch(root: Path, *, order: dict) -> dict:
                       "delivery needs profiled UIA evidence, not a CDP bypass"),
             )
         transport, info = "profiled-ui", {"strict_session_attestation_required": True}
+    elif order.get("urgent_interject"):
+        transport, info = "profiled-ui", {"busy_turn_interjection_required": True}
     else:
         transport, info = _pick_transport(root, target, order.get("transport", "auto"))
     _record_attempt(root, order, state="WINDOW_FOUND", transport=transport,
@@ -693,6 +728,9 @@ def reinforce(root: Path, order_id: str) -> dict | None:
     if str(order.get("task", "")).startswith("improvement:"):
         # This pipeline has stable stage IDs, leases and explicit pre-input
         # rerouting. Generic reinforcements must not create duplicate waves.
+        return None
+    if order.get("source_chat"):
+        # Fanout targets are explicit, and a generic backup would drop revision provenance.
         return None
     candidate = _pick_reinforcement_candidate(order, _orders(root))
     if not candidate:

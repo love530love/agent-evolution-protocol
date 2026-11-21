@@ -125,7 +125,8 @@ def submit_order(root: Path, *, target: str, task: str, text: str, sender: str,
                  priority: str = "normal", event_id: str = "", allow_launch: bool = False,
                  transport: str = "auto", expires_minutes: int = 120,
                  candidates: str = "", source_wake: dict | None = None,
-                 workspace_id: str = "", urgent_interject: bool = False) -> dict:
+                 workspace_id: str = "", urgent_interject: bool = False,
+                 source_chat: dict | None = None) -> dict:
     """Queue a directive for one client. Nothing is sent until a tick runs.
 
     ``candidates`` is a comma/space separated list of backup agents. When the
@@ -142,6 +143,8 @@ def submit_order(root: Path, *, target: str, task: str, text: str, sender: str,
         raise ValueError("text is required")
     if source_wake is not None and not isinstance(source_wake, dict):
         raise ValueError("source_wake must be an object")
+    if source_chat is not None and not isinstance(source_chat, dict):
+        raise ValueError("source_chat must be an object")
     if workspace_id:
         workspace_identity.validate_workspace_id(workspace_id)
     order_id = now().replace(":", "").replace(".", "").replace("+", "") + "-" + uuid4().hex[:8]
@@ -188,6 +191,8 @@ def submit_order(root: Path, *, target: str, task: str, text: str, sender: str,
         # Persist provenance with the first order write, not in a second update
         # that could be lost if the wake ingress crashes between writes.
         payload["source_wake"] = deepcopy(source_wake)
+    if source_chat is not None:
+        payload["source_chat"] = deepcopy(source_chat)
     if workspace_id:
         payload["workspace_id"] = workspace_id
     _atomic(_root(root) / "inbox" / f"{order_id}.json", payload)

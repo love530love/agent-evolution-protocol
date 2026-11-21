@@ -1,7 +1,7 @@
 {
   "by_risk": {
     "irreversible": 15,
-    "mutating": 59,
+    "mutating": 61,
     "read-only": 21
   },
   "commands": [
@@ -49,6 +49,56 @@
       ],
       "documented": false,
       "name": "challenge",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "event",
+          "flags": [
+            "--event"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "workspace_id",
+          "flags": [
+            "--workspace-id"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "task",
+          "flags": [
+            "--task"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "target",
+          "flags": [
+            "--target"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "default": false,
+          "dest": "urgent",
+          "flags": [
+            "--urgent"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "documented": true,
+      "name": "chat-dispatch",
+      "purpose": "Queue a journal directive for explicit agents.",
       "risk": "mutating"
     },
     {
@@ -1022,6 +1072,15 @@
           "flags": [
             "--text-file"
           ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "workspace_id",
+          "flags": [
+            "--workspace-id"
+          ],
+          "help": "bind the journal event to an AEP workspace",
           "kind": "option",
           "required": false
         }
@@ -5572,6 +5631,23 @@
     {
       "arguments": [
         {
+          "dest": "output",
+          "flags": [
+            "--output"
+          ],
+          "help": "parent directory for run artifacts",
+          "kind": "option",
+          "required": true
+        }
+      ],
+      "documented": true,
+      "name": "portable-demo",
+      "purpose": "Run an isolated two-agent simulation.",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
           "dest": "round_id",
           "flags": [
             "--round-id"
@@ -5829,9 +5905,9 @@
       "risk": "mutating"
     }
   ],
-  "count": 95,
-  "digest": "sha256:a6e4ec1bff29a06bdaf0b5ac093e6b08eab3de481a267905f2ff70ea2cbd5f32",
-  "documented": 32,
+  "count": 97,
+  "digest": "sha256:eef36158e573d0c31e6a7d82da9e164fed7df3c6734ab6e5289721f671c54c22",
+  "documented": 34,
   "generated_from": "agent_evolution_protocol.cli:build_parser",
   "global_arguments": [
     {

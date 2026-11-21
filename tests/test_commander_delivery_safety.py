@@ -257,6 +257,23 @@ class CommanderDeliverySafetyTests(unittest.TestCase):
         wrapped.assert_called_once()
         raw.assert_not_called()
 
+    def test_urgent_order_uses_interjection_route_before_auto_cdp(self):
+        order = commander.submit_order(self.root, target="qoder", task="notice",
+                                       text="Check revised constraints", sender="codex",
+                                       urgent_interject=True)
+        profile = self.root / "ui_profiles" / "qoder.json"
+        profile.parent.mkdir(parents=True)
+        profile.write_text('{"session_marker": "Original chat"}', encoding="utf-8")
+        client = {"agent": "qoder", "windows": [{"pid": 123}],
+                  "unique": True, "anchored": False}
+        with (patch.object(commander.registry, "discover", return_value={"clients": [client]}),
+              patch.object(commander, "_pick_transport") as pick,
+              patch.object(commander, "_profiled_deliver",
+                           return_value={"status": "URGENT_INTERJECT_UNAVAILABLE"}) as deliver):
+            commander.dispatch(self.root, order=order)
+        pick.assert_not_called()
+        self.assertIs(deliver.call_args.kwargs["urgent_interject"], True)
+
     def test_strict_profile_forces_the_bounded_uia_path_not_cdp(self):
         order = commander.submit_order(self.root, target="qoder", task="notice",
                                        text="Read this warning", sender="codex")

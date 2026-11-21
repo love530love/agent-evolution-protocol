@@ -4,10 +4,10 @@
 > 手改会让 `tests/test_skill_manifest.py` 失败——这是刻意的：
 > 上一版研究文档把 `schema=aep-next-action-v1` 写错了整整两天，因为散文不会报错。
 
-- 命令总数：**95**
-- 风险分布：read-only 21、mutating 59、irreversible 15
-- 用途已记录：**32** / 95（未记录 63，只允许减少）
-- 清单摘要：`sha256:a6e4ec1bff29a06bdaf0b5ac093e6b08eab3de481a267905f2ff70ea2cbd5f32`
+- 命令总数：**97**
+- 风险分布：read-only 21、mutating 61、irreversible 15
+- 用途已记录：**34** / 97（未记录 63，只允许减少）
+- 清单摘要：`sha256:eef36158e573d0c31e6a7d82da9e164fed7df3c6734ab6e5289721f671c54c22`
 
 风险分级是**声明**而不是推导：未登记的命令一律按 `mutating` 处理。
 把会写的命令标成 `read-only` 是这里唯一有代价的错误，所以默认值朝安全方向倒。
@@ -22,6 +22,7 @@
 | --- | --- | --- | --- |
 | `audit` | mutating | `--round-id` | *未记录* |
 | `challenge` | mutating | `--round-id --actor --file` | *未记录* |
+| `chat-dispatch` | mutating | `--event --workspace-id --task --target` | Queue a journal directive for explicit agents. |
 | `commit` | irreversible | `--round-id --card` | *未记录* |
 | `decide` | mutating | `--round-id --actor --file` | *未记录* |
 | `doctor` | read-only | `—` | *未记录* |
@@ -29,6 +30,7 @@
 | `init` | mutating | `--round-id --task --leader --cells --budget` | *未记录* |
 | `inspect` | read-only | `—` | *未记录* |
 | `join` | mutating | `--agent` | *未记录* |
+| `portable-demo` | mutating | `--output` | Run an isolated two-agent simulation. |
 | `record-result` | mutating | `--round-id --result` | *未记录* |
 | `resume` | mutating | `--round-id --actor --reason` | *未记录* |
 | `reveal` | read-only | `--round-id --card` | *未记录* |

@@ -263,15 +263,19 @@ def check(order: dict[str, Any], *, profile: dict[str, Any] | None = None,
              severity="block" if strict else "warn")
 
     # 4. Still the current instruction.
-    superseded = [row for row in newer_orders
+    # Chat orders use the task revision gate. Timestamp order is not a
+    # revision and would incorrectly suppress other recipients of a fanout.
+    superseded = [] if order.get("source_chat") else [row for row in newer_orders
                   if str(row.get("task", "")) == task
                   and str(row.get("id", "")) != str(order.get("id", ""))
                   and str(row.get("event_id", "")) != event_id
                   and (_moment(row.get("created_at")) or datetime.min.replace(tzinfo=timezone.utc))
                   > (_moment(order.get("created_at")) or datetime.min.replace(tzinfo=timezone.utc))]
     note("not_superseded", not superseded,
-         "no newer order for this task" if not superseded
-         else f"superseded by {superseded[0].get('id')} ({superseded[0].get('event_id')})")
+         "chat order requires separate instruction revision check" if order.get("source_chat")
+         else "no newer order for this task" if not superseded
+         else f"superseded by {superseded[0].get('id')} ({superseded[0].get('event_id')})",
+         checked=not bool(order.get("source_chat")))
 
     if workspace is None:
         note("dag_event_matches", True, "workspace state not read", checked=False)

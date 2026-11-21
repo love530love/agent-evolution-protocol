@@ -1232,11 +1232,27 @@ def coord_chat_publish(args: argparse.Namespace) -> None:
     text = args.text if args.text is not None else Path(args.text_file).read_text(encoding="utf-8")
     if not text.strip():
         raise ProtocolError("chat text is empty")
-    event = append_chat_event(root, room=args.room, actor=args.role, source=source,
-                              kind="message" if args.role == "user" else "result",
-                              text=text, session_id=args.session_id or "",
-                              cwd=str(workspace_root(args)), raw_hook=None)
+    try:
+        event = append_chat_event(root, room=args.room, actor=args.role, source=source,
+                                  kind="message" if args.role == "user" else "result",
+                                  text=text, session_id=args.session_id or "",
+                                  cwd=str(workspace_root(args)), raw_hook=None,
+                                  workspace_id=getattr(args, "workspace_id", None))
+    except ValueError as exc:
+        raise ProtocolError(str(exc)) from exc
     print(json.dumps({"id": event["id"], "recorded_at": event["recorded_at"], "source": source}, ensure_ascii=False, indent=2))
+
+
+def chat_dispatch(args: argparse.Namespace) -> None:
+    from agent_evolution_protocol.coordination import chat_dispatch as ingress
+
+    try:
+        result = ingress.queue(coord_root(args), event_id=args.event,
+                               workspace=args.workspace_id, task=valid_task(args.task),
+                               targets=args.target, urgent=args.urgent)
+    except (OSError, ValueError, KeyError) as exc:
+        raise ProtocolError(str(exc)) from exc
+    print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
 def coord_chat_read(args: argparse.Namespace) -> None:
@@ -3771,6 +3787,16 @@ def coord_trajectory(args: argparse.Namespace) -> None:
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+def portable_demo(args: argparse.Namespace) -> None:
+    from agent_evolution_protocol.federation import portable_demo as demo
+
+    try:
+        result = demo.run(args.output)
+    except (OSError, ValueError) as exc:
+        raise ProtocolError(str(exc)) from exc
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -3783,6 +3809,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--coord-root", type=Path, help="local coordination root for coord-* commands")
     parser.add_argument("--kernel-root", type=Path, help="local recovery kernel root for kernel-* commands")
     commands = parser.add_subparsers(dest="command", required=True)
+    chat_route = commands.add_parser("chat-dispatch", help="queue a journal directive for explicit agents",
+                                     description="Queue a journal directive for explicit agents.")
+    chat_route.add_argument("--event", required=True)
+    chat_route.add_argument("--workspace-id", required=True)
+    chat_route.add_argument("--task", required=True)
+    chat_route.add_argument("--target", action="append", required=True)
+    chat_route.add_argument("--urgent", action="store_true")
+    chat_route.set_defaults(func=chat_dispatch)
+    demo = commands.add_parser("portable-demo", help="run an isolated two-agent simulation",
+                               description="Run an isolated two-agent simulation.")
+    demo.add_argument("--output", type=Path, required=True, help="parent directory for run artifacts")
+    demo.set_defaults(func=portable_demo)
     init = commands.add_parser("init")
     init.add_argument("--round-id", required=True); init.add_argument("--task", required=True); init.add_argument("--leader", required=True); init.add_argument("--cells", nargs="+", required=True); init.add_argument("--budget", type=float, required=True); init.add_argument("--reserve", type=float, default=0.20); init.set_defaults(func=init_round)
     for name, func, option in (("commit", commit, "card"), ("reveal", reveal, "card"), ("record-result", record_result, "result")):
@@ -3922,6 +3960,7 @@ def build_parser() -> argparse.ArgumentParser:
     volley = commands.add_parser("coord-volley-plan"); volley.add_argument("--manifest-file", type=Path, required=True); volley.add_argument("--results-file", type=Path, required=True); volley.add_argument("--quota-remaining", type=int, required=True); volley.add_argument("--reserve", type=int, default=0); volley.add_argument("--wave-size", type=int, default=3); volley.set_defaults(func=coord_volley_plan)
     battle = commands.add_parser("coord-battle-order"); battle.add_argument("--agent"); battle.add_argument("--text"); battle.add_argument("--to", nargs="*", default=[]); battle.add_argument("--deputy"); battle.add_argument("--evidence", nargs="*", default=[]); battle.add_argument("--reviewer"); battle.add_argument("--fix-author"); battle.add_argument("--status-task"); battle.set_defaults(func=coord_battle_order)
     chat_publish = commands.add_parser("coord-chat-publish"); chat_publish.add_argument("--source", required=True); chat_publish.add_argument("--role", choices=("user", "assistant"), required=True); chat_publish.add_argument("--room", default="workspace"); chat_publish.add_argument("--session-id"); chat_publish.add_argument("--workspace"); chat_body = chat_publish.add_mutually_exclusive_group(required=True); chat_body.add_argument("--text"); chat_body.add_argument("--text-file"); chat_publish.set_defaults(func=coord_chat_publish)
+    chat_publish.add_argument("--workspace-id", help="bind the journal event to an AEP workspace")
     chat_read = commands.add_parser("coord-chat-read"); chat_read.add_argument("--agent", required=True); chat_read.add_argument("--after"); chat_read.add_argument("--limit", type=int, default=50); chat_read.add_argument("--include-raw", action="store_true"); chat_read.set_defaults(func=coord_chat_read)
     chat_ack = commands.add_parser("coord-chat-ack"); chat_ack.add_argument("--agent", required=True); chat_ack.add_argument("--through", required=True); chat_ack.set_defaults(func=coord_chat_ack)
     session = commands.add_parser("coord-session-set"); session.add_argument("--agent", required=True); session.add_argument("--mode", choices=("sticky", "manual", "spawn-allowed"), default="sticky"); session.add_argument("--thread-id"); session.add_argument("--new-session-policy", choices=SESSION_POLICIES, default="forbid-by-default"); session.add_argument("--handoff-style", choices=HANDOFF_STYLES, default="digest-first"); session.add_argument("--notes"); session.set_defaults(func=coord_session_set)

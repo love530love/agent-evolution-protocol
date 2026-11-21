@@ -13,6 +13,8 @@ from pathlib import Path
 import re
 from uuid import uuid4
 
+from .workspace_identity import validate_workspace_id
+
 
 SAFE_AGENT = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 SAFE_EVENT = re.compile(r"^[0-9]{8}T[0-9]{12}Z-[0-9a-f]{12}$")
@@ -23,7 +25,10 @@ def archive_root(coord_root: Path) -> Path:
 
 
 def append_event(coord_root: Path, *, room: str, actor: str, source: str, kind: str,
-                 text: str, session_id: str = "", cwd: str = "", raw_hook: dict | None = None) -> dict:
+                 text: str, session_id: str = "", cwd: str = "", raw_hook: dict | None = None,
+                 workspace_id: str | None = None) -> dict:
+    if workspace_id is not None:
+        validate_workspace_id(workspace_id)
     root = archive_root(coord_root)
     events = root / "events"
     events.mkdir(parents=True, exist_ok=True)
@@ -34,6 +39,8 @@ def append_event(coord_root: Path, *, room: str, actor: str, source: str, kind: 
         "text": text, "session_id": session_id, "cwd": cwd,
         "visibility": "workspace", "raw_hook": raw_hook,
     }
+    if workspace_id is not None:
+        event["workspace_id"] = workspace_id
     path = events / f"{event_id}.json"
     temporary = events / f"{event_id}.{uuid4().hex}.tmp"
     try:
