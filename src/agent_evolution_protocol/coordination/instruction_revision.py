@@ -82,11 +82,11 @@ def delivery_status(root: Path, workspace: str, task: str) -> dict:
         current = history[-1] if history else None
         orders = [order for order in _orders(root) if order.get("source_chat")
                   and order.get("workspace_id") == workspace and order.get("task") == task]
-        current_by_target = {
-            order["target"]: order for order in sorted(orders, key=lambda item: item["id"])
-            if current and (order["source_chat"]["id"], order["source_chat"]["sha256"])
-            == (current["event_id"], current["sha256"])
-        }
+        current_by_target = {}
+        for order in orders:
+            source = order["source_chat"]
+            if current and (source["id"], source["sha256"]) == (current["event_id"], current["sha256"]):
+                current_by_target.setdefault(order["target"], []).append(order)
         rows = []
         for order in orders:
             source = order["source_chat"]
@@ -98,8 +98,12 @@ def delivery_status(root: Path, workspace: str, task: str) -> dict:
                 next_step = "TRACK_CURRENT"
             elif observed & {"MESSAGE_VISIBLE", "AGENT_ACK"}:
                 next_step = "CHECK_CORRECTION_ACK"
-                replacement = current_by_target.get(order["target"])
-                if replacement is not None:
+                replacements = current_by_target.get(order["target"], [])
+                if len(replacements) > 1:
+                    next_step = "RECONCILE_DUPLICATE_CORRECTIONS"
+                    correction = {"order_ids": [item["id"] for item in replacements]}
+                elif replacements:
+                    replacement = replacements[0]
                     correction = {"order_id": replacement["id"], "state": replacement["state"]}
                     if replacement["state"] == "AGENT_ACK" and replacement.get("ack"):
                         next_step = "VERIFY_CORRECTION_ADOPTION"

@@ -43,6 +43,27 @@ def test_delivery_status_distinguishes_old_visible_from_uncertain(tmp_path):
     assert previous["workbuddy"]["next_step"] == "RECONCILE_OLD_DELIVERY"
 
 
+def test_duplicate_corrections_require_reconciliation(tmp_path):
+    workspace = workspace_identity.new_workspace_id()
+    old = _event(tmp_path, "Original")
+    new = _event(tmp_path, "Corrected")
+    old_order = chat_dispatch.queue(tmp_path, event_id=old, workspace=workspace,
+                                    task="T1", targets=["qoder"])["orders"][0]
+    from agent_evolution_protocol.coordination import commander_base
+    order = next(item for item in commander._orders(tmp_path) if item["id"] == old_order["id"])
+    commander._record_attempt(tmp_path, order, state="MESSAGE_VISIBLE")
+    instruction_revision.activate(tmp_path, workspace, "T1", event=new, expected="", actor="operator")
+    chat_dispatch.queue(tmp_path, event_id=new, workspace=workspace, task="T1", targets=["qoder"])
+    replacement = next(item for item in commander._orders(tmp_path) if item["source_chat"]["id"] == new)
+    commander_base.submit_order(tmp_path, target="qoder", task="T1", text="Corrected",
+                                sender="operator", workspace_id=workspace,
+                                source_chat=replacement["source_chat"])
+    report = instruction_revision.delivery_status(tmp_path, workspace, "T1")
+    old_row = next(row for row in report["orders"] if row["journal_event_id"] == old)
+    assert old_row["next_step"] == "RECONCILE_DUPLICATE_CORRECTIONS"
+    assert len(old_row["correction"]["order_ids"]) == 2
+
+
 def test_group_order_keeps_its_explicit_target_after_input_is_denied(tmp_path):
     order = {"target": "qoder", "source_chat": {"id": "source-event"}}
     with patch.object(commander, "_continuation_surfaces") as candidates:
