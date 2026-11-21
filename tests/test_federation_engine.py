@@ -86,6 +86,15 @@ class SchedulingTests(EngineTestCase):
 
 
 class TakeoverTests(EngineTestCase):
+    def test_future_progress_does_not_mask_a_stalled_agent(self):
+        engine.add_task(self.root, self.state, task_id="t1", requirement="code")
+        owner = FakeAdapter("alpha", {"code"}, heartbeat_at=NOW.isoformat())
+        backup = FakeAdapter("beta", {"code"}, heartbeat_at=NOW.isoformat())
+        engine.tick(self.root, self.state, [owner, backup], now=NOW)
+        owner.last_heartbeat = (NOW + timedelta(hours=1)).isoformat()
+        engine.tick(self.root, self.state, [owner, backup], now=NOW)
+        self.assertEqual(self.reload()["tasks"]["t1"]["owner"], "beta")
+
     def test_exhausted_last_successor_cannot_be_reassigned_to_other_work(self):
         engine.add_task(self.root, self.state, task_id="t1", requirement="code")
         engine.add_task(self.root, self.state, task_id="t2", requirement="code")

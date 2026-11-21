@@ -229,7 +229,8 @@ def _stalled(beat, now, timeout_seconds):
         return True
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=timezone.utc)
-    return (now - moment).total_seconds() > timeout_seconds
+    age = (now - moment).total_seconds()
+    return age < -5 or age > timeout_seconds
 
 
 def _snapshot(root, state, moment):
