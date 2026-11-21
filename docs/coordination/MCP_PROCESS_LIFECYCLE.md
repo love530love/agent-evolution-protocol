@@ -39,3 +39,8 @@ Python 是当前调度、心跳、DAG、账本和 Job 生命周期的主实现�
 ## 验收边界
 
 `process_tree_stopped_verified=true` 只证明某次 **probe 进程树** 已回收；它不是原会话消息已发出、更不是 Agent ACK。真实协作仍必须完成：`SESSION_LOCATED → INPUT_SUBMITTED → MESSAGE_VISIBLE → AGENT_ACK → TASK_RESULT_READBACK`。
+
+## 心跳时间异常
+
+`HEARTBEAT_FUTURE` 表示 PID 探测为存活，但记录的心跳时间晚于巡检时间。
+应核对系统时钟及进程归属。生命周期清理会保留此状态的记录，不会终止进程。
