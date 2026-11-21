@@ -26,7 +26,7 @@ $scheduledTasks = Get-Command Register-ScheduledTask -ErrorAction SilentlyContin
 if ($scheduledTasks) {
   $action = New-ScheduledTaskAction -Execute $pwsh -Argument $argument -WorkingDirectory $root
   $trigger = New-ScheduledTaskTrigger -AtLogOn
-  $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 23) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+  $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 23) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
   Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Description "AEP interactive desktop host ($mode); single instance, bounded coordination loop" -Force | Out-Null
 } else {
   $run = '"' + $taskLauncher + '" -CoordRoot "' + $coordRoot + '" -IntervalSeconds ' + [Math]::Max(5, $IntervalMinutes * 60)
