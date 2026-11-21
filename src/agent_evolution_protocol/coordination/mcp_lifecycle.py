@@ -218,7 +218,7 @@ def pid_state(pid: int) -> str:
 def _status(record: dict[str, Any], *, probe: Callable[[int], str], now: datetime,
             stale_after_seconds: int) -> dict[str, Any]:
     heartbeat_at = _parse_timestamp(record["heartbeat_at"], name="heartbeat_at")
-    age = max(0.0, (now - heartbeat_at).total_seconds())
+    age = (now - heartbeat_at).total_seconds()
     if record["state"] == "EXITED":
         pid = "not_probed"
         status = "EXITED"
@@ -227,6 +227,7 @@ def _status(record: dict[str, Any], *, probe: Callable[[int], str], now: datetim
         if pid not in {"live", "dead", "unknown"}:
             pid = "unknown"
         status = ("DEAD_PID" if pid == "dead" else "UNKNOWN_PID" if pid == "unknown"
+                  else "HEARTBEAT_FUTURE" if age < 0
                   else "HEARTBEAT_STALE" if age > stale_after_seconds else "LIVE")
     return {**record, "pid_state": pid, "heartbeat_age_seconds": round(age, 3), "status": status}
 
@@ -247,7 +248,7 @@ def snapshot(root: str | Path, *, probe: Callable[[int], str] = pid_state,
                          "record_path": str(item)})
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             rows.append({"record_path": str(item), "status": "INVALID_RECORD", "error": str(exc)})
-    labels = ("LIVE", "HEARTBEAT_STALE", "DEAD_PID", "UNKNOWN_PID", "EXITED", "INVALID_RECORD")
+    labels = ("LIVE", "HEARTBEAT_FUTURE", "HEARTBEAT_STALE", "DEAD_PID", "UNKNOWN_PID", "EXITED", "INVALID_RECORD")
     counts = {label: sum(1 for row in rows if row["status"] == label) for label in labels}
     return {
         "schema": "aep-mcp-lifecycle-status-v1",

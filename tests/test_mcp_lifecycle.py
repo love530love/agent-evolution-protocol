@@ -98,3 +98,11 @@ def test_invalid_record_is_visible_and_never_pruned_as_a_process():
         assert report["counts"]["INVALID_RECORD"] == 1
         assert invalid.is_file()
         assert report["processes_terminated"] == 0
+def test_future_heartbeat_does_not_report_live(tmp_path):
+    from datetime import datetime, timedelta, timezone
+    from agent_evolution_protocol.coordination import mcp_lifecycle
+    now = datetime.now(timezone.utc)
+    mcp_lifecycle.register(tmp_path, agent="codex", pid=1234, moment=now + timedelta(minutes=1))
+    result = mcp_lifecycle.snapshot(tmp_path, probe=lambda pid: "live", moment=now)
+    assert result["counts"]["HEARTBEAT_FUTURE"] == 1
+    assert result["counts"]["LIVE"] == 0
