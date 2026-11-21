@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import re
 import unittest
 from pathlib import Path
@@ -142,6 +143,8 @@ class TemplatePrivacyTests(unittest.TestCase):
                                       f"{name}: a pid survived the export: {value[:80]}")
 
 
+@unittest.skipUnless(os.environ.get("AEP_CHECK_LOCAL_PROFILE_FRESHNESS") == "1",
+                     "local profile comparison is an optional deployment audit")
 class TemplateFreshnessTests(unittest.TestCase):
     """A template that drifts from its profile teaches the wrong calibration."""
 
