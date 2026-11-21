@@ -86,6 +86,58 @@ class SchedulingTests(EngineTestCase):
 
 
 class TakeoverTests(EngineTestCase):
+    def test_exhausted_last_successor_cannot_be_reassigned_to_other_work(self):
+        engine.add_task(self.root, self.state, task_id="t1", requirement="code")
+        engine.add_task(self.root, self.state, task_id="t2", requirement="code")
+        agents = [FakeAdapter("alpha", {"code"}, outcomes=("quota_exhausted",)),
+                  FakeAdapter("beta", {"code"}, outcomes=("quota_exhausted",))]
+        engine.tick(self.root, self.state, agents, now=NOW)
+        self.assertEqual([len(agent.deliveries) for agent in agents], [1, 1])
+        self.assertEqual(self.state["tasks"]["t2"]["state"], "blocked")
+
+    def test_running_owner_quota_heartbeat_triggers_takeover(self):
+        class ReportingAdapter(FakeAdapter):
+            signal = ""
+
+            def heartbeat(self, now):
+                return {**super().heartbeat(now), "signal": self.signal}
+
+        engine.add_task(self.root, self.state, task_id="t1", requirement="code")
+        owner = ReportingAdapter("alpha", {"code"}, heartbeat_at=NOW.isoformat())
+        successor = FakeAdapter("beta", {"code"}, heartbeat_at=NOW.isoformat())
+        engine.tick(self.root, self.state, [owner, successor], now=NOW)
+        owner.signal = "usage_limit"
+        engine.tick(self.root, self.state, [owner, successor], now=NOW)
+        state = self.reload()
+        self.assertEqual(state["tasks"]["t1"]["owner"], "beta")
+        self.assertEqual(state["handoffs"][-1]["reason"], "usage_limit")
+
+    def test_provider_limits_skip_multiple_exhausted_agents(self):
+        engine.add_task(self.root, self.state, task_id="t1", requirement="code")
+        adapters = [
+            FakeAdapter("alpha", {"code"}, outcomes=("quota_exhausted",)),
+            FakeAdapter("beta", {"code"}, outcomes=("time_limit",)),
+            FakeAdapter("gamma", {"code"}),
+        ]
+        engine.tick(self.root, self.state, adapters, now=NOW)
+        state = self.reload()
+        self.assertEqual(state["tasks"]["t1"]["owner"], "gamma")
+        self.assertEqual(state["tasks"]["t1"]["state"], "running")
+        self.assertEqual([len(adapter.deliveries) for adapter in adapters], [1, 1, 1])
+        self.assertEqual([row["to_agent"] for row in state["handoffs"]], ["gamma"])
+
+    def test_unconfirmed_successor_stops_without_another_delivery(self):
+        engine.add_task(self.root, self.state, task_id="t1", requirement="code")
+        adapters = [
+            FakeAdapter("alpha", {"code"}, outcomes=("quota_exhausted",)),
+            FakeAdapter("beta", {"code"}, outcomes=("adapter_timeout",)),
+            FakeAdapter("gamma", {"code"}),
+        ]
+        engine.tick(self.root, self.state, adapters, now=NOW)
+        self.assertEqual(self.state["tasks"]["t1"]["state"], "blocked")
+        self.assertEqual(self.state["handoffs"], [])
+        self.assertEqual(adapters[2].deliveries, [])
+
     def test_token_exhaustion_hands_the_task_to_a_successor(self):
         engine.add_task(self.root, self.state, task_id="t1", requirement="code")
         adapters = [FakeAdapter("alpha", {"code"}, outcomes=("token_exhausted",), heartbeat_at=NOW.isoformat()),

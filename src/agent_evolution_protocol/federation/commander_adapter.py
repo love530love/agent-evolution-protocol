@@ -22,6 +22,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from .diagnosis import CAPACITY_SIGNALS
+
 #: Order states that mean "this order will never move again".  A task with one
 #: of these may be handed off; a task whose order is merely deferred may not.
 TERMINAL_ORDER_STATES = frozenset({"AGENT_ACK", "FAILED", "CEASED", "RETIRED"})
@@ -210,11 +212,14 @@ class CommanderAdapter:
             return "adapter_crashed"
         if state != "FAILED":
             return ""
+        attempts = order.get("attempts") or []
+        last = (attempts[-1].get("receipt") or {}) if attempts else {}
+        signal = str(last.get("signal", "")).strip().lower()
+        if signal in CAPACITY_SIGNALS:
+            return signal
         note = str(order.get("note", "")).upper()
         if "EXPIRED" in note:
             return "token_exhausted"
-        attempts = order.get("attempts") or []
-        last = (attempts[-1].get("receipt") or {}) if attempts else {}
         for key in ("signal", "status", "error", "state"):
             value = str(last.get(key, "")).strip()
             if value:

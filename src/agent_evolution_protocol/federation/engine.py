@@ -217,8 +217,9 @@ def _learn(root, state, task, outcome, moment):
     _consider_promotion(root, state, moment)
 
 
-def _stalled(adapter, now, timeout_seconds):
-    beat = adapter.heartbeat(now)
+def _stalled(beat, now, timeout_seconds):
+    if beat.get("alive") is False:
+        return True
     last = beat.get("last_progress_at")
     if not last:
         return True
@@ -274,6 +275,20 @@ def _eligible(state, adapters, requirement, *, exclude=()):
 
 
 def _handoff(root, state, task, adapters, *, reason, moment, exclude=(), remedy="handoff"):
+    """Try remaining agents after an explicit provider-limit failure."""
+    while True:
+        packet, signal = _offer_handoff(
+            root, state, task, adapters, reason=reason, moment=moment,
+            exclude=exclude, remedy=remedy)
+        if not isinstance(signal, str) or signal not in diagnosis.QUOTA_SIGNALS:
+            return packet
+        task["signal"] = signal
+        if task["owner"]:
+            state["agents"].setdefault(task["owner"], {})["state"] = "archived"
+        reason = signal
+
+
+def _offer_handoff(root, state, task, adapters, *, reason, moment, exclude, remedy):
     """Snapshot, build a packet, and let the first capable agent accept it."""
     built = _snapshot(root, state, moment)
     requirement = task["requirement"]
@@ -287,7 +302,7 @@ def _handoff(root, state, task, adapters, *, reason, moment, exclude=(), remedy=
         EventLog(root, state["workspace_id"]).append(
             "handoff_blocked", actor="kernel", payload={"task": task["id"], "reason": reason}, moment=moment)
         _learn(root, state, task, "failure", moment)
-        return None
+        return None, ""
     successor = candidates[0]
     current = task["owner"] or "unassigned"
     packet = handoff_mod.packet(built, from_agent=current, to_agent=successor,
@@ -301,26 +316,24 @@ def _handoff(root, state, task, adapters, *, reason, moment, exclude=(), remedy=
     task.update({"owner": successor, "state": "running", "attempts": 1, "note": "",
                  "remedy": remedy})
     state["agents"].setdefault(successor, {})["state"] = "active"
-    # The packet itself is the auditable artifact, so it is stored whole rather
-    # than reduced to a summary; ``task``/``accepted_by`` are extras the
-    # handoff-packet-v1 schema allows.
+    result = target.deliver({"id": task["id"], "requirement": requirement,
+                             "workspace_id": state["workspace_id"], "handoff_id": packet["handoff_id"]})
+    EventLog(root, state["workspace_id"]).append(
+        "handoff_delivery", actor=successor,
+        payload={"task": task["id"], "status": result.get("status", ""),
+                 "signal": result.get("signal", ""), "handoff_id": packet["handoff_id"],
+                 "snapshot_digest": built["digest"]}, moment=moment)
+    if result.get("status") != "accepted":
+        task["state"] = "blocked"
+        task["note"] = f"successor {successor} did not accept: {result.get('status')}"
+        return None, result.get("signal", "") if result.get("status") == "failed" else ""
     state["handoffs"].append({**packet, "task": task["id"],
                               "accepted_by": accepted.get("agent")})
     EventLog(root, state["workspace_id"]).append(
         "handoff_accepted", actor="kernel",
         payload={"task": task["id"], "from": current, "to": successor, "reason": reason,
                  "handoff_id": packet["handoff_id"], "snapshot_digest": built["digest"]}, moment=moment)
-    # A takeover is only real once the successor has been offered the task.
-    result = target.deliver({"id": task["id"], "requirement": requirement,
-                             "workspace_id": state["workspace_id"], "handoff_id": packet["handoff_id"]})
-    EventLog(root, state["workspace_id"]).append(
-        "handoff_delivery", actor=successor,
-        payload={"task": task["id"], "status": result.get("status", ""),
-                 "signal": result.get("signal", "")}, moment=moment)
-    if result.get("status") != "accepted":
-        task["state"] = "blocked"
-        task["note"] = f"successor {successor} did not accept: {result.get('status')}"
-    return packet
+    return packet, ""
 
 
 def tick(root, state, adapters, *, now=None, heartbeat_timeout=900, moment=None):
@@ -353,7 +366,13 @@ def _tick(root, state, adapters, *, now=None, heartbeat_timeout=900, moment=None
         if task["state"] != "running" or not task["owner"]:
             continue
         adapter = find(adapters, task["owner"])
-        if adapter is None or _stalled(adapter, now, heartbeat_timeout):
+        beat = adapter.heartbeat(now) if adapter is not None else {}
+        signal = beat.get("signal")
+        if isinstance(signal, str) and signal in diagnosis.QUOTA_SIGNALS:
+            _apply_failure(root, state, task, adapters, signal=signal,
+                           moment=moment, actions=actions)
+            continue
+        if _stalled(beat, now, heartbeat_timeout):
             decision = diagnosis.classify("no_heartbeat", attempts=task["attempts"])
             task["signal"] = "no_heartbeat"
             packet = _handoff(root, state, task, adapters, reason="stalled", moment=moment,

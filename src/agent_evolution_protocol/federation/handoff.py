@@ -11,6 +11,7 @@ import re
 from uuid import uuid4
 
 from ..coordination.workspace_identity import validate_workspace_id
+from .diagnosis import QUOTA_SIGNALS
 from .snapshot import verify as verify_snapshot
 from .store import digest, stamp
 
@@ -18,7 +19,7 @@ from .store import digest, stamp
 HANDOFF_SCHEMA = "aep-handoff-packet-v1"
 REASONS = frozenset({"token_exhausted", "stalled", "refusal", "model_switch",
                      "manual_switch", "resource_blocked", "conflict_review",
-                     "adapter_crashed", "adapter_timeout"})
+                     "adapter_crashed", "adapter_timeout", "credit_warning"}) | QUOTA_SIGNALS
 CAPABILITY = re.compile(r"[a-z][a-z0-9-]{1,31}")
 _HEX = re.compile(r"[0-9a-f]{64}")
 

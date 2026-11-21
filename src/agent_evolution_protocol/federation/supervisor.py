@@ -27,12 +27,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from agent_evolution_protocol.coordination import hold_alerts
-from agent_evolution_protocol.federation import assignment, engine
+from agent_evolution_protocol.federation import assignment, diagnosis, engine
 from agent_evolution_protocol.federation.commander_adapter import CommanderAdapter
 
 #: Signals a supervisor may report on behalf of an executor.  Kept small: each
 #: one must be provable from a durable record, never from a screen glance.
-OBSERVED_SIGNALS = frozenset({"adapter_crashed", "adapter_timeout", "refusal"})
+OBSERVED_SIGNALS = frozenset({"adapter_crashed", "adapter_timeout", "refusal"}) | diagnosis.CAPACITY_SIGNALS
 
 #: What an unacknowledged order may do to the DAG.  ``"record"`` advances and
 #: writes the verdict into the receipt; ``"enforce"`` holds and does not advance.

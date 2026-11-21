@@ -10,10 +10,14 @@ from __future__ import annotations
 
 LAYERS = ("agent", "resource", "external")
 MAX_RETRY = 2
+QUOTA_SIGNALS = frozenset({"quota_exhausted", "credit_exhausted", "usage_limit", "time_limit"})
+CAPACITY_SIGNALS = QUOTA_SIGNALS | {"credit_warning"}
 ACTIONS = ("retry", "cool_down", "switch_agent", "handoff", "quarantine",
            "arbitrate", "pause", "escalate")
 
 RULES = {
+    **dict.fromkeys(QUOTA_SIGNALS, ("agent", "provider_limit", "handoff", False)),
+    "credit_warning": ("agent", "provider_limit_warning", "handoff", False),
     "token_exhausted": ("agent", "context_exhausted", "handoff", False),
     "no_heartbeat": ("agent", "stalled", "switch_agent", False),
     "refusal": ("agent", "refusal", "switch_agent", False),
