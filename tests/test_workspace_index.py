@@ -133,6 +133,22 @@ def test_chat_rejects_invalid_workspace_id(tmp_path):
         wi.chat(tmp_path, workspace_id="agent-evolution-protocol")
 
 
+def test_main_cli_chat_filters_workspace_and_room(tmp_path, capsys):
+    from agent_evolution_protocol import cli
+    from agent_evolution_protocol.coordination.conversation_journal import append_event
+    ws_a = "W-" + "a" * 16
+    append_event(tmp_path, room="team", actor="a", source="test", kind="message", text="进展 A-1", workspace_id=ws_a)
+    append_event(tmp_path, room="team", actor="b", source="test", kind="message", text="进展 A-1")
+    args = cli.build_parser().parse_args([
+        "coord-workspace-index", "chat", "--coord-root", str(tmp_path),
+        "--workspace-id", ws_a, "--room", "team", "--contains", "A-1",
+    ])
+    cli.coord_workspace_index(args)
+    output = json.loads(capsys.readouterr().out)
+    assert output["count"] == 1
+    assert output["events"][0]["actor"] == "a"
+
+
 def test_knowledge_store_absent_is_empty_not_created(tmp_path):
     db = tmp_path / "missing.sqlite"
     view = wi.knowledge(db)

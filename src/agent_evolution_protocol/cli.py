@@ -3388,7 +3388,10 @@ def coord_workspace_index(args: argparse.Namespace) -> None:
         value = workspace_index.newcomers(root, within_hours=args.within_hours)
     elif view == "chat":
         value = workspace_index.chat(root, after=getattr(args, "after", "") or "",
-                                     limit=args.limit)
+                                     limit=args.limit,
+                                     workspace_id=getattr(args, "workspace_id", "") or "",
+                                     room=getattr(args, "room", "") or "",
+                                     contains=getattr(args, "contains", "") or "")
     elif view == "knowledge":
         value = workspace_index.knowledge(
             db or (root / "knowledge.sqlite"), kind=getattr(args, "kind", "") or "",
@@ -4176,6 +4179,8 @@ def build_parser() -> argparse.ArgumentParser:
     wix.add_argument("--db", type=Path, help="knowledge sqlite path (default <root>/knowledge.sqlite)")
     wix.add_argument("--within-hours", type=float, default=24.0, help="newcomer window")
     wix.add_argument("--after", default="", help="chat cursor (exclusive)")
+    wix.add_argument("--workspace-id", default="", help="filter chat by explicit workspace watermark")
+    wix.add_argument("--room", default="", help="filter chat by exact room")
     wix.add_argument("--limit", type=int, default=50)
     wix.add_argument("--kind", default=""); wix.add_argument("--actor", default="")
     wix.add_argument("--task-id", default=""); wix.add_argument("--contains", default="")

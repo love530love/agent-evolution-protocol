@@ -5320,6 +5320,26 @@
           "required": false
         },
         {
+          "default": "",
+          "dest": "workspace_id",
+          "flags": [
+            "--workspace-id"
+          ],
+          "help": "filter chat by explicit workspace watermark",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": "",
+          "dest": "room",
+          "flags": [
+            "--room"
+          ],
+          "help": "filter chat by exact room",
+          "kind": "option",
+          "required": false
+        },
+        {
           "default": 50,
           "dest": "limit",
           "flags": [
@@ -6436,7 +6456,7 @@
     }
   ],
   "count": 102,
-  "digest": "sha256:e1c02964e8da3ff12bb7311a51588f807e20186cee6b38ba981c66f99fbc9cb9",
+  "digest": "sha256:e28b904260055d7fbe19e4a9d7d0ee36f6f1cbc3a5fef28f4202e9d38bdce9bd",
   "documented": 39,
   "generated_from": "agent_evolution_protocol.cli:build_parser",
   "global_arguments": [

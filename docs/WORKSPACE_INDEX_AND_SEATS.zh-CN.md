@@ -66,17 +66,17 @@ presence 变化，**不是带 workspace_id 的正式成员登记**，也不证�
 支持 `--after <cursor>` 正序续读、`--limit` 限量（1–500）。事件可见只表示消息落盘，
 不表示已读或已 ACK。全队通报用 `aep legion-announce`（默认 dry-run、只写一条共享事件）。
 
-共享协调目录可能包含多个工作区。带水印的群聊可使用模块入口按 `workspace_id` 精确过滤；
+共享协调目录可能包含多个工作区。带水印的群聊可通过主命令按 `workspace_id` 精确过滤；
 下面每条都是独立的单行 PowerShell 命令，其中 `W-aaaaaaaaaaaaaaaa` 必须替换成实际工作区 ID：
 
 ```powershell
-& 'K:\PythonProjects5\agent-evolution-protocol\.tools\agent-runtime\Scripts\python.exe' -m agent_evolution_protocol.coordination.workspace_index chat --root 'K:\PythonProjects5\agent-evolution-protocol\coordination' --workspace-id 'W-aaaaaaaaaaaaaaaa' --room 'agent-legion' --contains '进展' --limit 50
+& 'K:\PythonProjects5\agent-evolution-protocol\.tools\agent-runtime\Scripts\python.exe' -m agent_evolution_protocol coord-workspace-index chat --coord-root 'K:\PythonProjects5\agent-evolution-protocol\coordination' --workspace-id 'W-aaaaaaaaaaaaaaaa' --room 'agent-legion' --contains '进展' --limit 50
 ```
 
 `next_cursor` 可通过 `--after` 继续读取；过滤时未标记 workspace_id 的历史事件不会混入。
 未传 `--workspace-id` 的结果标记为 `coordination-root-unfiltered`，不能视作已隔离的单项目
-群聊。工作区**名称**不等于形如 `W-...` 的工作区 ID。上述筛选选项目前在独立模块入口提供，
-尚未接入 `coord-workspace-index` 主命令或 MCP；只索引显式发布到 journal 的消息，不抓取全部
+群聊。工作区**名称**不等于形如 `W-...` 的工作区 ID。上述筛选已接入主命令，但尚未专门接入 MCP；
+只检索显式发布到 journal 的消息，不抓取全部
 厂商的私人会话。
 
 ## 6. 受控知识查询（SQL 风格的边界）
