@@ -128,6 +128,41 @@
 - **角色定位**：本 agent（workbuddyai）后续只做：集成审阅、全量回归、冲突消解、发版对账、
   值守日志；不再在 federation/coordination/cli/CHANGELOG/relay/coalition 里新增功能代码。
 
+## 13:38 指挥者动作（集成/协调，不抢功能）
+
+- **发现并修复一处真实回归**：我启动的宿主恢复 agent 把 `register-core-host-task.ps1`
+  改成 XML 注册，破坏了既有守线 `test_core_host_scripts.py::
+  test_short_cmd_launcher_avoids_schtasks_command_length_limit`（断言脚本含
+  `schtasks /TR limit` 标记）。修复方式：**不放宽测试**，在脚本 XML 分支注释里
+  如实记录 schtasks /TR 261 字符限制为何仍要守护，标记写回。定向复跑
+  `test_core_host_scripts + test_supervisor_registration + test_foundation +
+  test_presence_robustness` = **45 passed**。
+- **发现 manifest 守线缺口**：qoder 往 cli.py 加 `coord-command-relay` 但没同步
+  `skill-manifest.json`（仍 97 命令）。`aep coord-skill-manifest check` =
+  `SKILL_STALE` / `missing=[coord-command-relay]`，`test_skill_manifest.py` 会红。
+  已发 warning `20261122T053812237251Z-3c2d2b4c` 提醒 qoder 收尾前跑
+  `aep coord-skill-manifest write`（98 命令）。manifest 是共享真理源，我不碰以免撞车。
+- **schema 重叠观察（待协调，非阻塞）**：coalition/capacity=`aep-agent-capacity-v1`、
+  relay/resources=`aep-quota-envelope-v1`、federation/command_handoff=
+  `aep-command-handoff-v1`、我 subagent 的 command_handoff/role_contract 也各有一套。
+  三路 agent 各自实现了"容量/接力"，语义可能重叠。不强行合并（各 claim 有效），
+  但收尾时需一份对照文档说明各 schema 的职责边界，避免后来者误以为是同一套。
+- **全量测试状态**：并发写入期间一次全量 `1 failed, 1910 passed, 4 skipped`（352s），
+  唯一失败即上面已修的 core-host 守线。待三 agent 收敛后需再跑一次稳定全量。
+
+## 13:40 ACK 判定取证（发现，不擅改活路径）
+
+- 今早 03:41Z codex→qoder 那条（`20261122T034130140395Z-bef2fe82`）的回执：
+  `state=NO_REPLY_WITHIN_TIMEOUT` / `agent_accepted=false` / `ack_evidence=null`。
+- 但 qoder 原会话 UIA capture 中**确有正确 ACK**：`AEP-ACK: CF7E352CBD583C` 出现两次，
+  capture 时间戳显示该回复在 **11:42**（发送后约 8 小时）。
+- **结论**：当时的超时判定是对的（超时窗口内确实没回），**不是误判**；真正缺口是
+  **延迟到达的 ACK 没有回填机制**——这属于"任务结果回读/事后佐证"边界。
+- **不擅改**：coordination/ 是 copilot-github 的 claim 范围，且改 ACK 判定属活路径。
+  记录为下一轮待协调项：由该 claim 持有者或人类裁定时机，评估是否加一个只读的
+  "延迟 ACK 事后佐证回填"能力（可复用 artifact_corroboration 的 advisory 边界，
+  但绝不自动把历史订单从 NO_REPLY 改成 AGENT_ACK）。
+
 ## 13:38 心跳（第二轮 · 2026-11-22）
 
 - **窗口与终止条件**：现 13:38，未到截止（11-23 08:00）。投递审计摘要 `next_required`
@@ -169,3 +204,5 @@
   ③读归属征集与三厂商 claim 是否有 ACK/冲突，仍只做集成审阅不写功能代码；④若新代码稳定且无人
   认领冲突，可考虑全量回归留证（非发版）；⑤版本落差 0.6.36–0.6.43 仅 pin 未发版，维持列为
   人类裁定项，不替他人补发。
+- **本轮提交**：`e0589f0`（仅值守日志，显式路径 add；无源码、无版本变更），已 push；
+  `origin/main...HEAD = 0 0`。本条之后的日志追加不再产生需回填的提交。
