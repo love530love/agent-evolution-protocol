@@ -68,7 +68,31 @@ model_required: false
    不把主判改成 true，也不宣称送达。没有 `composer_hint` 就报
    `NO_COMPOSER_BOUNDARY`（边界未知，不靠猜行数）。
 
-5. **真实投递由既有通道负责**：`coord-uia compose`（Electron 客户端的真发路径，
+5. **派工就绪诊断（v0.6.46，只读）**：把 2026-11-22 真实派工暴露的四个卡点变成机器可判定结论：
+
+   ```text
+   python -m agent_evolution_protocol.coordination.delivery_preflight --coord-root coordination --readiness [--agent qoder] [--text "派工正文"] [--event-id EVT-xxx]
+   ```
+
+   - `--text` + `--event-id` 走 `dispatch_text_diagnosis`：复用 `dispatch_gate.EVENT`
+     同一正则，检测正文恰好一个 event id、等于期望值、含 `AEP-ACK` 指令，
+     违背则 `may_dispatch=false`、issues 点名 `ONE_EVENT_ID_EXPECTED` /
+     `EVENT_ID_MISMATCH` / `ACK_INSTRUCTION_MISSING`。真实案例：正文塞了自动
+     `EVT-` + 手写 `WAKE-` 两个 id ⇒ 未被 `one_event_id` 守线拦在输入之前。
+   - `session_marker_diagnosis`：检测 profile 的 `session_marker` 是否是会话内不可见的
+     配置漂移（真实案例：qoder 误填侧边栏按钮 `请加入项目协作区`⇒会话闸门永远 absent）。
+     只点名漂移并给出 `session_evidence_markers` 里会话内已可见的候选值；
+     **不改判定、不放宽 `seen=True`、不写 profile**。
+   - `observe_freshness`：`uia_receipts/last-<agent>.json` 无 `at` 字段，用文件 mtime
+     判新鲜度（默认 900 秒）；陈旧回执一律 `REOBSERVE_FIRST` / `OBSERVE_STALE`。
+     真实案例：qoder_cn 历史回执显示 seen 可投，但当时实际无窗口。
+   - `action` 取值：`NEED_PROFILE` / `FIX_SESSION_MARKER_CONFIG` / `FIX_DISPATCH_TEXT`
+     / `REOBSERVE_FIRST` / `WAIT_OR_REOBSERVE` / `SEND_AFTER_VERIFICATION`。
+   - `may_dispatch` 是只读就绪判断，**不等于已送达、更不等于 ACK**；
+     忙态 agent 需 `coord-uia deliver --urgent-interject` 走非打断插话，
+     投递后仍按回执判定表取证，只有 `VERIFIED` 能关单。
+
+6. **真实投递由既有通道负责**：`coord-uia compose`（Electron 客户端的真发路径，
    剪贴板真实粘贴 + OCR 回读）/ `coord-uia deliver` / `coord-commander tick`。
    `compose` 与 `deliver` 一样必须带 `--event-id` 且正文包含该 ID。
    本卡不替代、不包装、不重试它们。发完仍按 `docs/DELIVERY_TRUTH_MATRIX.zh-CN.md`

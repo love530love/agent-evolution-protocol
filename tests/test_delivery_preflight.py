@@ -248,5 +248,114 @@ class BoundaryTests(unittest.TestCase):
                 self.assertIn(token, text)
 
 
+class DispatchReadinessTests(unittest.TestCase):
+    """The three cardpoints found by real dispatch on 2026-11-22, frozen."""
+
+    def test_two_event_ids_are_refused_before_any_input(self):
+        # The WorkBuddy AI order carried an auto EVT- id plus a hand-written
+        # WAKE- id and was refused at one_event_id (nothing was typed).
+        body = "派工 EVT-FB7E4FA30D 回执 WAKE-DESKTOP-WBAI-20261122"
+        report = dp.dispatch_text_diagnosis(body, event_id="EVT-FB7E4FA30D")
+        self.assertIn("ONE_EVENT_ID_EXPECTED", report["issues"])
+        self.assertFalse(report["may_dispatch"])
+        self.assertEqual(len(report["event_ids_found"]), 2)
+        self.assertIs(report["ui_input_performed"], False)
+
+    def test_single_event_id_with_ack_passes(self):
+        body = ("派工 EVT-79DA9A8BB 请回报能力 [AEP-CMD-DRILL] "
+                "回复请带 AEP-ACK")
+        report = dp.dispatch_text_diagnosis(body, event_id="EVT-79DA9A8BB")
+        self.assertEqual(report["issues"], [])
+        self.assertTrue(report["may_dispatch"])
+        self.assertTrue(report["ack_instruction"])
+
+    def test_expected_id_mismatch_is_named(self):
+        body = "派工 EVT-111111 回执 AEP-ACK"
+        report = dp.dispatch_text_diagnosis(body, event_id="EVT-222222")
+        self.assertIn("EVENT_ID_MISMATCH", report["issues"])
+        self.assertFalse(report["may_dispatch"])
+
+    def test_session_marker_drift_is_named_with_suggestion(self):
+        # qoder's marker was a sidebar button absent from the chat.  The fix
+        # is a config correction, never a relaxation of seen=True.
+        profile = {"session_marker": "请加入项目协作区",
+                   "session_evidence_markers": ["evolution-protocol", "加入项目协作区"]}
+        transcript = "agent-evolution-protocol 会话 agent-evolution-protocol"
+        observe = {"session_marker_check": "absent", "session_marker_seen": False}
+        report = dp.session_marker_diagnosis(
+            profile, transcript=transcript, observe=observe)
+        self.assertTrue(report["config_drift_suspected"])
+        self.assertIn("SESSION_MARKER_NOT_IN_TRANSCRIPT", report["issues"])
+        self.assertIn("evolution-protocol", report["suggested_markers"])
+        self.assertIs(report["gate_was_relaxed"], False)
+
+    def test_fixed_session_marker_has_no_drift(self):
+        profile = {"session_marker": "agent-evolution-protocol",
+                   "session_evidence_markers": ["evolution-protocol"]}
+        report = dp.session_marker_diagnosis(
+            profile, transcript="agent-evolution-protocol 会话",
+            observe={"session_marker_check": "seen", "session_marker_seen": True})
+        self.assertEqual(report["issues"], [])
+        self.assertFalse(report["config_drift_suspected"])
+
+    def test_readiness_needs_profile_and_names_action(self):
+        root, holder = _root(profile=False)
+        try:
+            report = dp.dispatch_readiness(root, AGENT)
+            self.assertEqual(report["action"], "NEED_PROFILE")
+            self.assertIn("ORIGINAL_SESSION_PROFILE_REQUIRED", report["blockers"])
+            self.assertFalse(report["may_dispatch"])
+            self.assertIs(report["ui_input_performed"], False)
+        finally:
+            holder.cleanup()
+
+    def test_readiness_combines_text_blocker(self):
+        root, holder = _root()
+        try:
+            body = "EVT-FB7E4FA30D WAKE-DESKTOP-WBAI-20261122 AEP-ACK"
+            report = dp.dispatch_readiness(root, AGENT, text=body,
+                                           event_id="EVT-FB7E4FA30D")
+            self.assertEqual(report["action"], "FIX_DISPATCH_TEXT")
+            self.assertIn("ONE_EVENT_ID_EXPECTED", report["blockers"])
+            self.assertFalse(report["may_dispatch"])
+        finally:
+            holder.cleanup()
+
+    def test_stale_observe_is_never_dispatchable(self):
+        # qoder_cn had a historical "seen" receipt on disk while no window
+        # existed at all; the scan must not call that ready.
+        root, holder = _root()
+        try:
+            report = dp.dispatch_readiness(root, AGENT)
+            self.assertTrue(report["observe_freshness"]["fresh"])
+            self.assertEqual(report["action"], "SEND_AFTER_VERIFICATION")
+            # Force staleness with an explicit clock without touching files.
+            stale = dp.observe_freshness(root, AGENT, now=10 ** 12)
+            self.assertFalse(stale["fresh"])
+            self.assertEqual(stale["reason"], "OBSERVE_STALE")
+        finally:
+            holder.cleanup()
+
+    def test_stale_receipt_blocks_dispatch_readiness(self):
+        root, holder = _root()
+        try:
+            receipt = root / "uia_receipts" / f"last-{AGENT}.json"
+            import os
+            os.utime(receipt, (0, 0))
+            report = dp.dispatch_readiness(root, AGENT)
+            self.assertIn("OBSERVE_STALE", report["blockers"])
+            self.assertEqual(report["action"], "REOBSERVE_FIRST")
+            self.assertFalse(report["may_dispatch"])
+        finally:
+            holder.cleanup()
+
+    def test_readiness_cli_is_read_only(self):
+        code = SRC.read_text(encoding="utf-8")
+        self.assertIn("--readiness", code)
+        self.assertIn("--text", code)
+        self.assertNotIn("build_parser", code)
+        self.assertNotIn("add_parser", code)
+
+
 if __name__ == "__main__":
     unittest.main()

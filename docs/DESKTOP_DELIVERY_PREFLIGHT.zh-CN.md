@@ -251,3 +251,36 @@ asyncio / 模型模块`，源码文本守线禁止 `lh login` / `lobehub.com` / 
 各客户端的 region 需单独在真机标定。未标定 profile 保持 strict 关闭，绝不以扩大区域、侧栏命中或整窗 OCR
 来“通过”严格证明。详见
 [`STRICT_ORIGINAL_SESSION_ATTESTATION.zh-CN.md`](STRICT_ORIGINAL_SESSION_ATTESTATION.zh-CN.md)。
+
+## 10. v0.6.46：把真实派工暴露的卡点固化为只读诊断
+
+2026-11-22 的真实派工（用户批评「不真实派工就永远不知道卡在哪里」）暴露了四个卡点，
+全部固化进 `delivery_preflight.py` 的 `--readiness` 模式，**不进投递活路径、不放宽任何判定**：
+
+| 卡点 | 真实回执 | 固化后的机器判定 |
+|---|---|---|
+| 正文两个 event id | `DISPATCH_REFUSED:one_event_id: found [EVT-..., WAKE-...]` | `dispatch_text_diagnosis` 复用 `dispatch_gate.EVENT` 同一正则，报 `ONE_EVENT_ID_EXPECTED` |
+| profile 会话标记漂移 | qoder `session_marker_check=absent`（marker 是侧边栏按钮） | `session_marker_diagnosis` 报 `SESSION_MARKER_CONFIG_DRIFT`，只建议会话内已可见的候选标记 |
+| 无已验收 profile | `ORIGINAL_SESSION_PROFILE_REQUIRED` | `action=NEED_PROFILE`，明确不是能力失效 |
+| 陈旧 observe 误报就绪 | qoder_cn 历史 seen 回执，但实际无窗口 | `observe_freshness` 用文件 mtime（900s）判新鲜，报 `REOBSERVE_FIRST` |
+
+关键约束：
+
+- **只诊断、不改配置、不重试、不投递**。`may_dispatch` 是只读就绪判断，
+  恒 `advisory_only=true / ui_input_performed=false`；忙态 agent 的插话另走
+  `coord-uia deliver --urgent-interject`，不在本诊断内执行。
+- **修复漂移是配置校正，不是放宽闸门**：把 `session_marker` 改成会话内真实可见的
+  `agent-evolution-protocol`，`session_marker_seen=True` 的严格证明一字未动；
+  守线 `test_commander_delivery_safety.py` 等 87 passed 复核。
+- **公平对照**：诊断函数与活路径共用 `dispatch_gate` 的正则与 token，
+  没有第二套判定标准；`postflight` 仍只是第二意见，commander 仍读布尔，
+  升级活路径需要另一次真机测量。
+
+复算命令：
+
+```text
+CODEBUDDY_SAFE_DELETE_ENABLED=0 .tools/agent-runtime/Scripts/python.exe -m pytest -q tests/test_delivery_preflight.py
+python -m agent_evolution_protocol.coordination.delivery_preflight --coord-root coordination --readiness
+```
+
+能力卡 `skills/aep-delivery-preflight/SKILL.md` 给出弱 agent 可照字面执行的回执判定表。
