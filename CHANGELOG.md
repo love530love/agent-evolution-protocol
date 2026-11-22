@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.46 — 真实派工卡点固化为只读就绪诊断
+
+- Add read-only dispatch-readiness diagnosis to coordination/delivery_preflight.py (--readiness); freeze the four cardpoints found by real 2026-11-22 dispatch into machine-checkable gates without touching the live path.
+- dispatch_text_diagnosis reuses dispatch_gate.EVENT/TASK_MARKER/ACK_TOKEN (no second standard) to refuse a body carrying two event ids or a missing ACK instruction before any desktop input.
+- session_marker_diagnosis names profile session_marker config drift (qoder sidebar-button marker was absent in-chat) and offers already-visible candidates; it never rewrites a profile or relaxes seen=True.
+- observe_freshness uses the observe receipt file mtime (900s) so a stale seen receipt (qoder_cn had no window) can never be reported dispatchable; emits REOBSERVE_FIRST.
+- All diagnosis stays advisory_only=true / ui_input_performed=false; may_dispatch is readiness, not delivery or ACK. Tests: test_delivery_preflight DispatchReadinessTests (10 cases); targeted 76 passed/37 subtests and 72 passed/241 subtests.
+
 ## Unreleased
 
 - Add a `coalition/` layer: fail-closed mission spec, TTL-bound per-agent
@@ -12,7 +20,11 @@
   and `coord-presence` (`signal/status/reconcile/next-due`) CLI surfaces.
 - Keep delivery honest: receipts are not ACKs, plans and records report
   `delivery_claim: NONE` and `agent_accepted: false`.
-- Tests: `tests/test_coalition.py` (13 cases) plus a regenerated skill manifest
+- Separate declared active sessions from static role holders: `active_sessions`
+  is advisory context only (`authority_transfer: false`), and the planner flags
+  `ACTIVE_SESSION_NOT_HOLDER` / `ACTIVE_SESSION_ACK_UNVERIFIED` without changing
+  the holder, primary or readiness.
+- Tests: `tests/test_coalition.py` (14 cases) plus a regenerated skill manifest
   (99 commands, 36 documented).
 
 ## 0.6.44 — 工件佐证只读 CLI + 无人值守值守基线

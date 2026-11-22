@@ -523,6 +523,25 @@ def plan(coord_root, mission_source, *, now=None):
         _merge_risk(risks, role_plan["risks"])
         roles[role["id"]] = role_plan
 
+    active_sessions = mission.get("active_sessions") or {}
+    for role_id, session in sorted(active_sessions.items()):
+        agent = session["agent"]
+        holder = mission["current_holders"].get(role_id)
+        if agent not in views or not views[agent]["declared"]:
+            _risk(risks, "UNDECLARED_ACTIVE_SESSION", "medium", role_id,
+                  "A session declares itself active for this role but is absent "
+                  "from the mission roster; the declaration is context only.",
+                  [agent])
+        if holder != agent:
+            _risk(risks, "ACTIVE_SESSION_NOT_HOLDER", "medium", role_id,
+                  f"Declared active session is {agent}, while the static holder "
+                  f"is {holder or 'none'}; no authority is transferred by this "
+                  "declaration.", [agent] + ([holder] if holder else []))
+        if not session["acknowledged"]:
+            _risk(risks, "ACTIVE_SESSION_ACK_UNVERIFIED", "medium", role_id,
+                  "Declared active session has no original-session ACK; treat it "
+                  "as context, not a handoff.", [agent])
+
     vendor_totals = {}
     for role_plan in roles.values():
         if role_plan["primary"]:
@@ -585,6 +604,16 @@ def plan(coord_root, mission_source, *, now=None):
                  "execute_ready": sum(1 for item in actions if item["execute_allowed"])},
         "handoff_drafts": drafts,
         "handoff_ledger": _handoff_ledger(coord_root),
+        "active_sessions": {
+            role_id: dict(session, advisory_only=True,
+                          authority_transfer=False)
+            for role_id, session in sorted(active_sessions.items())
+        },
+        "active_sessions_note": (
+            "Declared active sessions are context only. They never change the "
+            "static holder, primary, authority or readiness; a handoff still "
+            "requires an original-session ACK."
+        ),
         "execution": {"delivery_claim": "NONE", "started": False,
                       "note": "Planning only. A dispatch is a separate guarded call; "
                               "a queued wake, mailbox deposit and ACK are three "
@@ -595,6 +624,7 @@ def plan(coord_root, mission_source, *, now=None):
     body["input_digest"] = io.digest({
         "mission": mission,
         "agents": body["agents"],
+        "active_sessions": active_sessions,
         "roles": {role_id: {"holder": item["holder"], "primary": item["primary"],
                             "backups": item["backups"],
                             "coverage": item["coverage"]}

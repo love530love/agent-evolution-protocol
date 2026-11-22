@@ -403,11 +403,57 @@ class CoalitionTest(unittest.TestCase):
         changed = planner.plan(self.coord, spec_obj, now=self.now)
         self.assertNotEqual(changed["plan_digest"], first["plan_digest"])
 
+    def test_active_session_is_advisory_and_cannot_replace_holder(self):
+        spec_obj = mission(
+            [("alpha", "va", ["command"]), ("beta", "vb", ["command"])],
+            [role("command", ["command"], criticality="critical",
+                  allow_scribe=False)],
+            {"command": "alpha"},
+        )
+        spec_obj["active_sessions"] = {
+            "command": {
+                "agent": "beta",
+                "session_id": "beta-1",
+                "observed_at": self.now.isoformat(),
+                "evidence": "coordination/messages/beta/1.json",
+                "acknowledged": False,
+                "note": "observed active session",
+            }
+        }
+        for agent in ("alpha", "beta"):
+            self.signal(agent)
+            self.capacity(agent, "AVAILABLE")
+        report = planner.plan(self.coord, spec_obj, now=self.now)
+        command = report["roles"]["command"]
+        self.assertEqual(command["primary"]["agent"], "alpha")
+        self.assertEqual(command["tick"]["action"], "HOLD")
+        declared = report["active_sessions"]["command"]
+        self.assertEqual(declared["agent"], "beta")
+        self.assertTrue(declared["advisory_only"])
+        self.assertFalse(declared["authority_transfer"])
+        codes = {item["code"] for item in report["risks"]}
+        self.assertIn("ACTIVE_SESSION_NOT_HOLDER", codes)
+        self.assertIn("ACTIVE_SESSION_ACK_UNVERIFIED", codes)
+        self.assertNotIn("UNDECLARED_ACTIVE_SESSION", codes)
+
+        spec_obj["active_sessions"]["command"]["agent"] = "gamma"
+        spec_obj["active_sessions"]["command"]["acknowledged"] = True
+        second = planner.plan(self.coord, spec_obj, now=self.now)
+        self.assertEqual(second["roles"]["command"]["primary"]["agent"], "alpha")
+        codes = {item["code"] for item in second["risks"]}
+        self.assertIn("UNDECLARED_ACTIVE_SESSION", codes)
+        self.assertNotIn("ACTIVE_SESSION_ACK_UNVERIFIED", codes)
+
     def test_example_spec_and_fail_closed_validation(self):
         example = Path(__file__).resolve().parents[1] / "examples" / "coalition-flagos.json"
         loaded = spec.load_spec(example)
         self.assertEqual(loaded["mission"], "flagos")
         self.assertEqual(len(loaded["roles"]), 5)
+        self.assertEqual(loaded["active_sessions"]["commander"]["agent"],
+                         "workbuddyai")
+        self.assertFalse(loaded["active_sessions"]["commander"]["acknowledged"])
+        self.assertIn("workbuddyai",
+                      {item["agent"] for item in loaded["agents"]})
         base = mission([("alpha", "va", ["command"])],
                        [role("command", ["command"])])
         duplicate = json.loads(json.dumps(base))
@@ -426,6 +472,22 @@ class CoalitionTest(unittest.TestCase):
         bad_schema["schema"] = "other"
         with self.assertRaises(ValueError):
             spec.load_spec(bad_schema)
+        bad_active_role = json.loads(json.dumps(base))
+        bad_active_role["active_sessions"] = {
+            "missing": {"agent": "alpha", "evidence": "mailbox:1"}}
+        with self.assertRaises(ValueError):
+            spec.load_spec(bad_active_role)
+        bad_active_evidence = json.loads(json.dumps(base))
+        bad_active_evidence["active_sessions"] = {
+            "command": {"agent": "alpha", "evidence": ""}}
+        with self.assertRaises(ValueError):
+            spec.load_spec(bad_active_evidence)
+        bad_active_ack = json.loads(json.dumps(base))
+        bad_active_ack["active_sessions"] = {
+            "command": {"agent": "alpha", "evidence": "mailbox:1",
+                        "acknowledged": "yes"}}
+        with self.assertRaises(ValueError):
+            spec.load_spec(bad_active_ack)
 
 
 if __name__ == "__main__":

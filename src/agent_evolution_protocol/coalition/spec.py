@@ -119,6 +119,28 @@ def _paths(value):
     return sorted(set(cleaned))
 
 
+def _active_session(raw, role_id):
+    """A declared currently-active session, never an authority transfer."""
+    raw = _object(raw, f"active_sessions[{role_id}]")
+    agent = _text(raw.get("agent"), "active_session_agent", maximum=64,
+                  required=True)
+    if not SAFE_AGENT.fullmatch(agent):
+        raise ValueError("INVALID_ACTIVE_SESSION_AGENT")
+    return {
+        "agent": agent,
+        "session_id": _text(raw.get("session_id", ""), "session_id",
+                            maximum=128),
+        "observed_at": _text(raw.get("observed_at", ""), "observed_at",
+                             maximum=40),
+        "evidence": _text(raw.get("evidence"), "active_session_evidence",
+                          maximum=240, required=True),
+        "acknowledged": _boolean(raw.get("acknowledged"), "acknowledged",
+                                 default=False),
+        "note": _text(raw.get("note", ""), "active_session_note",
+                      maximum=240),
+    }
+
+
 def _policy(raw):
     raw = _object(raw or {}, "vendor_policy")
     policy = {
@@ -260,6 +282,12 @@ def load_spec(source):
         if not isinstance(name, str) or not SAFE_AGENT.fullmatch(name):
             raise ValueError("INVALID_HOLDER_AGENT")
         holders[role_id] = name
+    active_raw = _object(raw.get("active_sessions") or {}, "active_sessions")
+    active_sessions = {}
+    for role_id, item in active_raw.items():
+        if role_id not in role_ids:
+            raise ValueError(f"UNKNOWN_ACTIVE_SESSION_ROLE:{role_id}")
+        active_sessions[role_id] = _active_session(item, role_id)
     return {
         "schema": SCHEMA,
         "mission": mission,
@@ -269,6 +297,7 @@ def load_spec(source):
         "agents": sorted(agents, key=lambda item: item["agent"]),
         "roles": roles,
         "current_holders": dict(sorted(holders.items())),
+        "active_sessions": dict(sorted(active_sessions.items())),
     }
 
 

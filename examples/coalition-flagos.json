@@ -21,6 +21,13 @@
       "subagent_slots": 3
     },
     {
+      "agent": "workbuddyai",
+      "vendor": "workbuddy",
+      "capabilities": ["command", "coordination"],
+      "max_primary_roles": 2,
+      "subagent_slots": 2
+    },
+    {
       "agent": "codex",
       "vendor": "openai",
       "capabilities": ["intel", "recon", "verification"],
@@ -118,5 +125,15 @@
     "github-intel": "github_copilot",
     "packaging": "qoder",
     "verification": "codex"
+  },
+  "active_sessions": {
+    "commander": {
+      "agent": "workbuddyai",
+      "session_id": "workbuddyai-20261122-overnight",
+      "observed_at": "2026-11-22T06:35:01Z",
+      "evidence": "docs/coordination/OVERNIGHT_20261122.zh-CN.md",
+      "acknowledged": false,
+      "note": "Declared active commander; static holder remains workbuddy. Evidence: OVERNIGHT section 14:34 and mailbox 20261122T063501611999Z-88617a91; no command-handoff ACK yet."
+    }
   }
 }
