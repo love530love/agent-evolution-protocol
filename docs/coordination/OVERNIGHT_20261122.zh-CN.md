@@ -768,3 +768,50 @@
   ②盯两待跟进单是否出现新 AEP-ACK、qoder 是否把 08:10Z 会话 ACK 转机器 AGENT_ACK（只记录）；
   ③新窗口/新 presence 先跑 readiness，三判据齐才真发；④三路并发收敛且有新代码再跑全量；
   ⑤临近 11-23 08:00 写最终交接并置 PAUSED，无新代码不为发版而发版。
+
+## 21:44 值守心跳（v0.6.49，未到截止，常规巡检）
+
+- **presence 续租**：`workbuddyai` stale→online（`agent-self-report`，session-id
+  `workbuddyai-20261122-overnight`，TTL 30min，notice `20261122T134435524011Z-e3b84087`，
+  unread=187）。**不代他人自报**。
+- **在线摘要**：fresh online=1 —— 仅 `workbuddyai`（我，13:44:35Z）。上轮的 `aws-quick`
+  已过期转 stale；其余 18 项 stale（`workbuddy` 11:26Z、`qoder` 06:33Z、codex/qoder_cn/
+  expert-*/proxy-* 等；stale=证据过期≠离线）。`workbuddy_ai` 窗口仍是我当前会话，不派工。
+- **版本/发版对账**：HEAD `1b44b3b`（20:42 值守 docs 提交，非锚点后新代码）；
+  `__version__`/pyproject/test_version_consistency 均 0.6.49，tag/release Latest=v0.6.49
+  （body 2048 chars），`origin/main...HEAD=0 0`；定向版本一致性 **2 passed**。
+  用户锚点 16:55/v0.6.48/e109755 已过时，实际已到 0.6.49，**不降版本、不重做发版**。
+- **宿主 tick**：Core `tick=446` pid 75828 @13:45:02Z `CYCLE_COMPLETED`（age <1min，秒级新鲜，
+  较 20:42 的 tick=320 正常推进）；Supervisor `tick=3` pid 107436 @10:58:24Z
+  `TICK_COMPLETED`（observe-only）**已停约 166 分钟 → 维持「需人工核查」**，较上轮 104min
+  继续恶化，PID/tick 均未变，判常驻进程卡死；本 Agent 不重启宿主，交人类核查
+  （`register-supervisor-task.ps1` 注册状态）。
+- **ACK 观察（只记录，不升级/不重放）**：本轮窗口（>12:42Z）`transcript_bus/events`
+  共 26 文件、**新增 0 条事件**；最新仍是 `20261122T081025223847Z`（qoder 08:10Z，
+  含 `9e7bf8bf`+`Q7-K4M9P2` 的 AEP-ACK，早于锚点、属已知，机器层未转 AGENT_ACK）。
+  `coord-delivery-audit --summary-only`：195 条、`AGENT_ACK=4`（全为 10-30/11-02 历史），
+  mailbox_read/message_visible/agent_accepted 各 4，next_required: ARTIFACT_VERIFIED 4 /
+  CLIENT_BOUND 167 / INSPECT_UNKNOWN 24。**两待跟进单无新带事件 ID 的 AEP-ACK**：
+  ① qoder `9e7bf8bf` 会话 ACK 已知未转机器 ACK；② workbuddy3 `0372f1c8` 仍 MESSAGE_VISIBLE、
+  token 不在 transcript_bus。relay drill leg1/leg2 仍 2/2 VERIFIED，
+  **未重跑 accept、未伪造新 ACK**。
+- **readiness（只读 advisory）**：全 7 路 `may_dispatch=false`，三判据不齐，**本轮不真发**。
+  qoder=`FIX_SESSION_MARKER_CONFIG`，但 `configured_marker="agent-evolution-protocol"`
+  正是已修复正确值，`observe_check=absent` 建立在 OBSERVE_STALE（age 10503s>900s）之上 ⇒
+  陈旧证据误报（`config_drift` 提示不可据以回退），**勿回退 marker 修复、勿放宽 seen 闸门**、
+  `gate_was_relaxed=false`；其余 chatgpt/codebuddy_cn/github_copilot/qoder_cn/workbuddy3/
+  workbuddy_ai 为 REOBSERVE_FIRST（INPUT_NOT_FOUND / TRANSCRIPT_UNREADABLE /
+  CAPTURE_ONLY_RECEIPT）。
+- **集成/回归**：`aep coord-skill-manifest check` → `in_sync=true`、`reasons=[]`。
+  **不跑全量**：三路未并发收敛、本轮无新代码（HEAD 为 docs 提交），沿用 20:01
+  v0.6.49 worktree 精确态全量证据（1982 passed, 9 skipped, 1060 subtests, exit 0）；
+  relay 夹具 NOW=06:00Z+TTL60min 在真实墙钟>07:00Z 会稳定失败属夹具时间漂移，
+  不改测试/不放宽守线。工作树 54 项他人 WIP/untracked（scripts/、commander_uia/uia3/
+  handoff_worker/relay_drill、relay/duty、presence.py、tests/*、.pytest_*.log、hal-audit.txt、
+  aep-tray、local_takeover_brain 等）**全部未碰、不纳入本 Agent 提交**。
+- **收尾判定**：现在 21:44 CST，未到 11-23 08:00；fresh online=1（我自己，非额度耗尽证据），
+  不满足「所有在线执行者额度耗尽」⇒ **不收尾，automation 保持 ACTIVE**。
+- **下一轮建议**：①Supervisor 心跳已停 166min，维持人工核查标注、不重启；②盯两待跟进单
+  AEP-ACK、qoder 机器 AGENT_ACK 转化（只记录）；③新窗口/新 presence 先跑 readiness，三判据齐
+  才真发；④三路并发收敛且有新代码再跑全量；⑤临近 11-23 08:00 写最终交接并置 PAUSED，
+  无新代码不为发版而发版。
