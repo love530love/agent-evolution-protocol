@@ -437,6 +437,45 @@
 - **本轮不宣称**：delegation 消息 ≠ ACK；qoder_cn 是否接手 packaging 仍以其原会话 ACK 为准；
   coalition plan 的 commander 归属缺口需 qoder 修，我只回报不代改其包。
 
+## 15:02 心跳巡检（值守 Agent · workbuddyai）
+
+- **presence 续租**：`stale→online`（session-id `workbuddyai-20261122-overnight`，TTL 30min，
+  observed 06:58:15Z / 到期 07:28:15Z）。在线摘要 2 online（qoder + 我）、4 stale（其余），
+  qoder evidence 06:33:10Z 到期 07:03:10Z 仍新鲜。stale=证据过期非离线。
+- **宿主 tick 新鲜**：Core `tick=2111` completed 06:58:07Z、Supervisor `tick=1059`
+  completed 06:58:00Z，相对巡检时刻均秒级更新；无需人工核查、未重启任何宿主。
+- **qoder 最终 ACK（会话文本层已出现，机器层未升级）**：新 observe
+  `coordination/uia_captures/qoder-ack-next.txt`（127KB，281 行）中 14:26 接单后有完整
+  `[AEP-ACK:WAKE-20261122T062123225459Z-5dcd3a17] 挑战串：8F3C2A91` 输出，并给出实质回报
+  （coalition verdict=BLOCKED_UNTIL_WAKE、holder=workbuddy、manifest count=99/in_sync=true、
+  能力上当前不能接 commander）。但机器侧 `coord-commander ack` = `acked=[]/checked=47`、
+  该单 delivery 仍 `AGENT_BUSY/task_delivered=false`。按硬规则：会话内文本 ACK ≠ 机器 AGENT_ACK，
+  不擅自升级状态、不重放；原会话已真发且读到，机器状态对齐留待有 ACK 凭据时人工处理。
+- **六路回执**：逐一 grep 八个挑战串（S-C1D0E9F2/C-4A7B2D81/R-9E3C5A17/Q-7B2F4D90/
+  G-3F8A1C6D/B-6D4E2F80/C4A7E19B/8F3C2A91）——六路派工挑战串仅出现在各自派工消息、
+  全队通报与 presence digest，**workbuddyai 信箱无六路回执**。仅记录，不重放、不宣称接单。
+- **qoder 对齐缺口已由对方修复并回执**：14:49 信箱 result（06:49:02Z）确认 d2b7e5f 实现
+  `active_sessions`（静态 holder=workbuddy 不变，commander.active_sessions.agent=workbuddyai、
+  acknowledged=false，planner 强制 advisory_only=true/authority_transfer=false）。我已只读复核
+  `examples/coalition-flagos.json:129`、`planner.py:607`、spec.py:285 与 d2b7e5f 改动面一致，
+  并于 07:01:45Z 发确认回执 `20261122T070145469668Z-080b58f0`（带 C4A7E19B，信箱层、非
+  command-handoff ACK）。缺口关闭，未代改 coalition 包。
+- **qoder_cn 推送缺口已消失**：06:15Z 它报两个本地提交 965264c/92232c7 无推送凭据待带出；
+  本轮 `git merge-base --is-ancestor` 两者均已在 HEAD（HEAD 已由锚点 b85bd37 前进至
+  `218b392`，含 d2b7e5f 与 v0.6.46 冻结提交）。无需我再带出，不重复提交。
+- **集成/回归**：`aep coord-skill-manifest check` in_sync=true、reasons=[]，直接复算
+  manifest `count=99`（与 qoder 回报一致）。工作树版本三处（pyproject.toml / `__init__.py` /
+  `test_version_consistency.py`）处于他人 v0.6.46 发版 WIP 且未提交，按"先定版本再跑全量"
+  规则**本轮不跑全量**（避免假红），仅跑版本无关守线切片
+  `test_coalition.py + test_commander_delivery_safety.py` = **39 passed**。未覆盖/未改动
+  UIA WIP、`hal-audit.txt`、`uia_receipts/`、他人 coalition/relay/handoff 文件。
+- **git 状态**：`origin/main...HEAD = 0 0`（无未推提交）；HEAD 前进来自他人并发提交，
+  我本轮无源码改动。版本落差 0.6.36–0.6.43 仅 pin 未发版，仍为人类裁定项，不替他人补发。
+- **下一轮建议**：①盯 qoder 会话 ACK 是否转化为机器 `AGENT_ACK`/状态对齐（不重放）；
+  ②盯六路回执是否落 workbuddyai 信箱（未到只记录）；③待他人 v0.6.46 版本三处落定并推送后，
+  再做一次带版本的全量回归留证；④到点（11-23 08:00）或取得全员额度耗尽证据后写最终交接并
+  将本 automation 置 PAUSED。
+
 ## 14:58 固化升级 v0.6.46（把派工卡点变成项目能力）
 
 - **交付**：把 14:27/14:34 真实派工手工排查的四个卡点固化进
