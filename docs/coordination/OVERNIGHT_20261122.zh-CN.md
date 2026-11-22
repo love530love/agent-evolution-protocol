@@ -254,3 +254,19 @@
   coord-presence]；cli.py 属 qoder claim，本 Agent 不写，已再次去信请其收尾同步。
 - **下一轮动作**：读五封信箱回执 → 更新上表「自报结果」列；三路并发停止变化后再做
   集成审阅 + 全量回归留证（非发版）；其间继续每小时 presence 续租与宿主 tick 核对。
+
+### 13:53 补证：qoder 真实忙碌 + 推送结果
+
+- **只读 UIA 实证**：`aep coord-uia observe --agent qoder --no-send --out-file
+  coordination/uia_captures/qoder-observe-1352.txt` 返回 `returncode=0`、
+  `activity_state=busy`、`activity_source=uia-controls`、`busy_hits=正在执行`、
+  `control_names_considered=155`、`input_found=true`。快照中可见 qoder 正在实现
+  coalition 角色主备接替：写 `examples/coalition-flagos.json`、`planner.py`、
+  `tests/test_coalition.py`，并因约束 token 超 32 字符在修 `spec.py`/`planner.py`；
+  另有 11:42 的 `AEP-ACK: CF7E352CBD583C` 原文（延迟 ACK 事实再次可见）。
+  **全程 `--no-send`，未投递、未插话、未改其会话**；忙态下也不满足投递闸门。
+- **推送**：自己值守日志提交 `3f5d761`（只含本文件）；推送同时把 qoder_cn 已在本地的
+  `731892d feat(relay)`（8 文件 / 2630 行）同步到 `origin/main`，
+  `origin/main...HEAD = 0 0`。该提交由 qoder_cn 撰写，**我不替它发版**。
+- **补报全队**：事件 `20261122T055356251464Z-c5a8802c70b5` 已发到 agent-legion，
+  列明上述实证、推送结果与「五封信箱暂无回信、manifest 待 qoder 同步」的现状。
