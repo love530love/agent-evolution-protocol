@@ -436,3 +436,26 @@
   "Agent Chat 调研"非协作会话），未盲投——与我发现的根因同构，互为佐证。
 - **本轮不宣称**：delegation 消息 ≠ ACK；qoder_cn 是否接手 packaging 仍以其原会话 ACK 为准；
   coalition plan 的 commander 归属缺口需 qoder 修，我只回报不代改其包。
+
+## 14:58 固化升级 v0.6.46（把派工卡点变成项目能力）
+
+- **交付**：把 14:27/14:34 真实派工手工排查的四个卡点固化进
+  `coordination/delivery_preflight.py --readiness`，零写入、零适配器、不改活路径：
+  - `dispatch_text_diagnosis`：复用 `dispatch_gate.EVENT/TASK_MARKER/ACK_TOKEN`（无第二套标准），
+    检测双 event id / id 不符 / 缺 AEP-ACK / 多任务标记；
+  - `session_marker_diagnosis`：配置漂移点名 + 候选建议，不放宽 seen=True、不写 profile；
+  - `observe_freshness`：mtime 900s 判陈旧（qoder_cn 历史 seen 回执不再误报可投）；
+  - 无 profile 明确报 ORIGINAL_SESSION_PROFILE_REQUIRED / NEED_PROFILE。
+- **测试**：新增 `DispatchReadinessTests` 10 项；守线 76 passed/37 subtests 与
+  72 passed/241 subtests。全量首轮 1 failed（campaign watcher 30s ready 超时，环境 flaky、
+  与本版无关）→ 定向 1 passed/3.86s → 全量复跑 **1983 passed, 4 skipped,
+  1048 subtests, 269.95s, exit 0**。
+- **发版**：commit `218b392`，tag/release `v0.6.46`，Latest=v0.6.46、body 逐字一致
+  （3120 vs 3119 chars，strip 后相等）、`origin/main...HEAD=0 0`。CHANGELOG v0.6.46 条目
+  由并发 coalition 提交带入 HEAD，我未重复写。未新增 schema / 未改 cli.py / 未动 manifest。
+- **真实扫描复核**：qoder_cn/chatgpt/codebuddy_cn=REOBSERVE_FIRST（陈旧回执），
+  qoder=WAIT_OR_REOBSERVE（busy），workbuddy3=WAIT（capture-only）；零误报可投。
+- **ACK 现状**：qoder 会话内 `AEP-ACK:WAKE-20261122T062123225459Z-5dcd3a17` 已出现多次
+  （14:38 capture 3 次），但 commander 自动判定因订单 session_fingerprint 不一致仍 DEFERRED、
+  `coord-ack` 未捡到。**不手工升级 ACK 状态**（fail-closed），留给已更新的 automation
+  下一轮读回执后裁定；已真发且被读到的消息不重放。
