@@ -315,5 +315,11 @@
   **本轮不改这些共享文件**，列为下一轮最小修复候选（共享 resolver + fail-closed）。
 - **presence**：06:06Z 因未续租从 online → stale（lost_contact）；06:11Z 用同 session-id
   重新 signal，transition=rejoined，TTL 至 06:41Z。presence 不是 ACK。
-- **提交范围**：只提交本 Agent 显式负责的文件；qoder 已暂存的 coalition/、cli.py、
-  manifest、CHANGELOG 等**不纳入**本次 commit，其 CHANGELOG 条目由原作者落地。
+- **提交范围**：只提交本 Agent 显式负责的文件。执行 commit 前 qoder 已自行提交并推送
+  coalition（`0e356ce`），我未代写/代提交；我的提交 `74ba39e`（10 文件 / 941 行）只含
+  态势板、测试、能力卡、文档、值守日志与版本三处，随后 `4f2aa05` 仅修正 release notes
+  对并发合并的描述。qoder 的 relay 测试/文档提交 `965264c`/`92232c7` 也已在 HEAD。
+- **发版对账**：tag `v0.6.45` 已推送；Release 已创建；
+  `gh api .../releases/latest --jq .tag_name` = `v0.6.45`；
+  Release body 与 `docs/releases/v0.6.45.md` 逐字一致（2818 chars）；
+  `origin/main...HEAD = 0 0`。未替他人补发历史版本，未替 coalition 作者写 CHANGELOG。
