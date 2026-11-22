@@ -529,3 +529,57 @@ subagent，而是让**角色**（不是厂商会话）在多个 agent 之间可�
 - 不在没有证据的情况下让位、接管或宣告耗尽；
 - 不在结果不明时切换通道重发；
 - 不新增默认的新会话；唤醒策略保持 `forbid-by-default`。
+
+## 14. 交接清单（给下一任 relay 维护者）
+
+### 14.1 归属与验证
+
+- claim：`AEP-QUOTA-RELAY-20261122`，负责
+  `src/agent_evolution_protocol/relay/`、`tests/test_relay_duty.py`、
+  `tests/test_relay_resources.py`、`docs/relay/`。
+- 当前改动以 `git log --all --oneline -- src/agent_evolution_protocol/relay` 为准；
+  2026-11-22 的 relay 提交包括 `731892d`、`f1ad9f2`、`cc3cb4e`、`ca40d7c`，
+  以及仅通过 CLI 驱动换防的测试提交。
+- 定向回归：
+
+  ```bash
+  .tools/agent-runtime/Scripts/python.exe -m pytest \
+    tests/test_relay_duty.py tests/test_relay_resources.py \
+    tests/test_command_handoff.py tests/test_collab_health.py \
+    tests/test_presence_robustness.py tests/test_supervisor_registration.py \
+    tests/test_foundation.py -q
+  ```
+
+  当前为 92 passed。全量套件另有 `tests/test_legion_ledger.py` 的 3 个既有
+  PowerShell 输出解码失败，与 relay 无关，未在本 claim 内修改。
+
+### 14.2 下一步优先级
+
+1. **并入主命令面**：主 `cli.py` 由 `AEP-COALITION-SUCCESSION-20261122` 持有。
+   该 claim 释放后，把 `relay.cli.build_parser()` 的 action 注册为
+   `aep coord-command-relay`，并同步 `skill-manifest.json` 与本文的 CLI 示例。
+2. **共享 PowerShell 7 解析器**：`cli.py::_pwsh`、
+   `commander_uia.py::_pwsh`、`ui_fallback.PowerShellUiaDriver`、
+   `wake_daemon.py`、`transcript_patrol.py` 目前都只查
+   `shutil.which("pwsh.exe")`。应统一为“先 which，再查
+   `%ProgramFiles%\PowerShell\7\pwsh.exe`；找不到就失败关闭”，避免静默回落
+   5.1 后把 UTF-8 脚本解析坏。relay 侧已有 scoped 版本，见
+   `relay/duty.py::_pwsh_path`。
+3. **失联让位上游能力**：给 `command_handoff` 增加受证据约束的
+   `no_heartbeat`/stall 让位信号；在此之前保持
+   `EMERGENCY_REQUIRES_UPSTREAM`，不要伪造 `time_limit`。
+4. **真实唤醒闭环**：需要目标原会话已经打开且 UI profile 的
+   `session_marker` 可见。2026-11-22 的尝试因 qoder 当前窗口是另一个调研
+   会话而被 `SESSION_MARKER_MISSING` 阻断；不要对同一窗口重复尝试，也不要
+   改投另一个窗口来“碰运气”。正确做法是让目标回到原会话，或由人重新校准
+   并记录新的 session fingerprint。
+5. **本地模型验收**：启动 LM Studio 后再跑 `brief`，把真实输出与
+   `UNAVAILABLE`/`ABSTAINED` 分支都留下证据；仍然只作为 advisory，不写角色状态。
+
+### 14.3 不要做的事
+
+- 不要为了“让流程走通”而把 `SESSION_MARKER_MISSING`、`SKIPPED_PWSH_MISSING`
+  或 `DISPATCH_FAILED_OR_UNKNOWN` 改写成成功；
+- 不要在接受换防时自动补心跳；新持有者必须自己 `beat`；
+- 不要修改其它 claim 的 `cli.py`、`coalition/` 或 `coordination/` 文件来
+  绕过阻塞；先在信箱里留证据并等归属者处理。
