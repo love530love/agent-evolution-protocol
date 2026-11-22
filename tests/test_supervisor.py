@@ -55,3 +55,15 @@ def test_observe_only_reads_ack_evidence_without_calling_desktop_dispatch(tmp_pa
     tick = json.loads(output.getvalue().splitlines()[-1])
     assert tick["dispatch_enabled"] is False
     assert tick["delivery_claim"] == "NONE"
+
+
+def test_failed_dispatch_tick_keeps_mode_and_non_delivery_claim(tmp_path):
+    output = StringIO()
+    with patch.object(supervisor.commander, "tick", side_effect=RuntimeError("boom")):
+        assert supervisor.watch(tmp_path, interval_seconds=1, max_ticks=1,
+                                dispatch=True, stream=output) == 0
+    tick = json.loads(output.getvalue().splitlines()[-1])
+    assert tick["status"] == "TICK_FAILED"
+    assert tick["mode"] == "dispatch"
+    assert tick["dispatch_enabled"] is True
+    assert tick["delivery_claim"] == "NONE"

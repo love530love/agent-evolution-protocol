@@ -48,3 +48,17 @@ def test_watch_writes_a_core_heartbeat_and_has_no_commander_import_path():
         assert tick["dispatch_performed"] is False
         assert tick["delivery_claim"] == "NONE"
         assert cycle.call_count == 2
+
+
+def test_failed_cycle_heartbeat_keeps_core_non_desktop_invariants(tmp_path):
+    output = StringIO()
+    with patch.object(core_host, "cycle", side_effect=RuntimeError("boom")):
+        assert core_host.watch(tmp_path, bridge_root=tmp_path, max_ticks=1,
+                               interval_seconds=1, stream=output,
+                               sleep=lambda _: None) == 0
+    tick = json.loads(output.getvalue().splitlines()[-1])
+    assert tick["status"] == "CYCLE_FAILED"
+    assert tick["ui_touched"] is False
+    assert tick["desktop_dispatch_allowed"] is False
+    assert tick["dispatch_performed"] is False
+    assert tick["delivery_claim"] == "NONE"

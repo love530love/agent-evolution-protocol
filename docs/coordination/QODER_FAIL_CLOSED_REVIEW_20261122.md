@@ -48,7 +48,7 @@ AEP-ACK: CF7E352CBD583C
   - `delivery_claim: "NONE"`
   - `desktop_dispatch_allowed: false`
   - `dispatch_performed: false`
-  
+
   无论调用方 payload 带什么，最终落盘值都不能表达“碰过桌面”或“有交付主张”。
 - 单实例（55-82 行）：使用真实持有的文件锁（Windows `msvcrt.locking`，POSIX `fcntl.flock`），不是“PID 是否存活”的启发式；锁在 `finally` 释放。第二个实例得到 `AlreadyRunning`，`main()` 以退出码 0 报告（179-181 行），不产生第二个循环。
 - 单轮语义（85-114 行）：`cycle()` 只调用 `campaign_tick.tick`、`mission_pulse.pulse(apply=True)` 和 `federation.step(dispatch=False)`；若联邦结果意外带有真值 `sent`，抛出 `CORE_HOST_DISPATCH_VIOLATION`（112-113 行），把“联邦实现变化偷偷给 Core Host 长出手”变成显式故障。

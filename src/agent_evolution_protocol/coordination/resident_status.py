@@ -65,11 +65,22 @@ def status(root: Path, *, max_age_seconds: float = 90.0,
     # core/desktop.  It becomes relevant only for a particular high-integrity
     # order and must not make the whole control plane look dead.
     required = (core, desktop)
-    # A missing mode is not permission to infer that the Desktop Host can type
-    # into a client.  Older heartbeat records lacked this field; treating them
-    # as dispatch-capable made a healthy read-only host look ready to deliver.
-    desktop_mode = (desktop.get("heartbeat") or {}).get("mode")
-    if not isinstance(desktop_mode, str) or desktop_mode not in {"dispatch", "observe-only"}:
+    # A missing or contradictory capability declaration is not permission to
+    # infer that the Desktop Host can type into a client.  In particular, an
+    # old/failed heartbeat must not leave ``desktop_mode == dispatch`` visible
+    # to a dashboard which does not also inspect ``healthy``.  Both fields are
+    # emitted by ``supervisor._heartbeat`` and must agree before this read-only
+    # status endpoint exposes a usable mode.
+    desktop_heartbeat = desktop.get("heartbeat") or {}
+    raw_mode = desktop_heartbeat.get("mode")
+    raw_dispatch_enabled = desktop_heartbeat.get("dispatch_enabled")
+    if not desktop["healthy"]:
+        desktop_mode = "UNVERIFIED"
+    elif raw_mode == "dispatch" and raw_dispatch_enabled is True:
+        desktop_mode = "dispatch"
+    elif raw_mode == "observe-only" and raw_dispatch_enabled is False:
+        desktop_mode = "observe-only"
+    else:
         desktop_mode = "UNVERIFIED"
     if not all(row["healthy"] for row in required):
         control_plane = "HOLD"
