@@ -29,13 +29,19 @@ def _heartbeat_path(root: Path) -> Path:
     return Path(root) / "runtime" / "aep-supervisor.heartbeat.json"
 
 
-def _heartbeat(root: Path, payload: dict) -> None:
+def _heartbeat(root: Path, payload: dict) -> dict:
     """Persist a small health record without claiming an order was accepted."""
-    write_json_atomic(_heartbeat_path(root), {
+    record = {
         "schema": "aep-supervisor-heartbeat-v1",
         "pid": os.getpid(),
         **payload,
-    }, indent=2)
+    }
+    # A resident tick can prove only that the loop is alive.  Even a nonempty
+    # dispatched list records attempts, never delivery or acceptance.
+    record["delivery_claim"] = "NONE"
+    record["dispatch_enabled"] = record.get("mode") == "dispatch"
+    write_json_atomic(_heartbeat_path(root), record, indent=2)
+    return record
 
 
 @contextmanager
@@ -93,8 +99,8 @@ def watch(root: Path, *, interval_seconds: float = 30.0, max_ticks: int = 0,
                            "interval_seconds": interval_seconds,
                            "perceive_first": perceive_first, "tick": 0,
                            "mode": "dispatch" if dispatch else "observe-only"}
-        _heartbeat(root, started_payload)
-        print(json.dumps(started_payload | {"pid": os.getpid()}, ensure_ascii=False),
+        started_record = _heartbeat(root, started_payload)
+        print(json.dumps(started_record, ensure_ascii=False),
               file=output, flush=True)
         count = 0
         while True:
@@ -113,8 +119,8 @@ def watch(root: Path, *, interval_seconds: float = 30.0, max_ticks: int = 0,
                     "perceived": bool(result.get("perceived") and not result["perceived"].get("skipped")),
                     "mode": "dispatch" if dispatch else "observe-only",
                 }
-                _heartbeat(root, payload)
-                print(json.dumps(payload, ensure_ascii=False), file=output, flush=True)
+                record = _heartbeat(root, payload)
+                print(json.dumps(record, ensure_ascii=False), file=output, flush=True)
             except Exception as exc:
                 count += 1
                 payload = {
@@ -122,9 +128,10 @@ def watch(root: Path, *, interval_seconds: float = 30.0, max_ticks: int = 0,
                     "started_at": at, "completed_at": datetime.now(timezone.utc).isoformat(),
                     "duration_seconds": round(time.monotonic() - tick_started, 3),
                     "error": f"{type(exc).__name__}: {exc}"[:1000],
+                    "mode": "dispatch" if dispatch else "observe-only",
                 }
-                _heartbeat(root, payload)
-                print(json.dumps(payload, ensure_ascii=False), file=output, flush=True)
+                record = _heartbeat(root, payload)
+                print(json.dumps(record, ensure_ascii=False), file=output, flush=True)
             if max_ticks and count >= max_ticks:
                 return 0
             time.sleep(interval_seconds)

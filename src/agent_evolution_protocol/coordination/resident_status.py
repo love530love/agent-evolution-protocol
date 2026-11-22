@@ -65,17 +65,25 @@ def status(root: Path, *, max_age_seconds: float = 90.0,
     # core/desktop.  It becomes relevant only for a particular high-integrity
     # order and must not make the whole control plane look dead.
     required = (core, desktop)
-    desktop_mode = str((desktop.get("heartbeat") or {}).get("mode") or "dispatch")
+    # A missing mode is not permission to infer that the Desktop Host can type
+    # into a client.  Older heartbeat records lacked this field; treating them
+    # as dispatch-capable made a healthy read-only host look ready to deliver.
+    desktop_mode = (desktop.get("heartbeat") or {}).get("mode")
+    if not isinstance(desktop_mode, str) or desktop_mode not in {"dispatch", "observe-only"}:
+        desktop_mode = "UNVERIFIED"
     if not all(row["healthy"] for row in required):
         control_plane = "HOLD"
     elif desktop_mode == "observe-only":
         control_plane = "OBSERVE_ONLY"
-    else:
+    elif desktop_mode == "dispatch":
         control_plane = "READY"
+    else:
+        control_plane = "HOLD"
     return {
         "schema": "aep-resident-status-v1", "at": now.isoformat(),
         "coord_root": str(Path(root).resolve()), "max_age_seconds": max_age_seconds,
         "planes": {row["plane"]: row for row in (core, desktop, high_integrity)},
+        "desktop_mode": desktop_mode,
         "control_plane": control_plane,
         "delivery_claim": "NONE",
         "note": "READY means resident coordination loops are healthy; it does not prove a message was delivered or acknowledged.",

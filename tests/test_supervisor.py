@@ -1,4 +1,5 @@
 from io import StringIO
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -49,3 +50,8 @@ def test_observe_only_reads_ack_evidence_without_calling_desktop_dispatch(tmp_pa
     assert check.call_count == 1
     heartbeat = (tmp_path / "runtime" / "aep-supervisor.heartbeat.json").read_text(encoding="utf-8")
     assert '"mode": "observe-only"' in heartbeat
+    assert '"dispatch_enabled": false' in heartbeat
+    assert '"delivery_claim": "NONE"' in heartbeat
+    tick = json.loads(output.getvalue().splitlines()[-1])
+    assert tick["dispatch_enabled"] is False
+    assert tick["delivery_claim"] == "NONE"

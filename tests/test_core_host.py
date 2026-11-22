@@ -1,4 +1,5 @@
 from io import StringIO
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -39,4 +40,11 @@ def test_watch_writes_a_core_heartbeat_and_has_no_commander_import_path():
         heartbeat = Path(folder) / "runtime" / "aep-core-host.heartbeat.json"
         assert '"status": "CYCLE_COMPLETED"' in heartbeat.read_text(encoding="utf-8")
         assert '"ui_touched": false' in heartbeat.read_text(encoding="utf-8")
+        assert '"desktop_dispatch_allowed": false' in heartbeat.read_text(encoding="utf-8")
+        assert '"dispatch_performed": false' in heartbeat.read_text(encoding="utf-8")
+        assert '"delivery_claim": "NONE"' in heartbeat.read_text(encoding="utf-8")
+        tick = json.loads(output.getvalue().splitlines()[-1])
+        assert tick["desktop_dispatch_allowed"] is False
+        assert tick["dispatch_performed"] is False
+        assert tick["delivery_claim"] == "NONE"
         assert cycle.call_count == 2

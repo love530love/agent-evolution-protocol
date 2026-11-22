@@ -38,11 +38,18 @@ def _heartbeat_path(root: Path) -> Path:
     return Path(root) / "runtime" / "aep-core-host.heartbeat.json"
 
 
-def _heartbeat(root: Path, payload: dict) -> None:
-    write_json_atomic(_heartbeat_path(root), {
+def _heartbeat(root: Path, payload: dict) -> dict:
+    record = {
         "schema": "aep-core-host-heartbeat-v1", "pid": os.getpid(),
         "ui_touched": False, **payload,
-    }, indent=2)
+    }
+    # The Core Host deliberately has no desktop hand.  Keep that invariant in
+    # every raw heartbeat so external monitors cannot reinterpret liveness as
+    # a completed or even attempted original-session delivery.
+    record.update({"ui_touched": False, "delivery_claim": "NONE",
+                   "desktop_dispatch_allowed": False, "dispatch_performed": False})
+    write_json_atomic(_heartbeat_path(root), record, indent=2)
+    return record
 
 
 @contextmanager
@@ -121,11 +128,9 @@ def watch(coord_root: Path, *, bridge_root: Path, kernel_root: Path | None = Non
     coord_root = Path(coord_root)
     with _exclusive_lock(coord_root):
         started = datetime.now(timezone.utc).isoformat()
-        _heartbeat(coord_root, {"status": "STARTED", "at": started, "tick": 0,
-                                "coord_root": str(coord_root.resolve()),
-                                "desktop_dispatch_allowed": False})
-        print(json.dumps({"status": "STARTED", "pid": os.getpid(), "at": started,
-                          "desktop_dispatch_allowed": False}, ensure_ascii=False),
+        started_record = _heartbeat(coord_root, {"status": "STARTED", "at": started, "tick": 0,
+                                                   "coord_root": str(coord_root.resolve())})
+        print(json.dumps(started_record, ensure_ascii=False),
               file=output, flush=True)
         count = 0
         while True:
@@ -147,8 +152,8 @@ def watch(coord_root: Path, *, bridge_root: Path, kernel_root: Path | None = Non
                            "completed_at": datetime.now(timezone.utc).isoformat(),
                            "duration_seconds": round(time.monotonic() - began, 3),
                            "error": f"{type(exc).__name__}: {exc}"[:1000]}
-            _heartbeat(coord_root, payload)
-            print(json.dumps(payload, ensure_ascii=False), file=output, flush=True)
+            record = _heartbeat(coord_root, payload)
+            print(json.dumps(record, ensure_ascii=False), file=output, flush=True)
             if max_ticks and count >= max_ticks:
                 return 0
             sleep(interval_seconds)
