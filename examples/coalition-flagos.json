@@ -1,0 +1,122 @@
+{
+  "schema": "aep-coalition-mission-v1",
+  "mission": "flagos",
+  "description": "AI operator-competition coalition: keep command, intelligence, packaging and verification alive across vendor quota and time limits.",
+  "vendor_policy": {
+    "max_roles_per_vendor": 2,
+    "max_critical_roles_per_vendor": 1,
+    "allow_single_vendor": false,
+    "require_backup": true,
+    "backup_depth": 2,
+    "allow_degraded": true,
+    "allow_vendor_overflow": true,
+    "max_primary_roles_per_agent": 2
+  },
+  "agents": [
+    {
+      "agent": "workbuddy",
+      "vendor": "workbuddy",
+      "capabilities": ["command", "coordination", "intel"],
+      "max_primary_roles": 2,
+      "subagent_slots": 3
+    },
+    {
+      "agent": "codex",
+      "vendor": "openai",
+      "capabilities": ["intel", "recon", "verification"],
+      "max_primary_roles": 2,
+      "subagent_slots": 2
+    },
+    {
+      "agent": "github_copilot",
+      "vendor": "github",
+      "capabilities": ["repo_intel", "github", "recon"],
+      "max_primary_roles": 1,
+      "subagent_slots": 1
+    },
+    {
+      "agent": "qoder",
+      "vendor": "qoder",
+      "capabilities": ["packaging", "verification", "command"],
+      "max_primary_roles": 2,
+      "subagent_slots": 3
+    },
+    {
+      "agent": "weak-agent",
+      "vendor": "local",
+      "capabilities": [],
+      "max_primary_roles": 1,
+      "subagent_slots": 0
+    }
+  ],
+  "roles": [
+    {
+      "id": "commander",
+      "title": "调度、指挥与进度跟踪",
+      "criticality": "critical",
+      "load": 3,
+      "required_capabilities": ["command"],
+      "acting_capabilities": ["intel"],
+      "preferred_vendor": "workbuddy",
+      "command_role": "command",
+      "allow_scribe_fallback": true,
+      "write_scope": ["coordination", "docs/coordination"],
+      "constraints": ["no_publish_without_user_confirmation", "keep_original_session"]
+    },
+    {
+      "id": "intel",
+      "title": "资料情报收集与整理",
+      "criticality": "normal",
+      "load": 2,
+      "required_capabilities": ["intel"],
+      "acting_capabilities": ["recon"],
+      "preferred_vendor": "openai",
+      "allow_scribe_fallback": true,
+      "write_scope": ["docs/coordination"],
+      "constraints": ["cite_evidence", "separate_speculation"]
+    },
+    {
+      "id": "github-intel",
+      "title": "GitHub 仓库与上游情报",
+      "criticality": "normal",
+      "load": 2,
+      "required_capabilities": ["repo_intel"],
+      "acting_capabilities": ["github"],
+      "preferred_vendor": "github",
+      "allow_scribe_fallback": true,
+      "write_scope": ["docs/coordination"],
+      "constraints": ["read_only_until_authorised"]
+    },
+    {
+      "id": "packaging",
+      "title": "赛事包制作、上传与回表",
+      "criticality": "critical",
+      "load": 3,
+      "required_capabilities": ["packaging"],
+      "acting_capabilities": ["verification"],
+      "preferred_vendor": "qoder",
+      "allow_scribe_fallback": false,
+      "write_scope": ["examples", "docs/coordination"],
+      "constraints": ["no_blind_replay", "upload_requires_explicit_confirmation"]
+    },
+    {
+      "id": "verification",
+      "title": "独立验证与结果复算",
+      "criticality": "normal",
+      "load": 2,
+      "required_capabilities": ["verification"],
+      "acting_capabilities": ["intel"],
+      "preferred_vendor": "openai",
+      "allow_scribe_fallback": true,
+      "write_scope": ["tests", "docs/coordination"],
+      "constraints": ["recompute_from_files", "no_claim_without_evidence"]
+    }
+  ],
+  "current_holders": {
+    "commander": "workbuddy",
+    "intel": "codex",
+    "github-intel": "github_copilot",
+    "packaging": "qoder",
+    "verification": "codex"
+  }
+}

@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- Add a `coalition/` layer: fail-closed mission spec, TTL-bound per-agent
+  capacity ledger, deterministic primary/backup planner with vendor and
+  per-agent caps, and guarded one-shot handoff dispatch.
+- Takeover runs only when the current plan's guard matches and the target,
+  trigger, authority and evidence agree; handoffs are idempotent by `HO-` key
+  and an uncertain dispatch is never resent.
+- Add `coord-coalition` (`validate/plan/tick/capacity-set/capacity-status/takeover/handoffs/...`)
+  and `coord-presence` (`signal/status/reconcile/next-due`) CLI surfaces.
+- Keep delivery honest: receipts are not ACKs, plans and records report
+  `delivery_claim: NONE` and `agent_accepted: false`.
+- Tests: `tests/test_coalition.py` (13 cases) plus a regenerated skill manifest
+  (99 commands, 36 documented).
+
 ## 0.6.44 — 工件佐证只读 CLI + 无人值守值守基线
 
 - Add read-only CLI to coordination/artifact_corroboration.py (python -m ...): checks whether a local UTF-8 artifact contains an event id plus the one-time challenge. Zero side effects; refuses files over 2 MiB; never writes ACK, edits orders, or grants advance.

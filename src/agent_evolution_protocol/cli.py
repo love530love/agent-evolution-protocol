@@ -4191,6 +4191,10 @@ def build_parser() -> argparse.ArgumentParser:
                      help="how long a hold may wait before a person is alerted (0 disables)")
     fed.add_argument("--federation-root", type=Path, default=Path(".agent-evolution"))
     fed.set_defaults(func=federate)
+
+    from agent_evolution_protocol.coalition import cli as coalition_cli
+    coalition_cli.register_presence(commands)
+    coalition_cli.register(commands)
     return parser
 
 

@@ -4,10 +4,10 @@
 > 手改会让 `tests/test_skill_manifest.py` 失败——这是刻意的：
 > 上一版研究文档把 `schema=aep-next-action-v1` 写错了整整两天，因为散文不会报错。
 
-- 命令总数：**97**
-- 风险分布：read-only 21、mutating 61、irreversible 15
-- 用途已记录：**34** / 97（未记录 63，只允许减少）
-- 清单摘要：`sha256:eef36158e573d0c31e6a7d82da9e164fed7df3c6734ab6e5289721f671c54c22`
+- 命令总数：**99**
+- 风险分布：read-only 21、mutating 63、irreversible 15
+- 用途已记录：**36** / 99（未记录 63，只允许减少）
+- 清单摘要：`sha256:76613f343b3054c87065c6be0e9ad34d538f1b36dd0b8dddbae02437c79ab543`
 
 风险分级是**声明**而不是推导：未登记的命令一律按 `mutating` 处理。
 把会写的命令标成 `read-only` 是这里唯一有代价的错误，所以默认值朝安全方向倒。
@@ -64,6 +64,7 @@
 | `coord-claim-renew` | mutating | `--agent --task` | Extend the caller's claim lease through the normal ``aep`` entrypoint. |
 | `coord-clawchat` | irreversible | `--sender --target --event-id` | *未记录* |
 | `coord-client` | mutating | `ACTION` | Name, find, anchor and open the desktop clients the legion can command. |
+| `coord-coalition` | mutating | `ACTION` | Plan vendor-diverse role succession and execute guarded handoffs. |
 | `coord-codex-rollout` | mutating | `ACTION` | Read a Codex Desktop thread result from its local rollout, read-only. |
 | `coord-commander` | irreversible | `ACTION` | Queue directives, run the unattended loop, and prove every transition. |
 | `coord-delivery-audit` | read-only | `—` | Read-only evidence ladder for all locally recorded deliveries. |
@@ -90,6 +91,7 @@
 | `coord-onboarding` | mutating | `--agent` | *未记录* |
 | `coord-orca` | mutating | `ACTION` | *未记录* |
 | `coord-policy` | read-only | `ACTION --plan --window` | Validate a proposed action plan without touching the desktop. |
+| `coord-presence` | mutating | `ACTION` | Signal, inspect or reconcile expiring team presence evidence. |
 | `coord-process-probe` | read-only | `--pid` | *未记录* |
 | `coord-project-evidence` | mutating | `ACTION` | Seal, verify or inspect time-bounded advisory evidence from another project. |
 | `coord-provider-catalog` | read-only | `—` | List optional execution providers without installing or probing them. |

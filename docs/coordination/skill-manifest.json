@@ -1,7 +1,7 @@
 {
   "by_risk": {
     "irreversible": 15,
-    "mutating": 61,
+    "mutating": 63,
     "read-only": 21
   },
   "commands": [
@@ -1488,6 +1488,302 @@
       "documented": true,
       "name": "coord-client",
       "purpose": "Name, find, anchor and open the desktop clients the legion can command.",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "choices": [
+            "capacity-set",
+            "capacity-status",
+            "handoff-ack",
+            "handoff-decline",
+            "handoff-reconcile",
+            "handoff-status",
+            "handoffs",
+            "plan",
+            "takeover",
+            "tick",
+            "validate"
+          ],
+          "dest": "action",
+          "flags": [],
+          "kind": "positional",
+          "required": true
+        },
+        {
+          "dest": "mission",
+          "flags": [
+            "--mission",
+            "--spec"
+          ],
+          "help": "mission spec JSON path",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "out",
+          "flags": [
+            "--out"
+          ],
+          "help": "write the full report here",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "now",
+          "flags": [
+            "--now"
+          ],
+          "help": "ISO evaluation instant",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "coalition_coord_root",
+          "flags": [
+            "--coord-root"
+          ],
+          "help": "coordination root (else the global --coord-root)",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "coalition_bridge_root",
+          "flags": [
+            "--bridge-root"
+          ],
+          "help": "mailbox/wake root; defaults to the coordination root",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "agent",
+          "flags": [
+            "--agent"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": [],
+          "dest": "agents",
+          "flags": [
+            "--agents"
+          ],
+          "help": "capacity-status: agents to inspect; default all",
+          "kind": "option",
+          "nargs": "*",
+          "required": false
+        },
+        {
+          "dest": "vendor",
+          "flags": [
+            "--vendor"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "choices": [
+            "AVAILABLE",
+            "EXHAUSTED",
+            "LOW",
+            "UNKNOWN",
+            "offline",
+            "online"
+          ],
+          "dest": "state",
+          "flags": [
+            "--state"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "remaining_fraction",
+          "flags": [
+            "--remaining-fraction"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "remaining_seconds",
+          "flags": [
+            "--remaining-seconds"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "resets_at",
+          "flags": [
+            "--resets-at"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": "manual",
+          "dest": "source",
+          "flags": [
+            "--source"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": [],
+          "dest": "evidence",
+          "flags": [
+            "--evidence"
+          ],
+          "kind": "option",
+          "nargs": "*",
+          "required": false
+        },
+        {
+          "default": 60,
+          "dest": "ttl_minutes",
+          "flags": [
+            "--ttl-minutes"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "role",
+          "flags": [
+            "--role"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "from_agent",
+          "flags": [
+            "--from"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "to_agent",
+          "flags": [
+            "--to"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "choices": [
+            "bootstrap",
+            "capability_mismatch",
+            "credit_exhausted",
+            "credit_warning",
+            "holder_unverified",
+            "offline",
+            "quota_exhausted",
+            "time_limit",
+            "usage_limit"
+          ],
+          "dest": "trigger",
+          "flags": [
+            "--trigger"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "choices": [
+            "acting",
+            "primary",
+            "scribe"
+          ],
+          "dest": "authority",
+          "flags": [
+            "--authority"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "sender",
+          "flags": [
+            "--sender"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": "",
+          "dest": "session_id",
+          "flags": [
+            "--session-id"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 30,
+          "dest": "reply_minutes",
+          "flags": [
+            "--reply-minutes"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "task",
+          "flags": [
+            "--task"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "key",
+          "flags": [
+            "--key"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "reply",
+          "flags": [
+            "--reply"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "dry_run",
+          "flags": [
+            "--dry-run"
+          ],
+          "help": "preview only (default)",
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "execute",
+          "flags": [
+            "--execute"
+          ],
+          "help": "perform the guarded dispatch exactly once",
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "documented": true,
+      "name": "coord-coalition",
+      "purpose": "Plan vendor-diverse role succession and execute guarded handoffs.",
       "risk": "mutating"
     },
     {
@@ -3303,6 +3599,100 @@
       "name": "coord-policy",
       "purpose": "Validate a proposed action plan without touching the desktop.",
       "risk": "read-only"
+    },
+    {
+      "arguments": [
+        {
+          "choices": [
+            "next-due",
+            "reconcile",
+            "signal",
+            "status"
+          ],
+          "dest": "action",
+          "flags": [],
+          "kind": "positional",
+          "required": true
+        },
+        {
+          "dest": "agent",
+          "flags": [
+            "--agent"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "choices": [
+            "offline",
+            "online"
+          ],
+          "dest": "state",
+          "flags": [
+            "--state"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": "manual",
+          "dest": "source",
+          "flags": [
+            "--source"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": "",
+          "dest": "session_id",
+          "flags": [
+            "--session-id"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 30,
+          "dest": "ttl_minutes",
+          "flags": [
+            "--ttl-minutes"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": "",
+          "dest": "reason",
+          "flags": [
+            "--reason"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "now",
+          "flags": [
+            "--now"
+          ],
+          "help": "ISO evaluation instant for reconcile",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "coalition_coord_root",
+          "flags": [
+            "--coord-root"
+          ],
+          "help": "coordination root (else the global --coord-root)",
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": true,
+      "name": "coord-presence",
+      "purpose": "Signal, inspect or reconcile expiring team presence evidence.",
+      "risk": "mutating"
     },
     {
       "arguments": [
@@ -5905,9 +6295,9 @@
       "risk": "mutating"
     }
   ],
-  "count": 97,
-  "digest": "sha256:eef36158e573d0c31e6a7d82da9e164fed7df3c6734ab6e5289721f671c54c22",
-  "documented": 34,
+  "count": 99,
+  "digest": "sha256:76613f343b3054c87065c6be0e9ad34d538f1b36dd0b8dddbae02437c79ab543",
+  "documented": 36,
   "generated_from": "agent_evolution_protocol.cli:build_parser",
   "global_arguments": [
     {
