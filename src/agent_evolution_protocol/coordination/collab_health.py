@@ -157,11 +157,16 @@ def _host(path: Path, at: datetime) -> dict:
     # time no longer matches means another process inherited the number.  A
     # legacy heartbeat with no start-time token keeps the old liveness-only
     # behaviour but is explicitly marked MISSING rather than claimed verified.
+    unknown_process = (pid_alive is None or
+                       (bool(claimed_start) and pid_identity == "UNKNOWN"))
     health = ("DEAD_PROCESS" if fresh and pid_alive is False else
               "PID_MISMATCH" if fresh and pid_identity == "MISMATCH" else
+              "PROCESS_UNKNOWN" if fresh and unknown_process else
               "FRESH" if fresh else "STALE_OR_FAILED")
+    effective_fresh = (False if not fresh or pid_alive is False or pid_identity == "MISMATCH"
+                       else "unknown" if unknown_process else True)
     return {"tick": tick, "at": stamp.isoformat(),
-            "fresh": bool(fresh and pid_alive is not False and pid_identity != "MISMATCH"),
+            "fresh": effective_fresh, "heartbeat_fresh": fresh,
             "health": health, "pid": pid, "pid_alive": pid_alive,
             "pid_identity": pid_identity, "age_seconds": round(age, 3),
             "clock_skew_suspect": False}

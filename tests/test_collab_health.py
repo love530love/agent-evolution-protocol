@@ -136,6 +136,32 @@ def test_posix_pid_probe_distinguishes_missing_from_access_denied(monkeypatch):
     assert calls == [(10, 0), (11, 0), (12, 0)]
 
 
+def test_fresh_heartbeat_with_unreadable_pid_does_not_claim_ready(monkeypatch):
+    with TemporaryDirectory() as folder:
+        root = Path(folder)
+        healthy(root)
+        monkeypatch.setattr(collab_health, "_pid_alive", lambda pid: None)
+        result = snapshot(root, now=NOW)
+        assert result["hosts"]["core"]["heartbeat_fresh"] is True
+        assert result["hosts"]["core"]["health"] == "PROCESS_UNKNOWN"
+        assert result["hosts"]["core"]["fresh"] == "unknown"
+        assert result["verdict"] == "HOSTS_UNKNOWN"
+
+
+def test_fresh_heartbeat_with_unverifiable_identity_is_unknown(monkeypatch):
+    with TemporaryDirectory() as folder:
+        root = Path(folder)
+        healthy(root)
+        heartbeat(root, "aep-core-host.heartbeat.json", status="CYCLE_COMPLETED",
+                  tick=5, at=NOW, extra={"process_started_at": "2026-01-01T00:00:00+00:00"})
+        monkeypatch.setattr(collab_health, "_pid_alive", lambda pid: True)
+        monkeypatch.setattr(collab_health.process_identity, "verify", lambda pid, claim: None)
+        result = snapshot(root, now=NOW)
+        assert result["hosts"]["core"]["pid_identity"] == "UNKNOWN"
+        assert result["hosts"]["core"]["fresh"] == "unknown"
+        assert result["verdict"] == "HOSTS_UNKNOWN"
+
+
 def test_reused_pid_is_not_reported_as_fresh_host(monkeypatch):
     with TemporaryDirectory() as folder:
         root = Path(folder)

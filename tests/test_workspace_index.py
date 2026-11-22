@@ -133,6 +133,25 @@ def test_chat_rejects_invalid_workspace_id(tmp_path):
         wi.chat(tmp_path, workspace_id="agent-evolution-protocol")
 
 
+def test_chat_reports_corrupt_event_and_keeps_reading(tmp_path):
+    folder = tmp_path / "private_conversations" / "events"
+    folder.mkdir(parents=True)
+    first = "20261122T110000000000Z-aaaaaaaaaaaa"
+    broken = "20261122T110001000000Z-bbbbbbbbbbbb"
+    last = "20261122T110002000000Z-cccccccccccc"
+    ws_a = "W-" + "a" * 16
+    for event_id, text in ((first, "one"), (last, "two")):
+        (folder / (event_id + ".json")).write_text(json.dumps({
+            "id": event_id, "workspace_id": ws_a, "room": "team", "text": text,
+        }), encoding="utf-8")
+    (folder / (broken + ".json")).write_text("{", encoding="utf-8")
+    view = wi.chat(tmp_path, workspace_id=ws_a, limit=5)
+    assert [item["id"] for item in view["events"]] == [first, last]
+    assert view["malformed_count"] == 1
+    assert view["malformed_sources"][0]["path"].endswith(broken + ".json")
+    assert view["next_cursor"] == last
+
+
 def test_main_cli_chat_filters_workspace_and_room(tmp_path, capsys):
     from agent_evolution_protocol import cli
     from agent_evolution_protocol.coordination.conversation_journal import append_event
@@ -147,6 +166,18 @@ def test_main_cli_chat_filters_workspace_and_room(tmp_path, capsys):
     output = json.loads(capsys.readouterr().out)
     assert output["count"] == 1
     assert output["events"][0]["actor"] == "a"
+
+
+def test_main_cli_rejects_workspace_filter_for_unscoped_views(tmp_path):
+    import pytest
+    from agent_evolution_protocol import cli
+    for view in ("knowledge", "members", "newcomers", "overview", "health", "roles"):
+        args = cli.build_parser().parse_args([
+            "coord-workspace-index", view, "--coord-root", str(tmp_path),
+            "--workspace-id", "W-" + "a" * 16,
+        ])
+        with pytest.raises(cli.ProtocolError, match="only supported for the chat view"):
+            cli.coord_workspace_index(args)
 
 
 def test_knowledge_store_absent_is_empty_not_created(tmp_path):
@@ -166,6 +197,25 @@ def test_knowledge_query_is_parameterised_and_read_only(tmp_path):
     assert view["rows"][0]["task_id"] == "T1"
     # no caller SQL reaches sqlite: there is no sql parameter at all
     assert "sql" not in view
+
+
+def test_knowledge_read_only_uri_handles_special_path_characters(tmp_path):
+    import sqlite3
+    import pytest
+    folder = tmp_path / "p#room 50%"
+    folder.mkdir()
+    db = folder / "knowledge.sqlite"
+    knowledge_store.add(db, kind="lesson", actor="qoder", body="actual record")
+    view = wi.knowledge(db, contains="actual")
+    assert view["count"] == 1
+    assert view["rows"][0]["body"] == "actual record"
+    connection = knowledge_store.connect_read_only(db)
+    try:
+        with pytest.raises(sqlite3.OperationalError):
+            connection.execute("CREATE TABLE should_not_exist (x INTEGER)")
+    finally:
+        connection.close()
+    assert not (tmp_path / "p").exists()
 
 
 def test_query_rejects_out_of_range_limit(tmp_path):

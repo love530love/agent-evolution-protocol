@@ -50,7 +50,10 @@ def connect_read_only(path: Path) -> sqlite3.Connection | None:
     path = Path(path)
     if not path.is_file():
         return None
-    db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    # Encode URI metacharacters such as '#' and '%' before adding the query.
+    # Direct interpolation can turn part of a valid path into a URI fragment,
+    # swallowing mode=ro and accidentally opening or creating a different file.
+    db = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
     db.row_factory = sqlite3.Row
     return db
 

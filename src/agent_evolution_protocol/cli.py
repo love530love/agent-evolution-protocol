@@ -3380,6 +3380,8 @@ def coord_workspace_index(args: argparse.Namespace) -> None:
     root = coord_root(args)
     db = getattr(args, "db", None)
     view = args.view
+    if view != "chat" and (getattr(args, "workspace_id", "") or getattr(args, "room", "")):
+        raise ProtocolError("--workspace-id and --room are only supported for the chat view; other views are coordination-root scoped")
     if view == "overview":
         value = workspace_index.overview(root, knowledge_db=db)
     elif view == "members":

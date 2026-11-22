@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_evolution_protocol.coordination import collab_health, knowledge_store, presence
-from agent_evolution_protocol.coordination.conversation_journal import read_events
+from agent_evolution_protocol.coordination import conversation_journal
 from agent_evolution_protocol.coordination.workspace_identity import validate_workspace_id
 
 SEAT_SCHEMA = "aep-workspace-seat-v1"
@@ -181,24 +181,35 @@ def chat(root: Path, *, after: str = "", limit: int = 50,
         raise ValueError("limit must be between 1 and 500")
     if workspace_id:
         validate_workspace_id(workspace_id)
+    if after and not conversation_journal.SAFE_EVENT.fullmatch(after):
+        raise ValueError("invalid cursor")
     events = []
     cursor = after
-    while len(events) < limit:
-        page = read_events(root, after=cursor, limit=500)
-        if not page:
-            break
-        for event in page:
-            cursor = event["id"]
-            if workspace_id and event.get("workspace_id") != workspace_id:
-                continue
-            if room and event.get("room") != room:
-                continue
-            if contains and contains.casefold() not in str(event.get("text", "")).casefold():
-                continue
-            events.append(event)
-            if len(events) == limit:
-                break
-        if len(page) < 500:
+    errors = []
+    error_count = 0
+    folder = conversation_journal.archive_root(root) / "events"
+    for path in sorted(folder.glob("*.json")):
+        if path.stem <= after or not conversation_journal.SAFE_EVENT.fullmatch(path.stem):
+            continue
+        cursor = path.stem
+        try:
+            event = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(event, dict) or event.get("id") != path.stem:
+                raise ValueError("event id does not match source file")
+        except (OSError, UnicodeError, ValueError) as exc:
+            error_count += 1
+            if len(errors) < 100:
+                errors.append({"path": str(path), "reason": type(exc).__name__})
+            continue
+        event.pop("raw_hook", None)
+        if workspace_id and event.get("workspace_id") != workspace_id:
+            continue
+        if room and event.get("room") != room:
+            continue
+        if contains and contains.casefold() not in str(event.get("text", "")).casefold():
+            continue
+        events.append(event)
+        if len(events) == limit:
             break
     return {
         "schema": INDEX_SCHEMA,
@@ -208,6 +219,8 @@ def chat(root: Path, *, after: str = "", limit: int = 50,
         "next_cursor": cursor,
         "workspace_id": workspace_id or None,
         "scope": "workspace" if workspace_id else "coordination-root-unfiltered",
+        "malformed_count": error_count,
+        "malformed_sources": errors,
         "note": ("Unwatermarked events are excluded when workspace_id is set; "
                  "unfiltered coordination-root results may span workspaces. "
                  "Chat visibility is not an ACK and does not advance a task."),
@@ -286,6 +299,8 @@ def main() -> int:
     parser.add_argument("--kind", default=""); parser.add_argument("--actor", default="")
     parser.add_argument("--task-id", default=""); parser.add_argument("--contains", default="")
     args = parser.parse_args()
+    if args.view != "chat" and (args.workspace_id or args.room):
+        parser.error("--workspace-id and --room are only supported for the chat view; other views are coordination-root scoped")
     if args.view == "overview":
         value = overview(args.root, knowledge_db=args.db)
     elif args.view == "members":

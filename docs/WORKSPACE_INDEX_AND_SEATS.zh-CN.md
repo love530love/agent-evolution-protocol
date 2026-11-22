@@ -74,6 +74,8 @@ presence 变化，**不是带 workspace_id 的正式成员登记**，也不证�
 ```
 
 `next_cursor` 可通过 `--after` 继续读取；过滤时未标记 workspace_id 的历史事件不会混入。
+损坏或事件 ID 与文件名不一致的记录会被跳过并列入 `malformed_sources`；`malformed_count`
+记录总数（明细最多 100 条）。游标包括已扫描的损坏记录，修复后要从该记录之前的游标重读。
 未传 `--workspace-id` 的结果标记为 `coordination-root-unfiltered`，不能视作已隔离的单项目
 群聊。工作区**名称**不等于形如 `W-...` 的工作区 ID。上述筛选已接入主命令，但尚未专门接入 MCP；
 只检索显式发布到 journal 的消息，不抓取全部
