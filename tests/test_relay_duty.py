@@ -415,6 +415,42 @@ def test_cli_parser_and_handler_round_trip(tmp_path):
     assert status["seats"]["commander"]["holder"] == "cdr"
 
 
+def test_cli_drives_offer_accept_succession(tmp_path):
+    root, bridge = setup_fleet(tmp_path)
+    parser = relay_cli.build_parser()
+
+    def run(*argv):
+        args = parser.parse_args(["--coord-root", str(root), *argv])
+        with redirect_stdout(StringIO()) as output:
+            relay_cli.coord_command_relay(args)
+        return json.loads(output.getvalue())
+
+    beat = run("beat", "--agent", "cdr", "--role", "commander",
+               "--evidence", "alive", "--next-step", "hand off cleanly",
+               "--completed", "fixture setup")
+    assert beat["state"] == "FRESH"
+    run("exhausted", "--agent", "cdr", "--reason", "credits exhausted",
+        "--evidence", "provider 402")
+    plan = run("plan", "--role", "commander")
+    assert plan["action_required"] == "PREPARE_OFFER"
+    offered = run("offer", "--agent", "cdr", "--role", "commander",
+                  "--to", "agent-b", "--signal", "quota_exhausted",
+                  "--reason", "vendor credits exhausted",
+                  "--evidence", "provider 402", "--next-step",
+                  "compile the next kernel batch", "--completed",
+                  "fixture setup", "--bridge-root", str(bridge))
+    assert offered["offer_id"].startswith("R")
+    assert offered["checkpoint_sha256"]
+    accepted = run("accept", "--agent", "agent-b", "--role", "commander",
+                   "--offer-id", offered["offer_id"],
+                   "--checkpoint-sha256", offered["checkpoint_sha256"],
+                   "--evidence", "agent-b accepted", "--bridge-root", str(bridge))
+    assert accepted["state"] == "ACCEPTED"
+    status = run("status")
+    assert status["seats"]["commander"]["holder"] == "agent-b"
+    assert duty.heartbeat_status(root, "commander", "agent-b")["state"] == "MISSING"
+
+
 def test_summary_reports_chain_seats_and_offer_state(tmp_path):
     root, bridge = setup_fleet(tmp_path)
     offered = make_offer(root, bridge)
