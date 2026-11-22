@@ -1,6 +1,7 @@
 # 配额感知指挥接力（Quota-aware Command Relay）
 
-> 状态：实现并单元/集成测试通过；真实桌面唤醒（wake）尚未在本机执行验收。
+> 状态：实现并单元/集成测试通过；已做一次真实桌面投递尝试，因目标窗口会话标记
+> 不匹配而在输入前失败关闭。成功唤醒与 ACK 仍未验收。
 > 本文描述 `relay/resources.py`、`relay/duty.py` 与
 > `python -m agent_evolution_protocol.relay` 的现有契约，不把未执行的窗口聚焦、信箱投递或
 > 模型自述当作 ACK、交付或额度证明。
@@ -217,11 +218,27 @@ subagent，而是让**角色**（不是厂商会话）在多个 agent 之间可�
 `coordination.wake_ingress.dispatch_wake(bridge, event_id, apply=True)`。
 
 - 没有 adapter 时返回 `SKIPPED_NO_ADAPTER`，不假装唤醒成功；
+- 桌面适配器需要 PowerShell 7。若当前进程的 `PATH` 找不到 `pwsh.exe`，relay 会在
+  分发期间临时把标准安装目录 `%ProgramFiles%\PowerShell\7` 放到 `PATH` 前面；
+  仍找不到时返回 `SKIPPED_PWSH_MISSING`，**不会回落到 PowerShell 5.1**，也不会
+  尝试输入。信箱与唤醒队列仍然保留；
 - 调用异常返回 `DISPATCH_FAILED_OR_UNKNOWN`，不回滚角色状态，也不盲目重试；
 - 失败或未知结果必须由人核查 `wake_queue` 与目标会话；
 - 唤醒执行、窗口聚焦、消息可见都不是目标 ACK，更不是接受。
 
-### 6.3 证据级别
+### 6.3 本机真实投递尝试（2026-11-22）
+
+- 只读 `coord-uia observe --agent qoder` 在默认 `PATH` 下回落到 PowerShell 5.1，
+  因 UTF-8 脚本被按 ANSI 解析而失败；把 `C:\Program Files\PowerShell\7` 加入
+  `PATH` 后同一命令成功，读到 `activity_state=busy` 且插话控件可用。
+- 随后对 qoder 执行一次带事件 ID 的 `coord-uia deliver --urgent-interject`。
+  适配器在输入前拒绝：`SESSION_MARKER_MISSING`，因为当时打开的 Qoder 窗口是
+  另一个“Agent Chat 调研”会话，不是 profile 绑定的协作会话。
+- 该结果证明会话围栏会在错误会话前阻断输入，**不证明**唤醒成功、消息可见或
+  目标 ACK。按“不确定输入禁止换路由重发”的规则，没有改用信箱或其它窗口补发
+  同一条插话。
+
+### 6.4 证据级别
 
 | 证据 | 能证明 | 不能证明 |
 | --- | --- | --- |
@@ -494,8 +511,9 @@ subagent，而是让**角色**（不是厂商会话）在多个 agent 之间可�
 1. **自动化额度采集**：没有厂商 API/watcher，额度仍由人或 agent 显式声明。
 2. **失联自动让位**：`command_handoff` 没有 `no_heartbeat` 让位信号，当前只能
    `EMERGENCY_REQUIRES_UPSTREAM`。
-3. **真实唤醒验收**：`--dispatch` 代码路径已存在，但尚未对任何授权目标执行
-   一次可复核的桌面唤醒；窗口聚焦/消息可见也不能替代 ACK。
+3. **真实唤醒验收**：`--dispatch` 代码路径已存在；已执行一次真实插话尝试，
+   但目标窗口会话标记不匹配，输入前失败关闭。尚未完成一次“正确会话内产生
+   `MESSAGE_VISIBLE` 并收到目标 ACK”的端到端验收；窗口聚焦/消息可见不能替代 ACK。
 4. **身份与签名**：agent 名是自述字符串，offer/acceptance 没有签名或外部锚；
    单机文件锁只解决并发，不解决投毒或伪造。
 5. **赛事端到端演练**：四角色映射尚未在真实赛事中完整跑过一轮跨厂商换防。

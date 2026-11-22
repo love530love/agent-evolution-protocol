@@ -21,12 +21,14 @@ A holder that loses its heartbeat cannot be replaced through the current
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import shutil
 import tempfile
 from uuid import uuid4
 
@@ -571,6 +573,50 @@ def _event_id(value):
     return value
 
 
+def _pwsh_path():
+    """Find PowerShell 7, including its standard install when PATH is stale.
+
+    An agent process can inherit a PATH from before PowerShell 7 was added.
+    ``shutil.which`` then silently misses an installed ``pwsh.exe``; callers
+    that fall back to Windows PowerShell 5.1 misread UTF-8 adapter scripts.
+    The persisted user PATH is the authority here, not the environment this
+    long-lived process happened to inherit.
+    """
+    found = shutil.which("pwsh.exe")
+    if found:
+        return found
+    roots = (os.environ.get("ProgramFiles"), r"C:\Program Files")
+    seen = set()
+    for raw in roots:
+        if not raw or raw in seen:
+            continue
+        seen.add(raw)
+        candidate = Path(raw) / "PowerShell" / "7" / "pwsh.exe"
+        if candidate.is_file():
+            return str(candidate)
+    return ""
+
+
+@contextmanager
+def _pwsh_in_path():
+    """Expose the discovered pwsh directory only while dispatching a wake."""
+    executable = _pwsh_path()
+    if not executable:
+        yield ""
+        return
+    parent = str(Path(executable).parent)
+    original = os.environ.get("PATH", "")
+    parts = original.split(os.pathsep)
+    changed = parent not in parts
+    if changed:
+        os.environ["PATH"] = parent + os.pathsep + original
+    try:
+        yield executable
+    finally:
+        if changed:
+            os.environ["PATH"] = original
+
+
 def _deliver(root, *, target, event_id, task, sender, topic, text, entrypoint,
              bridge_root=None, dispatch=False, now=None):
     """Deposit one mailbox item and, when an adapter exists, queue a wake.
@@ -615,13 +661,23 @@ def _deliver(root, *, target, event_id, task, sender, topic, text, entrypoint,
         if not has_adapter or not wake_path.exists():
             dispatch_state = "SKIPPED_NO_ADAPTER"
         else:
-            try:
-                from ..coordination import wake_ingress
-                dispatch_result = wake_ingress.dispatch_wake(bridge, event_id, apply=True)
-                dispatch_state = str(dispatch_result.get("state", "UNKNOWN"))
-            except Exception as exc:
-                dispatch_state = "DISPATCH_FAILED_OR_UNKNOWN"
-                dispatch_error = f"{type(exc).__name__}: {exc}"[:500]
+            with _pwsh_in_path() as pwsh:
+                if not pwsh:
+                    dispatch_state = "SKIPPED_PWSH_MISSING"
+                    dispatch_error = (
+                        "PowerShell 7 (pwsh.exe) was not found; desktop wake was not "
+                        "attempted. Install PowerShell 7 or add it to PATH. The mailbox "
+                        "item and wake request are still deposited."
+                    )
+                else:
+                    try:
+                        from ..coordination import wake_ingress
+                        dispatch_result = wake_ingress.dispatch_wake(bridge, event_id,
+                                                                      apply=True)
+                        dispatch_state = str(dispatch_result.get("state", "UNKNOWN"))
+                    except Exception as exc:
+                        dispatch_state = "DISPATCH_FAILED_OR_UNKNOWN"
+                        dispatch_error = f"{type(exc).__name__}: {exc}"[:500]
     return {
         "mailbox_path": str(message_path), "mailbox_state": mailbox_state,
         "wake_path": str(wake_path), "wake_queued": wake_queued,

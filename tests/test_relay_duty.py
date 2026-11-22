@@ -2,6 +2,7 @@ from contextlib import redirect_stdout
 from datetime import datetime, timedelta, timezone
 from io import StringIO
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -232,6 +233,7 @@ def test_dispatch_is_opt_in_and_never_replayed(tmp_path, monkeypatch):
         return {"state": "MESSAGE_VISIBLE", "event_id": event_id,
                 "agent_accepted": False}
 
+    monkeypatch.setattr(duty, "_pwsh_path", lambda: r"C:\fake\pwsh.exe")
     monkeypatch.setattr(wake_ingress, "dispatch_wake", fake_dispatch)
     offered = make_offer(root, bridge, dispatch=True)
     assert offered["delivery"]["wake_queued"] is True
@@ -242,6 +244,45 @@ def test_dispatch_is_opt_in_and_never_replayed(tmp_path, monkeypatch):
     assert again["idempotent"] is True
     assert len(calls) == 1
     assert command_handoff.status(root)["roles"]["commander"]["holder"] == "cdr"
+
+
+def test_dispatch_skips_before_input_when_pwsh_is_missing(tmp_path, monkeypatch):
+    root, bridge = setup_fleet(tmp_path)
+    (root / "ui_profiles").mkdir(parents=True, exist_ok=True)
+    (root / "ui_profiles" / "agent-b.json").write_text("{}", encoding="utf-8")
+    calls = []
+    monkeypatch.setattr(duty, "_pwsh_path", lambda: "")
+    monkeypatch.setattr(wake_ingress, "dispatch_wake",
+                        lambda *args, **kwargs: calls.append((args, kwargs)))
+    offered = make_offer(root, bridge, dispatch=True)
+    assert offered["delivery"]["mailbox_state"] == "DEPOSITED"
+    assert offered["delivery"]["wake_queued"] is True
+    assert offered["delivery"]["dispatch_state"] == "SKIPPED_PWSH_MISSING"
+    assert "PowerShell 7" in offered["delivery"]["dispatch_error"]
+    assert calls == []
+
+
+def test_dispatch_exposes_pwsh_only_for_the_attempt(tmp_path, monkeypatch):
+    root, bridge = setup_fleet(tmp_path)
+    (root / "ui_profiles").mkdir(parents=True, exist_ok=True)
+    (root / "ui_profiles" / "agent-b.json").write_text("{}", encoding="utf-8")
+    fake = tmp_path / "PowerShell" / "7" / "pwsh.exe"
+    fake.parent.mkdir(parents=True)
+    fake.write_text("", encoding="utf-8")
+    seen = {}
+
+    def fake_dispatch(wake_root, event_id, *, apply=False, retry_deferred=False):
+        seen["path"] = os.environ.get("PATH", "")
+        return {"state": "MESSAGE_VISIBLE", "event_id": event_id,
+                "agent_accepted": False}
+
+    monkeypatch.setattr(duty, "_pwsh_path", lambda: str(fake))
+    monkeypatch.setattr(wake_ingress, "dispatch_wake", fake_dispatch)
+    before = os.environ.get("PATH", "")
+    offered = make_offer(root, bridge, dispatch=True)
+    assert offered["delivery"]["dispatch_state"] == "MESSAGE_VISIBLE"
+    assert str(fake.parent) in seen["path"].split(os.pathsep)
+    assert os.environ.get("PATH", "") == before
 
 
 def test_takeover_yielded_seat_and_old_holder_is_notified(tmp_path):
