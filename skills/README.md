@@ -103,3 +103,10 @@ model_required: false
 `may_advance=false`，**绝不升级为 `AGENT_ACK`、投递证明或任务结果回读**。
 零副作用、零服务、零登录；用 `python -m agent_evolution_protocol.coordination.artifact_corroboration`
 直接跑。边界见 `skills/aep-artifact-corroboration/SKILL.md`。
+
+**接手态势板**（额度受限接力）：`aep-succession-board` 只读聚合能力声明、额度信封、
+claim 进度、角色持有者与投递健康，回答「当前谁在指挥、谁可安全接手、缺什么」。
+建议恒 `advisory_only=true / may_advance=false`，不认领角色、不投递、不算 ACK。
+用 `python -m agent_evolution_protocol.coordination.succession_board --format brief`
+直接跑；不新增 schema、不注册 `coord-*` 命令。设计与真实读数见
+`docs/SUCCESSION_SITUATION_BOARD.zh-CN.md`，能力卡见 `skills/aep-succession-board/SKILL.md`。
