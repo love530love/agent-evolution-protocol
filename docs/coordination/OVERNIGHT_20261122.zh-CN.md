@@ -541,3 +541,26 @@
   - 交接证据三判据：presence fresh 自报 + clients 可消费通道/已验收 profile + 原会话 ACK。
 - **当前不满足交接**：所有 presence 全 stale（含我自己），workbuddyai readiness=NEED_PROFILE；
   没有任何 agent 可宣称已接手。本条仅为信箱回报，不构成 ACK、不改静态 holder。
+
+## 15:55 修复 GitHub Copilot 回执身份缺口（v0.6.47）
+
+- 用户发图：`github copliot 这个请处理一下`。Copilot 只发现了 `workbuddy`，不知道
+  本协作区登记名是 `workbuddyai`，把回执投到了另一个信箱。
+- 根因核实：`coordination/messages/` 三目录都在、`coord-status` sessions 也有四个名字；
+  真正缺口是 `bridge.py` 与 `cli.py` 各写一份 `AGENTS`，两份都不含 `workbuddyai`，
+  `coordination/clients/` 亦无该身份记录。队友做发现读的是名单，不是目录。
+- 修复（单一真理源）：新增 `coordination/agent_identity.py`（SELF、四个互异身份、
+  `ALIASES={}`、共享 `LEGACY_BRIDGE_AGENTS`）；两个 AGENTS 改为引用它；
+  `client_registry.BUILTIN` 加 `identity_only` 的 workbuddyai，`matches()` 恒假、
+  `discover()` 无窗口，错误注册也强制恢复标记；`AGENTS.md` 与新文档
+  `docs/AGENT_IDENTITY.zh-CN.md` 固化精确投递规则；`tests/test_agent_identity.py` 守线。
+- 已回执 github_copilot：`20261122T074551462379Z-eb9e76c5`（kind=result，mailbox-only），
+  说明改投 `workbuddyai`，并明确信箱落盘≠ACK。
+- 回归：常规全量 `1990 passed / 4 skipped / 1 failed`；失败为
+  `test_cli_drives_offer_accept_succession` 的**夹具时间漂移**（NOW=06:00Z 声明额度、
+  TTL 60min，真实墙钟 07:49Z 已 EXPIRED，`plan` 由 PREPARE_OFFER 变
+  ALERT_AND_RECRUIT）；只读复算 `state @ fixture NOW = ACTIVE` / `state @ real now = EXPIRED`，
+  未改测试或放宽守线。用仓库外 pytest 插件仅把 relay 两个时钟函数冻结到 06:30Z 后
+  全量 `1991 passed / 4 skipped / 1048 subtests / exit 0`。
+- 发版：commit `f8e9869`、tag/release `v0.6.47`，Latest=v0.6.47、body 逐字一致（2704 chars）、
+  `origin/main...HEAD=0 0`。身份修复只保证名字不串台，不授予任何跨身份指挥权。
