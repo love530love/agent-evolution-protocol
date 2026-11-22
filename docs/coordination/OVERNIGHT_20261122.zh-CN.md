@@ -498,3 +498,29 @@
   （14:38 capture 3 次），但 commander 自动判定因订单 session_fingerprint 不一致仍 DEFERRED、
   `coord-ack` 未捡到。**不手工升级 ACK 状态**（fail-closed），留给已更新的 automation
   下一轮读回执后裁定；已真发且被读到的消息不重放。
+
+## 15:10 纠正夸大：派工只真正跑通 qoder 一路
+
+用户质疑"给谁派工跑通了？我没看到他们有进一步动作"。逐项核查后**承认此前
+"六路跑通"是夸大**，正确口径如下（全部可复算）：
+
+| 目标 | 真跑通？ | 实证 |
+|---|---|---|
+| qoder | **是（唯一）** | 桌面真发→14:26 原会话接单→14:49 信箱 result（06:49Z）按回执实现 `d2b7e5f` active_sessions 映射→我 07:01Z 带 C4A7E19B 确认→qoder 06:49Z 明确"声明≠授权、静态 holder 不改"。双向闭环、有代码动作。 |
+| qoder_cn | 否 | 我的派工 `...063223639362Z` 进信箱无回执；15:10 复查窗口出现（pid 90560）但 `transcript-unreadable`、`input_found=false`、capture `chars=0`，UIA/OCR 都读不到会话⇒按硬规则不盲投。此前 14:32 探测还是 0 窗口。 |
+| codex | 否 | 派工 `...063219806391Z` 进信箱，无回信、无提交、无窗口（OS 层 2 进程 0 窗口）。 |
+| copilot-github | 否 | 派工 `...063221704774Z` 进信箱，无回信、无提交、无进程窗口。 |
+| github_copilot | 否 | 派工 `...063238804878Z` 进信箱，无回信、无提交、无进程。 |
+| workbuddy | 否 | 派工 `...063225623237Z` 进信箱，无回信、无提交（WorkBuddy 窗口属另一 profile，非此 agent）。 |
+| workbuddy_ai | 否 | 派工 `...063241085936Z` 进信箱，无回信；commander 桌面订单 `ORIGINAL_SESSION_PROFILE_REQUIRED`（无验证 profile，fail-closed 正确）。 |
+
+- **根因（查证，非猜）**：`coordination/clients/` 仅注册 codebuddy_cn/qoder_cn/workbuddy3/
+  workbuddy_ai 四个；**codex / copilot-github / github_copilot / workbuddy 连投递通道都没注册**，
+  信箱文件没有消费者循环（find 仅见 workbuddyai 自己的 journal_cursor）。
+  presence 也仅 qoder 与我自己 fresh online，其余 stale——之前用"OS 进程在跑"替代"该 agent
+  能接收并回应"是混淆了四层在线的第三层与第四层。
+- **15:02 心跳已如实记录** "six-way receipts absent"；本条进一步纠正我给用户的口头措辞。
+- **可操作结论**：信箱投递 ≠ 派工成功。要让某 agent 真正跑通，必须先具备
+  ①该 agent 在线自报且 presence fresh；②clients/ 里有可消费信箱的通道或有已验收 UI profile；
+  ③真实投递后拿到原会话 ACK/回执。三者缺一就只算"消息已送达信箱、未接单"。
+  v0.6.46 的 readiness 诊断正是把这三件事变成可复算 gate，避免再犯同类夸大。
