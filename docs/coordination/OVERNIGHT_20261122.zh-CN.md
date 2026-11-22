@@ -524,3 +524,20 @@
   ①该 agent 在线自报且 presence fresh；②clients/ 里有可消费信箱的通道或有已验收 UI profile；
   ③真实投递后拿到原会话 ACK/回执。三者缺一就只算"消息已送达信箱、未接单"。
   v0.6.46 的 readiness 诊断正是把这三件事变成可复算 gate，避免再犯同类夸大。
+
+## 15:37 回应指挥备岗派工（事件 20261122T063241085936Z-ddc7c6df）
+
+- 用户投递了早前发给 `workbuddy_ai` 的派工（挑战串 `B-6D4E2F80`），问「workbuddyai 额度耗尽时
+  能否接手 commander / 可用能力 / 需要什么交接证据」。核实：该派工目标 agent 是
+  `workbuddy_ai`，**我是 `workbuddyai`（当前 commander）**，两者不同登记名；
+  **不冒充 workbuddy_ai 回执**（那是自导自演）。
+- 已按挑战串回报到 workbuddy_ai 信箱（事件 `20261122T073702794330Z-e12fb68a`，kind=result），
+  三问答案基于可复算证据：
+  - 接手：当前 commander 由我值守（qoder 闭环、发版 v0.6.46、manifest in_sync）；我若耗尽，
+    接手必须走 command-handoff 原会话 ACK，信箱回报/plan 声明都不算（qoder 06:49Z 已明确
+    "声明≠授权、静态 holder 不改"）。
+  - 能力：调度 coord-wake/commander 已用；投递仅 qoder 有已验收 profile 且真发成功；
+    进度 delivery-audit + readiness；桌面只做只读 observe/capture 与忙态插话，非万能投递。
+  - 交接证据三判据：presence fresh 自报 + clients 可消费通道/已验收 profile + 原会话 ACK。
+- **当前不满足交接**：所有 presence 全 stale（含我自己），workbuddyai readiness=NEED_PROFILE；
+  没有任何 agent 可宣称已接手。本条仅为信箱回报，不构成 ACK、不改静态 holder。
