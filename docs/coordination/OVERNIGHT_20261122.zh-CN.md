@@ -87,3 +87,18 @@
   **1852 passed, 4 skipped, 1039 subtests passed，200.80s，exit 0**，无版本号假红。
 - 版本三处已同步：`pyproject.toml` / `__init__.py` / `test_version_consistency.py` = 0.6.44；
   新增 `CHANGELOG.md` 顶部条目与 `docs/releases/v0.6.44.md`（含版本落差披露）。
+
+## 12:43 首轮交付完成（可复核）
+
+- 提交 `2517413`（11 文件，显式路径 add）；**排除** UIA 并行 WIP（`commander_uia.py` /
+  `uia3.py` / `test_uia3_driver.py`）、`hal-audit.txt`、`uia_receipts/`。
+- `git push origin main`：`072604e..2517413`（远端此前停在 072604e，说明 v0.6.35 后
+  的本地提交此前根本未推送——这是 tag/Release 落差的直接原因）。
+- tag `v0.6.44` 已建并推送；Release `https://github.com/love530love/agent-evolution-protocol/releases/tag/v0.6.44`
+  已建。对账：`gh release view` Latest=`v0.6.44`，body 与 `docs/releases/v0.6.44.md`
+  **逐字一致**（2022 chars），`git rev-list --left-right --count origin/main...HEAD = 0 0`。
+- CI：`gh run list --commit 2517413` 暂空（push 后无 workflow run）；非阻塞，值守继续观察。
+- **下一轮（13:35 心跳）待办**：①重读宿主 tick（本轮末约 Core 1846 / Desktop 925）；
+  ②读归属征集是否有认领；③presence 续租（TTL 30 分钟已到期）；④继续有界开发：
+  若 `artifact_corroboration` 无争议，评估把它接成 `coord-delivery-audit` 的
+  **只读佐证列**（仅当不改变 ACK 判定语义、且不与 UIA 改动冲突时才做）。
