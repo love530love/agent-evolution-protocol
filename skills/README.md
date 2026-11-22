@@ -64,6 +64,7 @@ model_required: false
 | `aep-legion-announce` | cli | 否 | 全队通报：固定 `room=agent-legion`、默认只读、只写 1 条共享事件、不碰桌面 |
 | `aep-delivery-preflight` | cli | 否 | 投递前只读预检 + 回执复算；可加 UIA 转写并列第二判定源；不打字、不改 commander 活路径 |
 | `aep-delivery-fixture` | cli | 否 | 离线复算四份真机投递夹具；`requiredEvidence` 缺失即 `uncertain`，零服务零登录 |
+| `aep-workspace-index` | cli | 否 | 只读共享索引：席位目录、新成员发现、群聊事件、角色目录与受控只读知识查询；可见性不等于接单 |
 
 新 Agent 要开始调度任务，从 `aep-start-dispatch` 起步；它给出 `aep join` 的最小序列，
 并明确「只有 `VERIFIED` 能关单」。`aep-agent-onboarding` 是较早的散文规范，

@@ -1,7 +1,7 @@
 {
   "by_risk": {
     "irreversible": 15,
-    "mutating": 63,
+    "mutating": 66,
     "read-only": 21
   },
   "commands": [
@@ -1493,6 +1493,22 @@
     {
       "arguments": [
         {
+          "dest": "bridge_root",
+          "flags": [
+            "--bridge-root"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": true,
+      "name": "coord-closure-audit",
+      "purpose": "Read-only three-layer closure audit; never promotes one layer into another.",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
           "choices": [
             "capacity-set",
             "capacity-status",
@@ -2317,6 +2333,23 @@
       "documented": false,
       "name": "coord-dependency-inventory",
       "risk": "read-only"
+    },
+    {
+      "arguments": [
+        {
+          "default": ".",
+          "dest": "workspace",
+          "flags": [
+            "--workspace"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": true,
+      "name": "coord-deploy-check",
+      "purpose": "Read-only deployment readiness check; never installs or writes.",
+      "risk": "mutating"
     },
     {
       "arguments": [
@@ -5233,6 +5266,113 @@
     {
       "arguments": [
         {
+          "choices": [
+            "chat",
+            "health",
+            "knowledge",
+            "members",
+            "newcomers",
+            "overview",
+            "roles"
+          ],
+          "dest": "view",
+          "flags": [],
+          "help": "which index view to read",
+          "kind": "positional",
+          "required": true
+        },
+        {
+          "dest": "coord_root",
+          "flags": [
+            "--coord-root"
+          ],
+          "help": "coordination root (defaults to workspace coordination/)",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "db",
+          "flags": [
+            "--db"
+          ],
+          "help": "knowledge sqlite path (default <root>/knowledge.sqlite)",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 24.0,
+          "dest": "within_hours",
+          "flags": [
+            "--within-hours"
+          ],
+          "help": "newcomer window",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": "",
+          "dest": "after",
+          "flags": [
+            "--after"
+          ],
+          "help": "chat cursor (exclusive)",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 50,
+          "dest": "limit",
+          "flags": [
+            "--limit"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": "",
+          "dest": "kind",
+          "flags": [
+            "--kind"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": "",
+          "dest": "actor",
+          "flags": [
+            "--actor"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": "",
+          "dest": "task_id",
+          "flags": [
+            "--task-id"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": "",
+          "dest": "contains",
+          "flags": [
+            "--contains"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": true,
+      "name": "coord-workspace-index",
+      "purpose": "Read-only shared workspace index; visibility is never acceptance.",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
           "dest": "round_id",
           "flags": [
             "--round-id"
@@ -6295,9 +6435,9 @@
       "risk": "mutating"
     }
   ],
-  "count": 99,
-  "digest": "sha256:76613f343b3054c87065c6be0e9ad34d538f1b36dd0b8dddbae02437c79ab543",
-  "documented": 36,
+  "count": 102,
+  "digest": "sha256:e1c02964e8da3ff12bb7311a51588f807e20186cee6b38ba981c66f99fbc9cb9",
+  "documented": 39,
   "generated_from": "agent_evolution_protocol.cli:build_parser",
   "global_arguments": [
     {

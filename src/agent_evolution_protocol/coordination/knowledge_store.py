@@ -2,6 +2,7 @@
 from __future__ import annotations
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS records (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, task_id TEXT, actor TEXT, title TEXT, body TEXT NOT NULL, tags TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
@@ -30,3 +31,59 @@ def search(path: Path, query: str = "", *, kind: str = "", task_id: str = "", li
         sql += " ORDER BY id DESC LIMIT ?"; params.append(limit)
         return [dict(row) for row in db.execute(sql, params).fetchall()]
     finally: db.close()
+
+
+# --- Read-only query surface -------------------------------------------------
+# The index command must never create, migrate or write a database merely by
+# reading it.  ``connect()`` above runs CREATE TABLE, so it is deliberately not
+# reused here.  A missing file is an empty index, not a fresh schema.
+
+READ_ONLY_COLUMNS = ("id", "kind", "task_id", "actor", "title", "body", "tags", "created_at")
+
+
+def connect_read_only(path: Path) -> sqlite3.Connection | None:
+    """Open an existing store read-only; return None when it does not exist.
+
+    ``mode=ro`` makes SQLite refuse any write.  We check the file first so a
+    query against a never-initialised workspace cannot create a side effect.
+    """
+    path = Path(path)
+    if not path.is_file():
+        return None
+    db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    db.row_factory = sqlite3.Row
+    return db
+
+
+def query(path: Path, *, kind: str = "", actor: str = "", task_id: str = "",
+          contains: str = "", limit: int = 50) -> dict:
+    """Structured read-only query over an existing store.
+
+    Only fixed, parameterised filters are accepted -- no caller SQL reaches
+    sqlite.  Returns a stable envelope so the index command can report the
+    empty/unavailable case without guessing.
+    """
+    if not 1 <= limit <= 500:
+        raise ValueError("limit must be between 1 and 500")
+    db = connect_read_only(path)
+    if db is None:
+        return {"schema": "aep-knowledge-query-v1", "available": False,
+                "reason": "STORE_ABSENT", "rows": [], "count": 0}
+    try:
+        sql = "SELECT id,kind,task_id,actor,title,body,tags,created_at FROM records WHERE 1=1"
+        params: list[Any] = []
+        if kind:
+            sql += " AND kind = ?"; params.append(kind)
+        if actor:
+            sql += " AND actor = ?"; params.append(actor)
+        if task_id:
+            sql += " AND task_id = ?"; params.append(task_id)
+        if contains:
+            sql += " AND (body LIKE ? OR title LIKE ? OR tags LIKE ?)"
+            params += [f"%{contains}%"] * 3
+        sql += " ORDER BY id DESC LIMIT ?"; params.append(limit)
+        rows = [dict(row) for row in db.execute(sql, params).fetchall()]
+        return {"schema": "aep-knowledge-query-v1", "available": True,
+                "rows": rows, "count": len(rows)}
+    finally:
+        db.close()

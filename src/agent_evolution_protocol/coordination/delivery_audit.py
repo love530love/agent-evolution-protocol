@@ -7,8 +7,11 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from datetime import datetime, timezone
 import json
 from pathlib import Path
+
+from ..isotime import parse_iso_or_none
 
 
 def _read(path: Path) -> dict:
@@ -19,15 +22,40 @@ def _read(path: Path) -> dict:
         return {}
 
 
-def audit(root: Path, *, topic: str = "", agent: str = "") -> dict:
+def _state_time(row: dict) -> datetime | None:
+    """Parse updated_at as an aware UTC instant; malformed values lose to valid ones."""
+    value = row.get("updated_at", "")
+    if not isinstance(value, str):
+        return None
+    parsed = parse_iso_or_none(value, assume_utc=True)
+    if parsed is None:
+        return None
+    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+
+
+def _newer_state(current: dict, candidate: dict) -> bool:
+    current_time, candidate_time = _state_time(current), _state_time(candidate)
+    if candidate_time is None:
+        return False
+    if current_time is None:
+        return True
+    return candidate_time > current_time
+
+
+def audit(root: Path, *, topic: str = "", agent: str = "", now: datetime | None = None) -> dict:
     root = Path(root)
+    moment = datetime.now(timezone.utc) if now is None else now
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    else:
+        moment = moment.astimezone(timezone.utc)
     states: dict[tuple[str, str], dict] = {}
     for path in (root / "commander" / "state").glob("*.json"):
         row = _read(path)
         key = (str(row.get("target", "")), str(row.get("event_id", "")))
         if not all(key):
             continue
-        if key not in states or str(row.get("updated_at", "")) > str(states[key].get("updated_at", "")):
+        if key not in states or _newer_state(states[key], row):
             states[key] = row
 
     rows: list[dict] = []
@@ -67,7 +95,13 @@ def audit(root: Path, *, topic: str = "", agent: str = "") -> dict:
         })
 
     counts = Counter(row["desktop"] for row in rows)
+    clock_skew_suspect = any(
+        (stamp - moment).total_seconds() > 60
+        for row in states.values()
+        if (stamp := _state_time(row)) is not None
+    )
     return {
+        "clock_skew_suspect": clock_skew_suspect,
         "messages": len(rows),
         "mailbox_read": sum(row["mailbox_read"] for row in rows),
         "message_visible": counts["MESSAGE_VISIBLE"] + counts["AGENT_ACK"],

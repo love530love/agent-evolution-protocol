@@ -415,7 +415,14 @@ def test_cli_parser_and_handler_round_trip(tmp_path):
     assert status["seats"]["commander"]["holder"] == "cdr"
 
 
-def test_cli_drives_offer_accept_succession(tmp_path):
+def test_cli_drives_offer_accept_succession(tmp_path, monkeypatch):
+    # The CLI does not accept an explicit clock; freeze it to the fixture time
+    # so quota declarations do not expire while the test runs.
+    duty_now, resources_utc = duty._now, resources._utc
+    monkeypatch.setattr(duty, "_now",
+                        lambda value=None: NOW if value is None else duty_now(value))
+    monkeypatch.setattr(resources, "_utc",
+                        lambda value=None: NOW if value is None else resources_utc(value))
     root, bridge = setup_fleet(tmp_path)
     parser = relay_cli.build_parser()
 

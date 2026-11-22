@@ -1,4 +1,5 @@
 """Do not promote file deposits or mailbox reads into Agent acceptance."""
+from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import json
@@ -44,6 +45,35 @@ class DeliveryAuditTests(unittest.TestCase):
             put(root / "messages" / "qoder" / "y.json", {"id": "y", "to": "workbuddy"})
             (root / "messages" / "qoder" / "bad.json").write_text("{bad", encoding="utf-8")
             self.assertEqual(audit(root)["messages"], 0)
+
+    def test_uses_timezone_aware_order_not_string_order(self):
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            put(root / "messages" / "qoder" / "m.json",
+                {"id": "m", "to": "qoder", "topic": "T1", "kind": "delegation"})
+            # Lexically the +08:00 row looks newer, but in UTC it is older.
+            put(root / "commander" / "state" / "old.json", {
+                "id": "old", "target": "qoder", "event_id": "m", "state": "MESSAGE_VISIBLE",
+                "updated_at": "2026-11-22T10:00:00+08:00"})
+            put(root / "commander" / "state" / "new.json", {
+                "id": "new", "target": "qoder", "event_id": "m", "state": "AGENT_ACK",
+                "ack": {"evidence": "ok"}, "updated_at": "2026-11-22T03:00:00+00:00"})
+            row = audit(root, topic="T1")["rows"][0]
+            self.assertEqual(row["desktop"], "AGENT_ACK")
+            self.assertTrue(row["agent_accepted"])
+            self.assertEqual(row["order_id"], "new")
+
+    def test_future_state_timestamp_is_marked_clock_skew(self):
+        now = datetime(2026, 11, 22, 6, 0, tzinfo=timezone.utc)
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            put(root / "messages" / "qoder" / "m.json",
+                {"id": "m", "to": "qoder", "topic": "T1"})
+            put(root / "commander" / "state" / "o.json", {
+                "id": "o", "target": "qoder", "event_id": "m", "state": "MESSAGE_VISIBLE",
+                "updated_at": "2026-11-22T07:00:00+00:00"})
+            result = audit(root, now=now)
+            self.assertTrue(result["clock_skew_suspect"])
 
     def test_cli_exposes_read_only_next_evidence_summary(self):
         with TemporaryDirectory() as folder:

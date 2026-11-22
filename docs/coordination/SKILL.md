@@ -4,10 +4,10 @@
 > 手改会让 `tests/test_skill_manifest.py` 失败——这是刻意的：
 > 上一版研究文档把 `schema=aep-next-action-v1` 写错了整整两天，因为散文不会报错。
 
-- 命令总数：**99**
-- 风险分布：read-only 21、mutating 63、irreversible 15
-- 用途已记录：**36** / 99（未记录 63，只允许减少）
-- 清单摘要：`sha256:76613f343b3054c87065c6be0e9ad34d538f1b36dd0b8dddbae02437c79ab543`
+- 命令总数：**102**
+- 风险分布：read-only 21、mutating 66、irreversible 15
+- 用途已记录：**39** / 102（未记录 63，只允许减少）
+- 清单摘要：`sha256:e1c02964e8da3ff12bb7311a51588f807e20186cee6b38ba981c66f99fbc9cb9`
 
 风险分级是**声明**而不是推导：未登记的命令一律按 `mutating` 处理。
 把会写的命令标成 `read-only` 是这里唯一有代价的错误，所以默认值朝安全方向倒。
@@ -64,6 +64,7 @@
 | `coord-claim-renew` | mutating | `--agent --task` | Extend the caller's claim lease through the normal ``aep`` entrypoint. |
 | `coord-clawchat` | irreversible | `--sender --target --event-id` | *未记录* |
 | `coord-client` | mutating | `ACTION` | Name, find, anchor and open the desktop clients the legion can command. |
+| `coord-closure-audit` | mutating | `—` | Read-only three-layer closure audit; never promotes one layer into another. |
 | `coord-coalition` | mutating | `ACTION` | Plan vendor-diverse role succession and execute guarded handoffs. |
 | `coord-codex-rollout` | mutating | `ACTION` | Read a Codex Desktop thread result from its local rollout, read-only. |
 | `coord-commander` | irreversible | `ACTION` | Queue directives, run the unattended loop, and prove every transition. |
@@ -73,6 +74,7 @@
 | `coord-dependency-audit` | read-only | `--lock --output` | *未记录* |
 | `coord-dependency-gate` | mutating | `--lock --audit-dir --inventory-dir --wheel-dir --output` | *未记录* |
 | `coord-dependency-inventory` | read-only | `--lock --environment --output` | *未记录* |
+| `coord-deploy-check` | mutating | `—` | Read-only deployment readiness check; never installs or writes. |
 | `coord-desktop` | mutating | `ACTION` | Register desktop providers and run read-only per-client capability probes before any UI input. |
 | `coord-desktop-ipc` | mutating | `ACTION --workspace-id --agent` | Persist/recover Supervisor ↔ Desktop Runner events and receipts. |
 | `coord-desktop-runner` | mutating | `ACTION --agent` | Plan/launch/wait for a GUI Agent in the interactive user session. |
@@ -115,6 +117,7 @@
 | `coord-wake-dispatch` | irreversible | `--id` | *未记录* |
 | `coord-wake-status` | mutating | `—` | *未记录* |
 | `coord-wheel-compare` | read-only | `--lock --wheelhouse --environment --output` | *未记录* |
+| `coord-workspace-index` | mutating | `VIEW` | Read-only shared workspace index; visibility is never acceptance. |
 
 ## 联邦入口（federate）
 

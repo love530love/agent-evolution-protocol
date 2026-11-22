@@ -3360,6 +3360,47 @@ def coord_loop_verdict(args: argparse.Namespace) -> None:
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
+def coord_closure_audit(args: argparse.Namespace) -> None:
+    """Read-only three-layer closure audit; never promotes one layer into another."""
+    from agent_evolution_protocol.coordination import closure_audit
+    root = coord_root(args)
+    bridge = args.bridge_root if getattr(args, "bridge_root", None) else root
+    print(json.dumps(closure_audit.audit(root, bridge), ensure_ascii=False, indent=2))
+
+
+def coord_deploy_check(args: argparse.Namespace) -> None:
+    """Read-only deployment readiness check; never installs or writes."""
+    from agent_evolution_protocol.coordination import deploy_check
+    print(json.dumps(deploy_check.check(args.workspace), ensure_ascii=False, indent=2))
+
+
+def coord_workspace_index(args: argparse.Namespace) -> None:
+    """Read-only shared workspace index; visibility is never acceptance."""
+    from agent_evolution_protocol.coordination import workspace_index
+    root = coord_root(args)
+    db = getattr(args, "db", None)
+    view = args.view
+    if view == "overview":
+        value = workspace_index.overview(root, knowledge_db=db)
+    elif view == "members":
+        value = workspace_index.members(root)
+    elif view == "newcomers":
+        value = workspace_index.newcomers(root, within_hours=args.within_hours)
+    elif view == "chat":
+        value = workspace_index.chat(root, after=getattr(args, "after", "") or "",
+                                     limit=args.limit)
+    elif view == "knowledge":
+        value = workspace_index.knowledge(
+            db or (root / "knowledge.sqlite"), kind=getattr(args, "kind", "") or "",
+            actor=getattr(args, "actor", "") or "", task_id=getattr(args, "task_id", "") or "",
+            contains=getattr(args, "contains", "") or "", limit=args.limit)
+    elif view == "roles":
+        value = workspace_index.roles(root)
+    else:
+        value = workspace_index.health(root)
+    print(json.dumps(value, ensure_ascii=False, indent=2))
+
+
 def coord_relay_drill(args: argparse.Namespace) -> None:
     """One-shot relay drill: plan or execute in-turn multi-agent dispatch."""
     root = coord_root(args)
@@ -4123,6 +4164,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     loopv = commands.add_parser("coord-loop-verdict", help="recompute one handoff loop verdict from filesystem evidence")
     loopv.add_argument("--event-id", required=True); loopv.add_argument("--bridge-root", type=Path); loopv.add_argument("--sender", default=""); loopv.add_argument("--target", default=""); loopv.set_defaults(func=coord_loop_verdict)
+    clo = commands.add_parser("coord-closure-audit", help="read-only three-layer closure audit: evidence, delivery, reporting")
+    clo.add_argument("--bridge-root", type=Path); clo.set_defaults(func=coord_closure_audit)
+    dep = commands.add_parser("coord-deploy-check", help="read-only deployment readiness for a freshly cloned workspace")
+    dep.add_argument("--workspace", type=Path, default=Path(".")); dep.set_defaults(func=coord_deploy_check)
+    wix = commands.add_parser("coord-workspace-index",
+                              help="read-only shared index: seats, newcomers, chat, roles and SQL-style knowledge queries")
+    wix.add_argument("view", choices=("overview", "members", "newcomers", "chat", "knowledge", "roles", "health"),
+                     help="which index view to read")
+    wix.add_argument("--coord-root", type=Path, help="coordination root (defaults to workspace coordination/)")
+    wix.add_argument("--db", type=Path, help="knowledge sqlite path (default <root>/knowledge.sqlite)")
+    wix.add_argument("--within-hours", type=float, default=24.0, help="newcomer window")
+    wix.add_argument("--after", default="", help="chat cursor (exclusive)")
+    wix.add_argument("--limit", type=int, default=50)
+    wix.add_argument("--kind", default=""); wix.add_argument("--actor", default="")
+    wix.add_argument("--task-id", default=""); wix.add_argument("--contains", default="")
+    wix.set_defaults(func=coord_workspace_index)
     pe = commands.add_parser("coord-project-evidence",
                              help="seal or inspect time-bounded advisory evidence from another project")
     pe.add_argument("action", choices=("seal", "verify", "record", "status"))

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.49 — Shared workspace index, retained seats, active health query
+
+- Add coordination/workspace_index.py: one read-only command (coord-workspace-index) that turns the coordination area into a group chat plus an index directory, so any joining agent can read seats, newcomers, chat, roles and vetted knowledge without private context.
+- members() unions presence rows, session bindings and mailbox directories so a seat is retained after an agent goes offline (reporting window 7 days); newcomers() reports first readable evidence and never invents a join time.
+- health() reuses collab_health four-layer online snapshot as the active query / offline detection surface; stale presence is never downgraded to offline, heartbeat pid is not live-process proof, unknown is neither online nor offline.
+- Extend knowledge_store with connect_read_only/query: SQLite opened mode=ro, caller SQL never reaches sqlite (fixed parameterised filters only), absent store returns STORE_ABSENT and reading never creates a file.
+- Re-register the command surface (102 commands, 39 documented) and fix the four stale manifest guards; add capability card skills/aep-workspace-index and doc docs/WORKSPACE_INDEX_AND_SEATS.zh-CN.md.
+- Fix coord-deploy-check --workspace default from Path.cwd() to Path(".") so the generated skill manifest never bakes an absolute local path into its digest (a clean-checkout CI would otherwise fail the committed-copy guard).
+- Land the previously untracked dependency closure (command_handoff, collab_health, process_identity, delivery_audit timezone fix) that tracked tests import but CI could not resolve; verify with a clean git worktree full run.
+- Stabilize test_relay_duty::test_cli_drives_offer_accept_succession by freezing duty/resources clocks to the fixture time; no assertion was relaxed, and the relay duty implementation WIP is deliberately not taken over.
+- Tests: 12 new items in tests/test_workspace_index.py; targeted manifest/capability-card/health suites all green.
+
 ## 0.6.48 — Real-dispatch cardpoints become read-only diagnoses
 
 - Add delivery_preflight.background_capture_diagnosis to distinguish BACKGROUND_CAPTURE_UNVERIFIED (correctly refused background OCR) from a truly unreadable session; foreground capture proves readability but CAPTURE_ONLY_RECEIPT is still not delivery or ACK.
