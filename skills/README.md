@@ -97,3 +97,9 @@ model_required: false
 可复算数据，守「缺 `requiredEvidence` ⇒ `uncertain` 持住交付」与主判不被第二源改写。
 只借鉴上游验收方法论并独立实现，**不连接 LobeHub 云端、不登录、不复制源码**；
 边界见 `docs/DESKTOP_DELIVERY_PREFLIGHT.zh-CN.md` 第 8 节。
+
+**工件佐证判定**（无人值守值守）：`aep-artifact-corroboration` 只读检查本地结果工件
+是否同时含事件 ID 与一次性校验串；严格把「佐证」限定为 `advisory_only=true`、
+`may_advance=false`，**绝不升级为 `AGENT_ACK`、投递证明或任务结果回读**。
+零副作用、零服务、零登录；用 `python -m agent_evolution_protocol.coordination.artifact_corroboration`
+直接跑。边界见 `skills/aep-artifact-corroboration/SKILL.md`。

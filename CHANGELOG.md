@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.44 — 工件佐证只读 CLI + 无人值守值守基线
+
+- Add read-only CLI to coordination/artifact_corroboration.py (python -m ...): checks whether a local UTF-8 artifact contains an event id plus the one-time challenge. Zero side effects; refuses files over 2 MiB; never writes ACK, edits orders, or grants advance.
+- Boundary held machine-readable: advisory_only=true, may_advance=false, and all proves.* fields (original_session_ack, task_result_readback, delivery, acceptance, agent_identity, artifact_authorship) stay false. Text corroboration is NOT an original-session transcript, NOT AGENT_ACK, NOT task-result readback.
+- Add skills/aep-artifact-corroboration/SKILL.md (cli / model_required=false) and skills/README.md entry with decision table and failure handling.
+- Tests: test_artifact_corroboration.py grows to 11 (5 CLI boundary cases). Targeted capability-card + manifest + module = 57 passed / 205 subtests; coord-skill-manifest check in_sync=true, command surface still 97.
+- Add docs/coordination/OVERNIGHT_20261122.zh-CN.md watch baseline: online status, delivery audit, host health, and release decisions as recomputable facts.
+- Disclose historical version gap: version pins had reached 0.6.43 while tags/Release/CHANGELOG stopped at v0.6.35 (46 commits); this release aligns to 0.6.44 without back-filling others releases.
+- Verification: full suite run before release with CODEBUDDY_SAFE_DELETE_ENABLED=0; version pinned before the run.
+
 ## 0.6.34 — 每客户端桌面可操作性探针与原子 READY 握手
 
 - Add `aep coord-desktop capability-probe --agent <name>`: a read-only,
