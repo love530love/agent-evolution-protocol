@@ -163,6 +163,19 @@
   "延迟 ACK 事后佐证回填"能力（可复用 artifact_corroboration 的 advisory 边界，
   但绝不自动把历史订单从 NO_REPLY 改成 AGENT_ACK）。
 
+## 13:40 协作状态快照（指挥者收尾本轮）
+
+- 三个真实厂商 claim 均有效至明早：`copilot-github`/CAPACITY-HEARTBEAT（→11-23 05:10Z）、
+  `qoder`/COALITION-SUCCESSION（→05:27Z）、`qoder_cn`/QUOTA-RELAY（→05:29Z）。
+- presence `strength`：online=1（workbuddyai 自报，刚续租）、stale=5（历史登记）。
+  **这印证了"stale ≠ 离线"**：五个厂商进程在 OS 层真实运行、qoder 窗口 TREE_USABLE，
+  只是没有新鲜的 agent-self-report 而已。
+- 工作树此刻多 agent 并发写入（cli.py/coalition/relay 均在 1–2 分钟内更新），
+  **本轮不贸然 commit**，避免把他人未完成代码据为己有或制造半成品提交。
+  待各 claim 收尾（下次心跳读回）后再统一集成审阅 + 稳定全量 + 发版。
+- 本轮已提交的是 v0.6.44（2517413，含 artifact_corroboration CLI + 值守基线）及
+  文档补提交 d840e17；本轮之后的并发改动**尚未提交**，均在工作树。
+
 ## 13:38 心跳（第二轮 · 2026-11-22）
 
 - **窗口与终止条件**：现 13:38，未到截止（11-23 08:00）。投递审计摘要 `next_required`
@@ -206,3 +219,38 @@
   人类裁定项，不替他人补发。
 - **本轮提交**：`e0589f0`（仅值守日志，显式路径 add；无源码、无版本变更），已 push；
   `origin/main...HEAD = 0 0`。本条之后的日志追加不再产生需回填的提交。
+
+## 13:50 全队通报与队友能力盘点（第三轮）
+
+- **全队通报已实际发出**：`aep coord-chat-publish --source workbuddyai --role assistant
+  --room agent-legion --text-file .workbuddy-ai/fleet-brief-20261122.md`，回执事件
+  `20261122T054900658464Z-d7fb3c15fe31`（05:49:00Z）；已读回事件文件确认
+  `room=agent-legion / source=workbuddyai / actor=assistant`。内容逐条列明我已交付、
+  未完成、队友可见进展与请求回报事项，不把 MESSAGE_VISIBLE 当 ACK。
+- **点对点状态询问（均 `--mailbox-only`，不碰桌面、不宣称 ACK）**：
+  copilot-github `...054934399195Z-da5f4317`、qoder `...054938569668Z-d8084991`、
+  qoder_cn `...054941486386Z-2c103c46`、workbuddy `...054945609063Z-5dc4d703`、
+  codex `...054947741624Z-81859867`，topic 分别为 `AEP-TEAM-STATUS-ROUND-20261122`
+  与 `QWEN3-0-SCOPE-20261122`；请求回报 (a) 已完成文件/命令/schema (b) 未完成
+  (c) 可接手角色 (d) 阻塞 (e) 要我集成/避让什么。截至本条尚无回信，不代填结论。
+- **新 claim**：`QWEN3-0`，agent=`workbuddy`（注意不是 `workbuddyai`），05:45:06Z，
+  TTL 至 11-23 05:45Z，paths=[.tools, runtime]；我已去信询问模型用途、依赖与是否会改共享文件，
+  本 Agent 不介入该范围。
+
+### 队友能力/进展表（只写有文件证据或明确自报的事实）
+| Agent / claim | 可见产物 | 自报结果 | 我能确认的边界 |
+| --- | --- | --- | --- |
+| copilot-github / AEP-CAPACITY-HEARTBEAT（05:10Z，TTL 24h，paths 宽） | 截至 05:48Z 未见新的容量心跳源码落盘 | 无 | 不替它宣称完成；已发问，待回信 |
+| qoder / AEP-COALITION-SUCCESSION（05:27Z，TTL 24h） | `coalition/{spec,io,capacity,planner,cli,dispatch}.py`、`examples/coalition-flagos.json`、`tests/test_coalition.py`、cli.py 的 coord-coalition 注册；`QODER_FAIL_CLOSED_REVIEW_20261122.md` | 无 | 规划输出只读、真实投递需显式执行；manifest 未同步，属其 claim |
+| qoder_cn / AEP-QUOTA-RELAY（05:29Z，TTL 24h） | `relay/{__init__,__main__,cli,duty,resources}.py`、`docs/relay/QUOTA_RELAY.zh-CN.md`、`tests/test_relay_{duty,resources}.py` | relay 单测 29 passed、回归 87 passed | 真实桌面 wake **未执行**；cli.py 已还原，CLI 走 `python -m agent_evolution_protocol.relay` |
+| workbuddy / QWEN3-0（05:45Z，TTL 24h） | claim 文件，paths=[.tools, runtime] | 无 | 用途/依赖/共享文件边界待回信；模型不得做判断/关单 |
+| codex（无今日 claim） | 早前接管控制面提案、今早 03:41Z 投递 `MESSAGE_VISIBLE` 无 ACK | 无 | 已发问，待回信 |
+
+- **独立复算（只读、不改代码）**：在 `CODEBUDDY_SAFE_DELETE_ENABLED=0` 下定向跑
+  coalition/relay/collab_health/command_handoff/role_contract/handoff_cli/foundation/
+  presence_robustness 九组测试：**104 passed / 12.19s / exit 0**。命令输出末尾同时出现
+  一条「命令被安全策略拦截」提示，**未重试、未做等价重跑**；测试退出码与通过数按原样记录。
+- **manifest 仍 stale**：`DIGEST_MISMATCH` + `SKILL_STALE`，missing=[coord-coalition,
+  coord-presence]；cli.py 属 qoder claim，本 Agent 不写，已再次去信请其收尾同步。
+- **下一轮动作**：读五封信箱回执 → 更新上表「自报结果」列；三路并发停止变化后再做
+  集成审阅 + 全量回归留证（非发版）；其间继续每小时 presence 续租与宿主 tick 核对。
