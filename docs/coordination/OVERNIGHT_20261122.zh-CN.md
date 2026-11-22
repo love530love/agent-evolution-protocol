@@ -599,3 +599,29 @@
 - **下一轮建议**：①盯 qoder 是否自报续租并把 14:26 会话 ACK 转成机器 ACK（只记录）；
   ②盯六路回执是否落到 `workbuddyai`（非 `workbuddy`），未到不重放；③若出现新窗口/新 presence，
   先跑 readiness，三判据齐备才真发；④临近截止再做最终交接与 PAUSED，无新代码不为发版而发版。
+
+## 16:15 真实派工继续推进：qoder 新单 + workbuddy3 reconcile 与真发
+
+- 自报 presence：workbuddyai stale→online（agent-self-report，notice
+  `20261122T080116725354Z-cf9f0803`）。
+- readiness 扫描 7 路全 `REOBSERVE_FIRST`（observe 陈旧）。真机 observe 后：
+  qoder UIA 可读 112990 字、marker seen、busy 但有插话；qoder_cn/workbuddy3/
+  workbuddy_ai 后台 `transcript_chars=0 / BACKGROUND_CAPTURE_UNVERIFIED`。
+- **qoder 真发**：`20261122T080133667095Z-9e7bf8bf`，`--urgent-interject`，
+  回执 `message-visible / task_delivered=true / event_witness 完整文本`；
+  原会话抓取 `qoder-observe.txt` 位置 46794 含事件 ID+挑战串 `Q7-K4M9P2`，
+  qoder 回“收到，先按新指令处理 qoder 的接单确认单…正在执行中”。真实接单动作，
+  **不是最终 ACK**。
+- **workbuddy3**：前台 capture 读到会话（1974 字、marker seen），证明后台 OCR
+  闸门而非会话丢失。旧 UNCERTAIN 租约 `20261122T063225623237Z-e80a5332`
+  在原会话 OCR 找到事件 ID+挑战串 `Q-7B2F4D90`+“已完成 2m50s”回执 ⇒ 用
+  `session_lease.reconcile` 用存储 binding 合规解除（**不手改、不重放**）。
+  `compose --no-send` 拿到 `ocr-hint` + `composer_verified=true` 后真发
+  `20261122T081450681765Z-0372f1c8`：探针 `probe_in_transcript=true`，
+  但客户端“发生未知错误暂无响应” ⇒ 记 `MESSAGE_VISIBLE`，非 ACK。
+- **workbuddy_ai 排除**：前台 OCR 抓到它显示我本轮原话，是自会话，给它派工=自导自演。
+- **qoder_cn**：前台 capture 仍 uia-tree 0 字、marker 未见，不可投。
+- 卡点固化：新增 `delivery_preflight.background_capture_diagnosis` /
+  `session_lease_diagnosis` / postflight `client_response`（均只读/advisory），
+  守线 39 passed/31 subtests；文档 `docs/REAL_DISPATCH_CARDPOINTS_20261122.zh-CN.md`。
+- 口径：本轮没有新增最终 ACK；qoder 接单动作与 workbuddy3 可见消息都不升级为 ACK。

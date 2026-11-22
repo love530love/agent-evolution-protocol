@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.48 — Real-dispatch cardpoints become read-only diagnoses
+
+- Add delivery_preflight.background_capture_diagnosis to distinguish BACKGROUND_CAPTURE_UNVERIFIED (correctly refused background OCR) from a truly unreadable session; foreground capture proves readability but CAPTURE_ONLY_RECEIPT is still not delivery or ACK.
+- Add session_lease_diagnosis: a read-only view of the shared original-session fence; UNCERTAIN/SENDING blocks new input until session_lease.reconcile with original-session evidence, never a hand-edited sidecar or a replay.
+- Add postflight client_response: a visible message plus client-side unknown-error is recorded with implies_ack=false / may_advance=false and never folded into verified.
+- Document the three measured cardpoints in docs/REAL_DISPATCH_CARDPOINTS_20261122.zh-CN.md and add five守线 tests in tests/test_delivery_preflight.py.
+- Continue real dispatch: qoder new order visible in original session with interject acceptance action (not final ACK); workbuddy3 UNCERTAIN lease reconciled from original-session evidence and new order visible with client error (not ACK); workbuddy_ai excluded as self-session.
+
 ## 0.6.47 — Exact collaboration identity: workbuddyai is no longer discovered as workbuddy
 
 - Add coordination/agent_identity.py as the single source of truth: SELF=workbuddyai, four distinct WorkBuddy identities, an intentionally empty ALIASES map (no prefix/substring redirection), LEGACY_BRIDGE_AGENTS and read-only helpers.

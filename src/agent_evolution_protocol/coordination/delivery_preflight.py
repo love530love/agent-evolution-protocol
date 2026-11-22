@@ -259,6 +259,91 @@ def observe_freshness(root, agent: str, *, max_age_seconds: float = 900.0,
             "schema": "aep-observe-freshness-v1"}
 
 
+def background_capture_diagnosis(observe: dict | None = None, *,
+                                 capture: str = "") -> dict:
+    """Explain an Electron client that reads 0 chars in the background.
+
+    Measured 2026-11-22 on workbuddy3 / workbuddy_ai: ``observe --ocr`` of a
+    background window reports ``transcript_chars=0`` with
+    ``ocr_skipped_reason=BACKGROUND_CAPTURE_UNVERIFIED``, while a foreground
+    ``capture`` reads 1974 / 1030 chars and sees the session marker.  This is
+    a capture-scope gap, not a missing conversation and not a reason to loosen
+    the background OCR gate (CopyFromScreen would show a different app).
+
+    ``capture`` is an optional foreground capture text supplied by the caller;
+    this function never focuses a window or runs an adapter.
+    """
+    row = observe or {}
+    reason = str(row.get("ocr_skipped_reason") or "")
+    source = str(row.get("transcript_source") or "")
+    chars = int(row.get("transcript_chars") or 0)
+    background_only = (
+        reason == "BACKGROUND_CAPTURE_UNVERIFIED"
+        or "background-unreadable" in source
+    )
+    captured = str(capture or "")
+    return {
+        "schema": "aep-background-capture-diagnosis-v1",
+        "observe_ocr_skipped_reason": reason,
+        "observe_transcript_source": source,
+        "observe_transcript_chars": chars,
+        "background_capture_gap": background_only,
+        "capture_chars_supplied": len(captured),
+        "foreground_capture_readable": bool(captured.strip()),
+        "gate_was_relaxed": False,
+        "ui_input_performed": False,
+        "advisory_only": True,
+        "note": (
+            "Do not loosen the background OCR gate: a background screenshot "
+            "could be another application. Use a read-only foreground capture "
+            "to prove the session, then re-observe before any input. "
+            "CAPTURE_ONLY_RECEIPT still never proves delivery or ACK."
+        ),
+    }
+
+
+def session_lease_diagnosis(root, agent: str, *, binding: dict | None = None) -> dict:
+    """Read-only view of the shared original-session fence for one agent.
+
+    A raw ``coord-uia compose/deliver`` refuses before any UI input when the
+    lease is ``SENDING``/``UNCERTAIN``.  Measured 2026-11-22 on workbuddy3:
+    an UNCERTAIN lease blocked a new event, and the correct remedy was a
+    ``session_lease.reconcile`` carrying original-session OCR evidence --
+    never a hand edit of the sidecar and never a replay of the old message.
+
+    Only the canonical lease root is inspected; nothing is written here.
+    """
+    from . import session_lease
+
+    root = Path(root).resolve()
+    lease_root = session_lease.canonical_root(root)
+    row = dict(binding or {})
+    state = None
+    active = False
+    if row:
+        state = session_lease.read_state(lease_root, row)
+        active = session_lease.is_active(state)
+    return {
+        "schema": "aep-session-lease-diagnosis-v1",
+        "agent": agent,
+        "lease_root": str(lease_root),
+        "binding_supplied": bool(row),
+        "state": (state or {}).get("state", "") if state else "NO_SESSION_STATE",
+        "is_active": active,
+        "previous_event_id": (state or {}).get("event_id", "") if state else "",
+        "reason": (state or {}).get("reason", "") if state else "",
+        "requires_original_session_evidence": active,
+        "remedy": (
+            "session_lease.reconcile(...) with original-session evidence; "
+            "do not hand-edit the sidecar and do not replay the old message"
+            if active else ""
+        ),
+        "ui_input_performed": False, "advisory_only": True,
+        "note": ("Only a read-only view. An active/UNCERTAIN lease blocks new "
+                 "input before it happens; this diagnosis never clears it."),
+    }
+
+
 def dispatch_readiness(root, agent: str, *, text: str = "",
                        event_id: str = "", transcript: str = "") -> dict:
     """One advisory answer: can this agent be dispatched to, and what is
@@ -326,6 +411,29 @@ def postflight(receipt: dict, *, transcript: str | None = None,
         transcript=transcript or "", event_id=event_id, probe=probe,
         composer_hint=composer_hint) if transcript is not None else None)
     primary = verdict["verified"]
+    # 2026-11-22 workbuddy3: probe_in_transcript=true and the client rendered
+    # "已完成", yet the same capture said "发生未知错误暂无响应".  A visible
+    # message with a client-side error is not an acceptance: name it as a
+    # separate read-only fact rather than folding it into `verified`.
+    evidence_text = " ".join(
+        str(receipt.get(key, ""))
+        for key in ("status", "capture_path", "paste_probe", "probe_fragment")
+    )
+    if transcript:
+        evidence_text += " " + transcript
+    error_markers = ("发生未知错误", "未知错误暂无响应", "暂无响应", "unknown error")
+    error_hits = sorted({marker for marker in error_markers if marker in evidence_text})
+    client_response = {
+        "schema": "aep-client-response-diagnosis-v1",
+        "error_markers": error_hits,
+        "client_error_reported": bool(error_hits),
+        "implies_ack": False,
+        "may_advance": False,
+        "advisory_only": True,
+        "note": ("A rendered client error beside a visible message means the "
+                 "text arrived but acceptance is unproven. Never upgrade it "
+                 "to AGENT_ACK; require an original-session reply."),
+    }
     conflict = bool(second is not None and second["verified"] is not primary)
     if not conflict:
         conflict_note = ""
@@ -338,6 +446,7 @@ def postflight(receipt: dict, *, transcript: str | None = None,
             "missing": verdict["missing"], "failed": verdict["failed"],
             "declared_task_delivered": bool(receipt.get("task_delivered")),
             "transcript_verdict": second,
+            "client_response": client_response,
             "sources_in_conflict": conflict, "conflict_note": conflict_note,
             "advisory_only": True,
             "note": ("commander still reads the boolean; this recomputation is "

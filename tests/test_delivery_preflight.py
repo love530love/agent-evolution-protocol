@@ -357,5 +357,66 @@ class DispatchReadinessTests(unittest.TestCase):
         self.assertNotIn("add_parser", code)
 
 
+class RealDispatchCardpointTests(unittest.TestCase):
+    """Three cardpoints measured on 2026-11-22, kept advisory and read-only."""
+
+    def test_background_ocr_gap_is_named_without_loosening_the_gate(self):
+        report = dp.background_capture_diagnosis(
+            {"ocr_skipped_reason": "BACKGROUND_CAPTURE_UNVERIFIED",
+             "transcript_source": "uia-background-unreadable",
+             "transcript_chars": 0},
+            capture="加入工作区协作" * 10)
+        self.assertTrue(report["background_capture_gap"])
+        self.assertTrue(report["foreground_capture_readable"])
+        self.assertFalse(report["gate_was_relaxed"])
+        self.assertFalse(report["ui_input_performed"])
+        self.assertTrue(report["advisory_only"])
+
+    def test_a_readable_background_is_not_falsely_labelled_a_gap(self):
+        report = dp.background_capture_diagnosis(
+            {"ocr_skipped_reason": "", "transcript_source": "uia",
+             "transcript_chars": 12000})
+        self.assertFalse(report["background_capture_gap"])
+        self.assertFalse(report["foreground_capture_readable"])
+
+    def test_active_lease_is_named_and_requires_original_session_evidence(self):
+        from agent_evolution_protocol.coordination import session_lease
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder) / "coordination"
+            lease_root = session_lease.canonical_root(root)
+            value = session_lease.binding(
+                workspace_id="ws", provider="uia", target_agent="workbuddy3",
+                session_id="加入工作区协作")
+            with session_lease.acquire(lease_root, value, timeout=5) as lease:
+                lease.write(event_id="EVT-OLD", state="UNCERTAIN",
+                            reason="submitted-unconfirmed")
+            report = dp.session_lease_diagnosis(root, "workbuddy3", binding=value)
+            self.assertEqual(report["state"], "UNCERTAIN")
+            self.assertTrue(report["is_active"])
+            self.assertTrue(report["requires_original_session_evidence"])
+            self.assertIn("session_lease.reconcile", report["remedy"])
+            self.assertFalse(report["ui_input_performed"])
+
+    def test_client_error_beside_visible_message_is_not_ack(self):
+        report = dp.postflight(
+            {"status": "message-visible", "task_delivered": True,
+             "probe_in_transcript": True},
+            transcript="事件已显示 WorkBuddy 已完成 发生未知错误暂无响应")
+        response = report["client_response"]
+        self.assertTrue(response["client_error_reported"])
+        self.assertIn("发生未知错误", response["error_markers"])
+        self.assertFalse(response["implies_ack"])
+        self.assertFalse(response["may_advance"])
+        self.assertTrue(response["advisory_only"])
+
+    def test_no_error_marker_keeps_client_response_clean(self):
+        report = dp.postflight(
+            {"status": "message-visible", "task_delivered": True},
+            transcript="事件已显示 对方已接单")
+        self.assertFalse(report["client_response"]["client_error_reported"])
+
+
 if __name__ == "__main__":
     unittest.main()
