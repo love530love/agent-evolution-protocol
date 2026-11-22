@@ -644,3 +644,50 @@
   三方一致，非伪造。
 - 口径边界：ACK 只证明"我读了、判断了、留了工件"，不证明桌面模型被唤醒或任务结果回表；
   不改变此前 qoder/workbuddy3 真发仍非最终 ACK 的事实。
+
+## 19:36 值守心跳（v0.6.48，未到截止，常规巡检）
+
+- **presence 续租**：`workbuddyai` stale→online（`agent-self-report`，session-id
+  `workbuddyai-20261122-overnight`，TTL 30min，notice `20261122T113655684254Z-d427f2c3`，
+  unread=180）。`coord-status` 稳定列出 `workbuddyai`。**不代他人自报**。
+- **在线摘要**：fresh online=3 —— `workbuddyai`（我）、`workbuddy`（他人，非我身份，不冒充）、
+  `aws-quick`（11:17Z 自报）。其余 16 项 stale（qoder/qoder_cn/codex/expert-*/proxy-*
+  等；stale=证据过期≠离线）。`workbuddy_ai` 窗口经 OCR 仍证实为我当前会话，不给它派工。
+- **版本/发版对账**：HEAD `78b0eaf`（=16:55 leg1 accept 值守段提交本身，docs-only、
+  非锚点后新代码）；`__version__` / pyproject / CHANGELOG 均 0.6.48；tag/release
+  Latest=v0.6.48；`origin/main...HEAD=0 0`。**不降版本、不重做发版**。
+- **宿主 tick（异常记录，不重启）**：Core `tick=192` @11:37:00Z `CYCLE_COMPLETED`
+  （federation=SKIPPED，queued=0，pid 75828）秒级新鲜；Supervisor `tick=3`
+  @10:58:24Z `TICK_COMPLETED`（observe-only，dispatched=[]，pid 107436）**已 38 分钟未更新
+  → 记「需人工核查」**。两者 tick 计数较 16:05 记录（2240/1124）大幅回退且 PID 更换，
+  判为运行时进程在 16:05 后重启过；本值守 Agent 不重启任何宿主进程。
+- **ACK 观察（只记录，不升级/不重放）**：本轮窗口（>08:55Z）`transcript_bus` **新增 0 条事件**，
+  两待跟进单无新带事件 ID 的 AEP-ACK：
+  ① qoder 新单 `20261122T080133667095Z-9e7bf8bf` 的会话文本
+  「AEP-ACK:…9e7bf8bf 已接单，挑战串 Q7-K4M9P2」出现于 08:10Z（16:10 CST），
+  **早于 16:55 锚点，属已知**，机器层 `coord-commander ack` 未转 AGENT_ACK，非最终 ACK；
+  ② workbuddy3 `20261122T081450681765Z-0372f1c8` 仍 MESSAGE_VISIBLE，无新回执。
+  `coord-delivery-audit --summary-only`：195 条消息、`AGENT_ACK=4`（全为 10-30/11-02 历史），
+  mailbox_read/visible/accepted 各 4，无新增。relay drill leg1/leg2 仍 2/2 VERIFIED，
+  **未重跑 accept、未伪造新 ACK**。
+- **readiness（只读 advisory）**：全 7 路 `may_dispatch=false`，三判据不齐，**本轮不真发**。
+  qoder=`FIX_SESSION_MARKER_CONFIG` 但诊断 `configured_marker="agent-evolution-protocol"`
+  正是记忆中已修复值，`observe_check=absent` 建立在 **OBSERVE_STALE（age 2841s>900s）**
+  之上 ⇒ 判为陈旧证据而非真漂移，**勿回退 marker 修复、勿放宽 seen 闸门**；
+  其余 chatgpt/codebuddy_cn/github_copilot/qoder_cn/workbuddy3/workbuddy_ai
+  为 REOBSERVE_FIRST（INPUT_NOT_FOUND / CAPTURE_ONLY_RECEIPT / TRANSCRIPT_UNREADABLE）。
+- **集成/回归**：`aep coord-skill-manifest check` → `in_sync=true`；版本三处一致。
+  **不跑全量**：三路未并发收敛、本轮无新代码（HEAD 为 docs 提交），工作树存在他人大量 WIP
+  （src/*.py、tests/*、UIA WIP）全部未碰、不覆盖；沿用 v0.6.47 时钟夹具证据
+  （常规单红为 relay 夹具时间漂移，非守线回退）。CI 最新 run（78b0eaf）failure 属
+  codex 正在协调的依赖闭包问题，非本值守 Agent 职责，不介入。
+- **社区新活动（他人协作，只记录）**：10:47–10:55Z codex 向 workbuddy/qoder/qoder_cn
+  发出 CI 根因更正、P0 订单重复派发审计与定向派工；11:17Z aws-quick 发多路 delegation；
+  10:30Z workbuddy 报多专家审计 4/4 VERIFIED。均非落给我 `workbuddyai` 的最终 ACK，
+  不认领、不回表。
+- **收尾判定**：现在 19:36 CST，未到 11-23 08:00；fresh online 含 aws-quick/workbuddy
+  （非额度耗尽），不满足「所有在线执行者额度耗尽」可复算证据 ⇒ **不收尾，automation 保持 ACTIVE**。
+- **下一轮建议**：①Supervisor 心跳若持续不更新则升级人工核查（本轮已标，不重启）；
+  ②盯 qoder 是否把 08:10Z 会话 ACK 转成机器 AGENT_ACK、两待跟进单是否出现新 AEP-ACK
+  （只记录）；③新窗口/新 presence 先跑 readiness，三判据齐才真发；④三路并发收敛且有新代码
+  再跑全量；⑤临近 11-23 08:00 再做最终交接与 PAUSED，无新代码不为发版而发版。
