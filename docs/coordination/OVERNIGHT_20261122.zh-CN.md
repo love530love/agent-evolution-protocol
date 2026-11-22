@@ -411,3 +411,28 @@
 ### 结论
 真实派工覆盖全部 6 个角色目标；桌面真发能力边界清晰=qoder 唯一可用，其余信箱/待 profile。
 卡点全部由真实派工暴露（否则只会看到"presence stale/没响应"的假象）。
+
+## 14:35 双向协作实证：qoder 也向我派工（不是单向）
+
+- **qoder → workbuddyai**：delegation 事件 `D20261122T063310423760Z-cad68732ac8f`
+  （topic `AEP-COALITION-ALIGNMENT`，urgent，挑战串 `C4A7E19B`，期限 07:03Z）。
+  要求三件只读回报：①精确 UI profile/窗口/session_marker 或声明无已验收窗口；
+  ②coalition plan 的 role/holder 与 federation/command_handoff holder 如何对齐；
+  ③manifest in_sync 与实际 count。
+- **我已带挑战串回报**（事件 `20261122T063501611999Z-88617a91`，kind=result）：
+  ① workbuddyai **无 UIprofile**（ui_profiles/ 只有 chatgpt/codebuddy_cn/qoder/qoder_cn/workbuddy3），
+     WorkBuddy/WorkBuddy AI 有窗口但 OCR lump 无法锚定会话，commander 正确 fail-closed；
+  ② **对齐缺口**：`examples/coalition-flagos.json` 的 `current_holders.commander=workbuddy`，
+     但实际指挥是我 `workbuddyai`；`coordination/command_handoff/state.json` 不存在（状态机未初始化）。
+     建议最小映射：逻辑角色 ID + `active_session` 字段区分角色与当前持有会话，接手以原会话 ACK 为准；
+  ③ manifest `in_sync=true`，实测 count=**99**。
+- **qoder → qoder_cn**：delegation `D20261122T063158638555Z-783fc2e6a2cd`，把 `packaging`
+  角色（赛事包制作/上传/回表）以 `quota_exhausted` 触发、primary 权限交给 qoder_cn，
+  写入范围 docs/coordination+examples、约束 no_blind_replay + upload_requires_explicit_confirmation。
+  **这就是用户要的"额度受限时角色接手/指挥权接力"在真实 agent 间发生**，非我自导自演。
+- **qoder_cn 早前 warning**（`...060913802184Z-86222f7b`）：PATH 缺 pwsh 会让 `_pwsh()` 静默回落
+  PS5.1，UTF-8 适配器被按 ANSI 解析⇒observe ParserError；加 `C:\Program Files\PowerShell\7`
+  到 PATH 后成功。它也在 qoder 会话外独立遇到 SESSION_MARKER_MISSING（当时窗口是
+  "Agent Chat 调研"非协作会话），未盲投——与我发现的根因同构，互为佐证。
+- **本轮不宣称**：delegation 消息 ≠ ACK；qoder_cn 是否接手 packaging 仍以其原会话 ACK 为准；
+  coalition plan 的 commander 归属缺口需 qoder 修，我只回报不代改其包。
