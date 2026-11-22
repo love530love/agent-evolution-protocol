@@ -102,3 +102,70 @@
   ②读归属征集是否有认领；③presence 续租（TTL 30 分钟已到期）；④继续有界开发：
   若 `artifact_corroboration` 无争议，评估把它接成 `coord-delivery-audit` 的
   **只读佐证列**（仅当不改变 ACK 判定语义、且不与 UIA 改动冲突时才做）。
+
+## 13:33 重大认知修正：跨厂商协作一直在真实发生
+
+- **我此前判断错误**：12:37/12:43 写"五条 presence 全 stale、无在线 agent"，据此没派工。
+  实际用 OS 进程 + `coord-desktop capability-probe` + UIA observe 取证后，真相是：
+  - **OS 进程层**：ChatGPT/Codex（14+ 进程）、GitHub Copilot runtime（3）、Qoder（21）、
+    Qoder CN（6）、WorkBuddy/WorkBuddyAI（各数十）、以及各自的 computer-use 宿主**都在运行**。
+  - **窗口可操作层**：qoder `TREE_USABLE`（ref_count 321、composer_input_count 1），
+    `activity_state=busy`（命中"正在执行"），输入框唯一；会话闸门里 capture 证明
+    今早 03:41Z 那条投递**已被 qoder 原会话处理并回显 `AEP-ACK: CF7E352CBD583C`**
+    ——回执 `agent_accepted=false` 是假阴性。stale 是证据过期，不是没人在线。
+- **三个厂商 agent 正在并行 claim 真实开发**（这是用户要的分工协作，非自导自演）：
+  | agent | claim | 写入范围 |
+  |---|---|---|
+  | copilot-github | `AEP-CAPACITY-HEARTBEAT-20261122` | federation/ coordination/ tests/ docs/（TTL 24h）|
+  | qoder | `AEP-COALITION-SUCCESSION-20261122` | coalition/ cli.py CHANGELOG.md（coalition/__init__.py + io.py 已出现）|
+  | qoder_cn | `AEP-QUOTA-RELAY-20261122` | relay/ docs/relay/（relay/ 已出现）|
+- **我启动的 subagent 造成重复劳动**：写了 `federation/command_handoff.py`、`handoff_cli.py`、
+  `coordination/role_contract.py`、`collab_health.py`，与 copilot-github/qoder 的 claim 部分重叠。
+  已停止启动新 agent，转为**协调者/集成者**角色（符合用户"你调度指挥、各 agent 分工"的期望）。
+- **协调动作（信箱只读，不打断执行中的 agent）**：已发
+  `20261122T053315029289Z-def4769e`→qoder、`20261122T053323514669Z-3c10be9f`→github_copilot，
+  明确各自写入边界与重叠文件避让。信箱消息**不是 ACK**。
+- **角色定位**：本 agent（workbuddyai）后续只做：集成审阅、全量回归、冲突消解、发版对账、
+  值守日志；不再在 federation/coordination/cli/CHANGELOG/relay/coalition 里新增功能代码。
+
+## 13:38 心跳（第二轮 · 2026-11-22）
+
+- **窗口与终止条件**：现 13:38，未到截止（11-23 08:00）。投递审计摘要 `next_required`
+  AGENT_ACK=1 / ARTIFACT_VERIFIED=4，无"所有在线执行者额度耗尽"证据 ⇒ 继续有界推进，不收尾。
+- **presence 续租**：同 session-id `workbuddyai-20261122-overnight` 调 signal，回执
+  `previous=stale → online`（transition=rejoined，notice 非空，TTL 刷新至 06:06Z）；
+  `presence status` = online 1 / stale 5，**唯一 fresh online 是 workbuddyai 自己**，五家厂商登记
+  全 stale（证据过期，非证明离线）。`coord-status`：wake_queue 0 / done 4 / failed 1 / pending 3；
+  `workbuddyai` 未读 86。
+- **投递事实**：`coord-delivery-audit --summary-only`：135 条，mailbox_read 4 / message_visible 5 /
+  agent_accepted 4；desktop_states AGENT_ACK 4 / CEASED 9 / FAILED 10 / NOT_ATTEMPTED 110。
+  **无新 ACK**；信箱文件/MESSAGE_VISIBLE 均不算协作成功。
+- **宿主健康**：Core PID 85448 tick **1955**、`CYCLE_COMPLETED`、末次 05:35:59Z（13:35:59 本地）；
+  Supervisor PID 85396 tick **980**、`TICK_COMPLETED`、mode=observe-only、末次 05:36:04Z。
+  对比首轮末约 Core 1846 / Desktop 925，**两者均在推进且新鲜（<10 分钟）**，无需人工核查、未重启。
+- **归属征集（候选 a）**：事件 `20261122T043721150321Z-5c37263278c1` 全 events 目录仅自身一条，
+  **无任何认领**。两条较新事件 `...051411920206Z`（online→stale 失联）与 `...053613234781Z`
+  （stale→online rejoined）均为 presence-roster 状态变更，非协作认领。
+- **候选 b 可行性评估（只读，未实施）**：`delivery_audit.audit()` ACK 判定核心是
+  `accepted = desktop == "AGENT_ACK" and bool(state.get("ack"))`（src/.../delivery_audit.py:48）；
+  `artifact_corroboration.py` 自限 `advisory_only=true / may_advance=false`，并明确不得用于
+  mark order `AGENT_ACK`（:104）、`original_session_ack` 恒 false（:62）。若要接成
+  `coord-delivery-audit` 佐证列，接线点正是被列为"不碰"的投递活路径 `delivery_audit.py`，
+  且 13:33 角色定位禁止本 Agent 在 coordination/ 新增功能代码 ⇒ **本轮只记可行性，不改代码**，
+  佐证列留待人类/原作者裁定。
+- **本轮窄切片（候选 c · 测试稳定性复算）**：`CODEBUDDY_SAFE_DELETE_ENABLED=0` 下定向
+  `test_artifact_corroboration.py + test_version_consistency.py` **13 passed / 1.70s / exit 0**；
+  CLI 边界冒烟：工件含 event id + challenge 时 `status=ARTIFACT_CORROBORATES_CHALLENGE`，
+  但仍 `advisory_only=true / may_advance=false`，未越界成 ACK。临时冒烟文件已清理。
+  版本三处仍一致 `0.6.44`（pyproject / __init__ / test_version_consistency）。
+- **代码路径**：本轮**未改任何源码**，仅追加本值守日志。HEAD `d840e17`（首轮交付为 2517413；
+  d840e17 仅为日志文档提交）。工作树有大量他人并行 WIP（coalition/、relay/、
+  collab_health.py、role_contract.py、command_handoff.py、handoff_cli.py、foundation/io.py、
+  presence.py、tests/test_presence_robustness.py 等）与 UIA 并行改动（commander_uia.py / uia3.py /
+  test_uia3_driver.py）——**全部不覆盖、不纳入本 Agent 提交**。
+- **协作尝试（步骤5）**：无。唯一 fresh online 是自己，不得自派；五家厂商 stale，按约束不盲目
+  投递，也未 --dispatch。无 ACK 升级。
+- **下一轮（14:35）建议**：①presence 续租（TTL 至 14:06Z 到期）；②重读两宿主 tick 是否连续推进；
+  ③读归属征集与三厂商 claim 是否有 ACK/冲突，仍只做集成审阅不写功能代码；④若新代码稳定且无人
+  认领冲突，可考虑全量回归留证（非发版）；⑤版本落差 0.6.36–0.6.43 仅 pin 未发版，维持列为
+  人类裁定项，不替他人补发。
