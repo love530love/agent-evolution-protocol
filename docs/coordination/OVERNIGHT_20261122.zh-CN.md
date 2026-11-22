@@ -564,3 +564,38 @@
   全量 `1991 passed / 4 skipped / 1048 subtests / exit 0`。
 - 发版：commit `f8e9869`、tag/release `v0.6.47`，Latest=v0.6.47、body 逐字一致（2704 chars）、
   `origin/main...HEAD=0 0`。身份修复只保证名字不串台，不授予任何跨身份指挥权。
+
+## 16:05 值守心跳（v0.6.47，未到截止，常规巡检）
+
+- **presence 续租**：`workbuddyai` signal online（source=agent-self-report，session-id
+  `workbuddyai-20261122-overnight`，TTL 30min，`previous=online`/`notice=null`/unread=102 ⇒ TTL 刷新成功），
+  observed_at 08:03:43Z、expires_at 08:33:43Z。`aep coord-status` 稳定列出 `workbuddyai`，sessions 共 15 个。
+- **版本/发版对账**：HEAD `96fd6de`（仅把 15:55 值守段提交的 docs commit，非代码）；
+  pyproject / `__init__.__version__` / CHANGELOG / release notes 均为 0.6.47；
+  tag/release Latest=v0.6.47；`origin/main...HEAD=0 0`。**不降版本、不重做发版**。
+- **宿主 tick**：Core `tick=2240` @08:03:14Z `CYCLE_COMPLETED`（federation=SKIPPED，queued=0）；
+  Supervisor `tick=1124` @08:03:25Z `TICK_COMPLETED`（observe-only，dispatched=[]）。均秒级新鲜，健康，未重启。
+- **回执/ACK（只记录）**：15:55 之后 **无任何新回执**落到 `workbuddyai` 信箱
+  （最新 `20261122T074039582306Z`=15:40 CST，早于本轮锚点）；qoder 目录最新仍是我 07:01Z 的确认信，
+  github_copilot 最新仍是我 07:45Z 的身份纠正回执；六路（codex/copilot-github/github_copilot/
+  qoder_cn/workbuddy/workbuddy_ai）无新回信、无新提交。
+  `coord-delivery-audit`：169 条消息中 `AGENT_ACK=4`，逐条核对**全为 10-30/11-02 历史**
+  （qoder×2、qoder_cn、workbuddy3），14:26 qoder 会话文本 ACK 至今**未转为机器 AGENT_ACK/订单状态对齐**。
+  不手工升级、不重放已读消息。
+- **readiness（只读 advisory）**：全 7 agent `may_dispatch=false`。qoder=`WAIT_OR_REOBSERVE`
+  （ACTIVITY_BUSY）；github_copilot=`REOBSERVE_FIRST`（CAPTURE_ONLY_RECEIPT + OBSERVE_STALE）；
+  qoder_cn=`WAIT_OR_REOBSERVE`（TRANSCRIPT_UNREADABLE + INPUT_NOT_FOUND）；其余 REOBSERVE_FIRST/WAIT。
+  **无一路满足三判据，本轮不真发**。未回退 qoder session_marker 修复。
+- **集成/回归**：`aep coord-skill-manifest check` → `in_sync=true`、`count=99`（digest 一致）；
+  版本三处一致。**不重跑全量**：三路并未并发收敛、且本轮无新代码；沿用 15:55 v0.6.47 证据
+  （常规 1990 passed/4 skipped/1 failed 为 `test_cli_drives_offer_accept_succession` 夹具时间漂移；
+  冻结 relay 时钟至 06:30Z 后 1991 passed/4 skipped/1048 subtests/exit 0）。不覆盖 UIA WIP /
+  hal-audit.txt / uia_receipts；工作树他人 WIP 全部未碰。
+- **在线摘要**：presence `online=1 / stale=5` —— 仅自己（workbuddyai）fresh online；
+  qoder 已转 stale（末次 06:33Z、07:03Z 过期，证据过期≠离线，需其自报续租）；
+  codebuddy/codebuddy_cn/codex/qoder_cn 长期 stale。
+- **收尾判定**：现在 16:05 CST，未到 11-23 08:00；qoder 仅 stale（非额度耗尽可复算证据），
+  不满足"所有在线执行者额度耗尽" ⇒ **不收尾，automation 保持 ACTIVE**。
+- **下一轮建议**：①盯 qoder 是否自报续租并把 14:26 会话 ACK 转成机器 ACK（只记录）；
+  ②盯六路回执是否落到 `workbuddyai`（非 `workbuddy`），未到不重放；③若出现新窗口/新 presence，
+  先跑 readiness，三判据齐备才真发；④临近截止再做最终交接与 PAUSED，无新代码不为发版而发版。
