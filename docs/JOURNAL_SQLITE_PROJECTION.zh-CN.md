@@ -10,6 +10,16 @@ JSON 原文仍是事实来源，索引不会写回 JSON、唤醒 Agent、证明�
 & 'K:\PythonProjects5\agent-evolution-protocol\.tools\agent-runtime\Scripts\python.exe' -m agent_evolution_protocol.coordination.journal_projection rebuild --coord-root 'K:\PythonProjects5\agent-evolution-protocol\coordination'
 ```
 
+也可以使用统一主命令（每行独立执行）：
+
+```powershell
+& 'K:\PythonProjects5\agent-evolution-protocol\.tools\agent-runtime\Scripts\python.exe' -m agent_evolution_protocol --coord-root 'K:\PythonProjects5\agent-evolution-protocol\coordination' coord-journal-index rebuild
+```
+
+```powershell
+& 'K:\PythonProjects5\agent-evolution-protocol\.tools\agent-runtime\Scripts\python.exe' -m agent_evolution_protocol --coord-root 'K:\PythonProjects5\agent-evolution-protocol\coordination' coord-journal-index search --workspace-id 'W-aaaaaaaaaaaaaaaa' --contains '进展'
+```
+
 按实际工作区 ID 查询（下例 ID 为占位符，不是本机项目 ID）：
 
 ```powershell
@@ -31,7 +41,7 @@ JSON 原文仍是事实来源，索引不会写回 JSON、唤醒 Agent、证明�
 
 ## 边界
 
-- 此模块尚未接主 CLI/MCP、后台增量监听或正式成员加入登记；`--unbound` 不代表可直接分配归属。
+- 主 CLI 已接入；尚未接 MCP、后台增量监听或正式成员加入登记；`--unbound` 不代表可直接分配归属。
 - 未匹配或无标签的旧事件不会混入指定工作区，避免多会话串台。
 - 搜索以 SQLite `instr(lower(...))` 实现，默认 lower 的非 ASCII 大小写折叠由 SQLite 决定，
   大型历史库尚无性能评估；这是基本 SQL 查询，不声称语义检索或 FTS 加速。

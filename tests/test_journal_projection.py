@@ -20,6 +20,24 @@ def event(root, text, workspace=None, room="team"):
                         text=text, workspace_id=workspace)
 
 
+def test_main_cli_rebuilds_and_searches_only_selected_workspace(tmp_path, capsys):
+    from agent_evolution_protocol import cli
+    target = event(tmp_path, "可检索进展", WORK_A)
+    event(tmp_path, "可检索进展", WORK_B)
+    parser = cli.build_parser()
+    prefix = ["--coord-root", str(tmp_path), "coord-journal-index"]
+    args = parser.parse_args(prefix + ["rebuild"])
+    cli.coord_journal_index(args)
+    assert json.loads(capsys.readouterr().out)["indexed"] == 2
+    args = parser.parse_args(prefix + ["search", "--workspace-id", WORK_A,
+                                       "--contains", "可检索"])
+    cli.coord_journal_index(args)
+    assert [row["event_id"] for row in json.loads(capsys.readouterr().out)["events"]] == [target["id"]]
+    args = parser.parse_args(prefix + ["status", "--workspace-id", WORK_A])
+    with pytest.raises(cli.ProtocolError):
+        cli.coord_journal_index(args)
+
+
 def test_projection_is_scoped_and_preserves_source_evidence(tmp_path):
     a = event(tmp_path, "进展 A-1 (50%)", WORK_A)
     event(tmp_path, "进展 A-1 (50%)", WORK_B)

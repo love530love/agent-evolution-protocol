@@ -3406,6 +3406,47 @@ def coord_workspace_index(args: argparse.Namespace) -> None:
     print(json.dumps(value, ensure_ascii=False, indent=2))
 
 
+def coord_workspace_members(args: argparse.Namespace) -> None:
+    """Explicit workspace member claims and durable join notifications."""
+    from agent_evolution_protocol.coordination import workspace_members
+    root = coord_root(args)
+    try:
+        if args.action == "join":
+            value = workspace_members.join(root, workspace_id=args.workspace_id,
+                                           agent=args.agent, source=args.source,
+                                           session_id=args.session_id)
+        elif args.action == "members":
+            value = workspace_members.members(root, workspace_id=args.workspace_id)
+        else:
+            value = workspace_members.notifications(root, workspace_id=args.workspace_id,
+                                                     after=args.after, limit=args.limit)
+    except ValueError as exc:
+        raise ProtocolError(str(exc)) from exc
+    print(json.dumps(value, ensure_ascii=False, indent=2))
+
+
+def coord_journal_index(args: argparse.Namespace) -> None:
+    """Rebuild and query a workspace-scoped journal SQLite projection."""
+    from agent_evolution_protocol.coordination import journal_projection
+    root = coord_root(args)
+    db = args.db or (root / "journal-index.sqlite3")
+    if args.action != "search" and (args.workspace_id or args.unbound or args.room or args.contains or args.after):
+        raise ProtocolError("workspace and text filters are only supported for journal-index search")
+    try:
+        if args.action == "rebuild":
+            value = journal_projection.rebuild(root, db)
+        elif args.action == "status":
+            value = journal_projection.status(db, error_limit=args.limit)
+        else:
+            value = journal_projection.search(db, workspace_id=args.workspace_id,
+                                              unbound=args.unbound, room=args.room,
+                                              contains=args.contains, after=args.after,
+                                              limit=args.limit)
+    except ValueError as exc:
+        raise ProtocolError(str(exc)) from exc
+    print(json.dumps(value, ensure_ascii=False, indent=2))
+
+
 def coord_relay_drill(args: argparse.Namespace) -> None:
     """One-shot relay drill: plan or execute in-turn multi-agent dispatch."""
     root = coord_root(args)
@@ -4187,6 +4228,27 @@ def build_parser() -> argparse.ArgumentParser:
     wix.add_argument("--kind", default=""); wix.add_argument("--actor", default="")
     wix.add_argument("--task-id", default=""); wix.add_argument("--contains", default="")
     wix.set_defaults(func=coord_workspace_index)
+    wmembers = commands.add_parser("coord-workspace-members",
+                                  help="record explicit workspace joins and read join notifications")
+    wmembers.add_argument("action", choices=("join", "members", "notifications"))
+    wmembers.add_argument("--workspace-id", required=True)
+    wmembers.add_argument("--agent", default="")
+    wmembers.add_argument("--source", default="")
+    wmembers.add_argument("--session-id", default="")
+    wmembers.add_argument("--after", type=int, default=0)
+    wmembers.add_argument("--limit", type=int, default=50)
+    wmembers.set_defaults(func=coord_workspace_members)
+    jindex = commands.add_parser("coord-journal-index",
+                                 help="rebuild or search the workspace-scoped SQLite journal projection")
+    jindex.add_argument("action", choices=("rebuild", "search", "status"))
+    jindex.add_argument("--db", type=Path)
+    jindex.add_argument("--workspace-id", default="")
+    jindex.add_argument("--unbound", action="store_true")
+    jindex.add_argument("--room", default="")
+    jindex.add_argument("--contains", default="")
+    jindex.add_argument("--after", default="")
+    jindex.add_argument("--limit", type=int, default=50)
+    jindex.set_defaults(func=coord_journal_index)
     pe = commands.add_parser("coord-project-evidence",
                              help="seal or inspect time-bounded advisory evidence from another project")
     pe.add_argument("action", choices=("seal", "verify", "record", "status"))

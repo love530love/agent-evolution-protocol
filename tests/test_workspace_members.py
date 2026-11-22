@@ -103,3 +103,19 @@ def test_failed_notification_write_rolls_back_membership(tmp_path):
         registry.join(tmp_path, workspace_id=W_A, agent="codex", source="test")
     assert [item["agent"] for item in registry.members(tmp_path, workspace_id=W_A)["members"]] == ["qoder"]
     assert registry.notifications(tmp_path, workspace_id=W_A)["count"] == 1
+
+
+def test_main_cli_exposes_join_and_notifications(tmp_path, capsys):
+    import json
+    from agent_evolution_protocol import cli
+    parser = cli.build_parser()
+    join = parser.parse_args(["--coord-root", str(tmp_path), "coord-workspace-members",
+                              "join", "--workspace-id", W_A, "--agent", "codex",
+                              "--source", "agent-self-report", "--session-id", "s1"])
+    cli.coord_workspace_members(join)
+    assert json.loads(capsys.readouterr().out)["created"] is True
+    read = parser.parse_args(["--coord-root", str(tmp_path), "coord-workspace-members",
+                              "notifications", "--workspace-id", W_A])
+    cli.coord_workspace_members(read)
+    result = json.loads(capsys.readouterr().out)
+    assert [item["agent"] for item in result["events"]] == ["codex"]

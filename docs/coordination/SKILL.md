@@ -4,10 +4,10 @@
 > 手改会让 `tests/test_skill_manifest.py` 失败——这是刻意的：
 > 上一版研究文档把 `schema=aep-next-action-v1` 写错了整整两天，因为散文不会报错。
 
-- 命令总数：**102**
-- 风险分布：read-only 21、mutating 66、irreversible 15
-- 用途已记录：**39** / 102（未记录 63，只允许减少）
-- 清单摘要：`sha256:e28b904260055d7fbe19e4a9d7d0ee36f6f1cbc3a5fef28f4202e9d38bdce9bd`
+- 命令总数：**104**
+- 风险分布：read-only 21、mutating 68、irreversible 15
+- 用途已记录：**41** / 104（未记录 63，只允许减少）
+- 清单摘要：`sha256:630f082a74f657712a7570b7274b085927a4b243b81ba3cca132da0ae3aae16f`
 
 风险分级是**声明**而不是推导：未登记的命令一律按 `mutating` 处理。
 把会写的命令标成 `read-only` 是这里唯一有代价的错误，所以默认值朝安全方向倒。
@@ -85,6 +85,7 @@
 | `coord-guided-retry` | mutating | `--attempted-action --error` | *未记录* |
 | `coord-improvement` | mutating | `ACTION` | *未记录* |
 | `coord-joint-case` | mutating | `ACTION --task --submission` | *未记录* |
+| `coord-journal-index` | mutating | `ACTION` | Rebuild and query a workspace-scoped journal SQLite projection. |
 | `coord-legion` | mutating | `ACTION` | *未记录* |
 | `coord-loop-verdict` | mutating | `--event-id` | Recompute one handoff loop verdict from filesystem evidence. |
 | `coord-mcp-lifecycle` | mutating | `ACTION` | Inspect/prune AEP's own MCP lifecycle records, never generic processes. |
@@ -118,6 +119,7 @@
 | `coord-wake-status` | mutating | `—` | *未记录* |
 | `coord-wheel-compare` | read-only | `--lock --wheelhouse --environment --output` | *未记录* |
 | `coord-workspace-index` | mutating | `VIEW` | Read-only shared workspace index; visibility is never acceptance. |
+| `coord-workspace-members` | mutating | `ACTION --workspace-id` | Explicit workspace member claims and durable join notifications. |
 
 ## 联邦入口（federate）
 

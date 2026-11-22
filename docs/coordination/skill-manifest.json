@@ -1,7 +1,7 @@
 {
   "by_risk": {
     "irreversible": 15,
-    "mutating": 66,
+    "mutating": 68,
     "read-only": 21
   },
   "commands": [
@@ -3182,6 +3182,88 @@
       "arguments": [
         {
           "choices": [
+            "rebuild",
+            "search",
+            "status"
+          ],
+          "dest": "action",
+          "flags": [],
+          "kind": "positional",
+          "required": true
+        },
+        {
+          "dest": "db",
+          "flags": [
+            "--db"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": "",
+          "dest": "workspace_id",
+          "flags": [
+            "--workspace-id"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "unbound",
+          "flags": [
+            "--unbound"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "default": "",
+          "dest": "room",
+          "flags": [
+            "--room"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": "",
+          "dest": "contains",
+          "flags": [
+            "--contains"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": "",
+          "dest": "after",
+          "flags": [
+            "--after"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 50,
+          "dest": "limit",
+          "flags": [
+            "--limit"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": true,
+      "name": "coord-journal-index",
+      "purpose": "Rebuild and query a workspace-scoped journal SQLite projection.",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "choices": [
             "adjudicate",
             "challenge",
             "chase",
@@ -5393,6 +5475,78 @@
     {
       "arguments": [
         {
+          "choices": [
+            "join",
+            "members",
+            "notifications"
+          ],
+          "dest": "action",
+          "flags": [],
+          "kind": "positional",
+          "required": true
+        },
+        {
+          "dest": "workspace_id",
+          "flags": [
+            "--workspace-id"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "default": "",
+          "dest": "agent",
+          "flags": [
+            "--agent"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": "",
+          "dest": "source",
+          "flags": [
+            "--source"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": "",
+          "dest": "session_id",
+          "flags": [
+            "--session-id"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 0,
+          "dest": "after",
+          "flags": [
+            "--after"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 50,
+          "dest": "limit",
+          "flags": [
+            "--limit"
+          ],
+          "kind": "option",
+          "required": false
+        }
+      ],
+      "documented": true,
+      "name": "coord-workspace-members",
+      "purpose": "Explicit workspace member claims and durable join notifications.",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
           "dest": "round_id",
           "flags": [
             "--round-id"
@@ -6455,9 +6609,9 @@
       "risk": "mutating"
     }
   ],
-  "count": 102,
-  "digest": "sha256:e28b904260055d7fbe19e4a9d7d0ee36f6f1cbc3a5fef28f4202e9d38bdce9bd",
-  "documented": 39,
+  "count": 104,
+  "digest": "sha256:630f082a74f657712a7570b7274b085927a4b243b81ba3cca132da0ae3aae16f",
+  "documented": 41,
   "generated_from": "agent_evolution_protocol.cli:build_parser",
   "global_arguments": [
     {

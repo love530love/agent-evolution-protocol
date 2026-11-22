@@ -2,9 +2,17 @@
 
 `workspace_members` 为显式工作区 ID 提供成员目录和可续读的加入事件。成员行及同一加入通知在一个 SQLite 事务中保存；同一工作区与身份重复登记只产生一条记录。不同工作区即使有同名 Agent 也独立存储。
 
-本模块是独立原型：**尚未接入现有 `join-agent.ps1`、主 CLI、群聊或 MCP**，不会自动采集旧消息、通知桌面程序或唤醒 Agent。`source` 和 `session_id` 是调用方声明，并未认证；持有一条成员记录不证明在线、已读或已接单。工作区 ID 校验格式，但尚未验证该工作区是否存在或属于调用者；由调用方先核对已有工作区身份。
+本模块已接入 `coord-workspace-members` 主 CLI，**尚未接入现有 `join-agent.ps1`、群聊或 MCP**，不会自动采集旧消息、通知桌面程序或唤醒 Agent。`source` 和 `session_id` 是调用方声明，并未认证；持有一条成员记录不证明在线、已读或已接单。工作区 ID 校验格式，但尚未验证该工作区是否存在或属于调用者；由调用方先核对已有工作区身份。
 
 下列命令分别是一行。请以真实工作区 ID 替换示例 `W-aaaaaaaaaaaaaaaa`；路径按实际项目位置调整。
+
+主命令可查询新成员通知（全局 `--coord-root` 置于子命令之前）：
+
+```powershell
+& 'K:\PythonProjects5\agent-evolution-protocol\.tools\agent-runtime\Scripts\python.exe' -m agent_evolution_protocol --coord-root 'K:\PythonProjects5\agent-evolution-protocol\coordination' coord-workspace-members notifications --workspace-id 'W-aaaaaaaaaaaaaaaa' --after 0
+```
+
+也可以使用模块入口：
 
 ```powershell
 & 'K:\PythonProjects5\agent-evolution-protocol\.tools\agent-runtime\Scripts\python.exe' -m agent_evolution_protocol.coordination.workspace_members join --root 'K:\PythonProjects5\agent-evolution-protocol\coordination' --workspace-id 'W-aaaaaaaaaaaaaaaa' --agent 'codex' --source 'agent-self-report' --session-id 'example-session'
