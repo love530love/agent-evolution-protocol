@@ -9,7 +9,7 @@ import pytest
 from agent_evolution_protocol.coordination import wake_ingress
 from agent_evolution_protocol.federation import command_handoff
 from agent_evolution_protocol.relay import cli as relay_cli
-from agent_evolution_protocol.relay import duty, resources
+from agent_evolution_protocol.relay import duty, local_brief, resources
 
 NOW = datetime(2026, 11, 22, 6, 0, tzinfo=timezone.utc)
 CHECKPOINT = {
@@ -307,6 +307,34 @@ def test_old_heartbeat_does_not_validate_a_new_tenure(tmp_path):
     duty.beat(root, agent="cdr", role="commander",
               evidence=["cdr alive again"], checkpoint=CHECKPOINT, now=NOW)
     assert duty.seat_status(root, "commander", now=NOW)["seat_state"] == "READY"
+
+
+def test_local_brief_is_advisory_only(tmp_path):
+    root, _ = setup_fleet(tmp_path)
+    before = command_handoff.status(root)["roles"]["commander"]
+    response = json.dumps({
+        "summary": "四角色已建立，当前在收集赛事信息。",
+        "next_step": "确认截止时间并给 builder 派工。",
+        "risks": ["赛事官网时间可能变化"],
+    })
+    result = local_brief.local_brief(CHECKPOINT, ask=lambda _text: response)
+    assert result["state"] == "ADVISORY"
+    assert result["advisory"]["risks"] == ["赛事官网时间可能变化"]
+    after = command_handoff.status(root)["roles"]["commander"]
+    assert after["holder"] == before["holder"]
+    assert after["state"] == before["state"]
+
+
+def test_local_brief_abstains_without_model_or_valid_output(tmp_path):
+    missing = local_brief.local_brief(CHECKPOINT, root=tmp_path)
+    assert missing["state"] == "UNAVAILABLE"
+    assert missing["reason"] == "MODEL_FILES_MISSING"
+    abstained = local_brief.local_brief(
+        CHECKPOINT, ask=lambda _text: '{"unknown": true}')
+    assert abstained["state"] == "ABSTAINED"
+    malformed = local_brief.local_brief(
+        CHECKPOINT, ask=lambda _text: '{"summary": "x", "risks": ["a", "b", "c", "d"]}')
+    assert malformed["state"] == "ABSTAINED"
 
 
 def test_cli_parser_and_handler_round_trip(tmp_path):

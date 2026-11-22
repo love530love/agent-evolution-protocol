@@ -460,25 +460,34 @@ subagent，而是让**角色**（不是厂商会话）在多个 agent 之间可�
 
 若有外部 watcher/mutex 相关的已知失败，必须单独说明，不把失败说成通过。
 
-## 11. 本地模型（`.models/Qwen3-0.6B`）的边界
+## 11. 本地模型（`.models/Qwen3-0.6B`）的受控用途
 
-本仓库的 `aep doctor` 会检查
-`.models/Qwen3-0.6B/model.safetensors` 是否存在；`coordination/local_model_session.py`
-只负责按需加载/卸载，`coordination/insight_proposer.py` 只提供“问题线索”
-建议，**不是**通用 agent 执行器。当前 relay 层：
+`relay/local_brief.py` 提供了一个显式的、只读的“检查点摘要”适配器：
 
-- 不自动调用本地模型；
-- 不把本地模型输出当作额度、ACL、接受或执行证据；
-- 不因为模型文件存在就宣称“弱 agent 可接管”。
+- 默认模型 `qwen3-0.6b`，默认端点 `http://127.0.0.1:1234`（LM Studio）；
+- 它只接收 `next_step` / `completed` / `artifacts` / `pending_operations` /
+  `unknowns`，输出 `summary` / `next_step` / `risks` 三段建议文本；
+- 输出会做长度和形状校验，含 `unknown:true`、非法 JSON 或超限内容时直接
+  `ABSTAINED`；
+- 模型文件缺失或服务不可达时返回 `UNAVAILABLE`，**不会启动服务**、不会加载
+  常驻模型，也不会阻塞确定性 relay 路径；
+- 它不改变角色状态、不选候选、不写 ACK、不授权上传，也不是执行凭据。
 
-如果要把本地模型接入接力，正确的下一步是新增一个显式的、只读的
-“检查点摘要/弱 agent 简报”适配器，并保持三条硬约束：
+用法：
 
-1. 输出只作建议文本，不改变角色状态；
-2. 不自动启动常驻服务，不占用 GPU 常驻显存；
-3. 模型不可用时退回确定性规则结果，不阻塞主流程。
+```bash
+.tools/agent-runtime/Scripts/python.exe -m agent_evolution_protocol.relay \
+  --coord-root coordination brief \
+  --next-step "继续跟进赛事包与回表" \
+  --completed "角色表已建立" \
+  --artifacts "docs/relay/QUOTA_RELAY.zh-CN.md" \
+  --unknowns "官网截止时间"
+```
 
-在此之前，任何“本地模型已接管”的说法都不成立。
+这一步只读取 `.models/Qwen3-0.6B/model.safetensors` 是否存在，并尝试调用
+**已经在运行**的 LM Studio。当前本机 127.0.0.1:1234 未启动，尚未完成真实
+推理验收；因此只能说“适配器已实现、单测通过”，不能说“本地模型已接管”。
+任何“本地模型已接管/已执行”的说法都不成立。
 
 ## 12. 尚未完成的真实落地项
 

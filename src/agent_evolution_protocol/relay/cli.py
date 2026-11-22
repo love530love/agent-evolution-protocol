@@ -19,6 +19,7 @@ import sys
 from ..federation import command_handoff
 from ..federation.diagnosis import CAPACITY_SIGNALS
 from . import duty as relay_duty
+from . import local_brief
 from . import resources as relay_resources
 
 
@@ -123,6 +124,9 @@ def coord_command_relay(args: argparse.Namespace) -> None:
                 root, agent=args.agent, role=args.role, evidence=evidence,
                 checkpoint=_relay_checkpoint(args, required=False),
                 bridge_root=bridge, dispatch=dispatch)
+        elif action == "brief":
+            result = local_brief.local_brief(
+                _relay_checkpoint(args), root=Path.cwd())
         elif action == "status":
             result = relay_duty.summary(root)
         else:
@@ -143,7 +147,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("action", choices=(
         "declare", "exhausted", "gate", "register", "claim", "volunteer",
         "yield", "beat", "plan", "offer", "accept", "decline", "takeover",
-        "status"))
+        "brief", "status"))
     parser.add_argument("--agent")
     parser.add_argument("--role")
     parser.add_argument("--provider")
