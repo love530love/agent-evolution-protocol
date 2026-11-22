@@ -27,6 +27,33 @@ def _workspace() -> str:
     return os.environ.get("AEP_WORKSPACE_ID", "")
 
 
+def _readback(agent: str = "", limit: int = 50, include_unbound: bool = False) -> dict[str, Any]:
+    """Report the actual transcript scope instead of claiming workspace isolation.
+
+    The legacy transcript bus does not record workspace IDs and its snapshots
+    are keyed by agent alone.  Callers must explicitly opt into reading that
+    shared data; a process environment variable cannot establish its origin.
+    """
+    if not 1 <= limit <= 500:
+        raise ValueError("limit must be 1..500")
+    target = agent or _agent()
+    result = {
+        "agent": target,
+        "workspace_id": None,
+        "requested_workspace_id": _workspace() or None,
+        "workspace_filtered": False,
+        "scope": "coord_root_unfiltered",
+        "status": "UNBOUND_TRANSCRIPT_OPT_IN_REQUIRED",
+        "events": [],
+    }
+    if include_unbound:
+        from .coordination import transcript_bus
+
+        result["events"] = transcript_bus.read_events(_root(), agent=target, limit=limit)
+        result["status"] = "UNFILTERED_SHARED_TRANSCRIPT"
+    return result
+
+
 def main() -> None:
     try:
         from mcp.server.fastmcp import FastMCP
@@ -38,7 +65,6 @@ def main() -> None:
         client_registry,
         commander,
         mcp_lifecycle,
-        transcript_bus,
     )
 
     mcp = FastMCP("AEP Federation")
@@ -83,13 +109,10 @@ def main() -> None:
         return commander.dispatch(_root(), order=orders[0])
 
     @mcp.tool()
-    def aep_readback(agent: str = "", limit: int = 50) -> dict[str, Any]:
-        """Read the shared transcript for evidence; this is not an ACK."""
-        if not 1 <= limit <= 500:
-            raise ValueError("limit must be 1..500")
-        target = agent or _agent()
-        return {"agent": target, "workspace_id": _workspace(),
-                "events": transcript_bus.read_events(_root(), agent=target, limit=limit)}
+    def aep_readback(agent: str = "", limit: int = 50,
+                     include_unbound: bool = False) -> dict[str, Any]:
+        """Read unfiltered shared transcript only with explicit opt-in; not an ACK."""
+        return _readback(agent=agent, limit=limit, include_unbound=include_unbound)
 
     # A stdio host owns this process's stdin/stdout.  The record is strictly
     # observational: it is not an agent ACK, a desktop delivery receipt, or a
