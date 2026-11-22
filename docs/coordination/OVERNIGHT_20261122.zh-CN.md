@@ -691,3 +691,31 @@
   ②盯 qoder 是否把 08:10Z 会话 ACK 转成机器 AGENT_ACK、两待跟进单是否出现新 AEP-ACK
   （只记录）；③新窗口/新 presence 先跑 readiness，三判据齐才真发；④三路并发收敛且有新代码
   再跑全量；⑤临近 11-23 08:00 再做最终交接与 PAUSED，无新代码不为发版而发版。
+
+## ~20:00 工作区索引交付 + CI P0 修复 + v0.6.49 发版（接手审计 P0）
+
+- **背景**：codex 审计 `docs/AUDIT_COLLAB_HANDOFF_20261122_CODEX.md` 的 P0 —— tracked 测试
+  `test_relay_duty` / `test_succession_board` import 未入库的 `command_handoff` /
+  `collab_health`，干净 checkout CI 导入失败。用户明确授权"任意 agent/弱 agent 随时接手"，
+  我作为当前在线 Agent 接手核验并修复。
+- **新能力（用户本轮诉求：工作区=群聊+索引目录、SQL查询、新人可见、离线保留席位、
+  在线主动查询/离线检测）**：新增 `coord-workspace-index`（只读，7 视图：
+  overview/members/newcomers/chat/knowledge/roles/health）+ `knowledge_store.query`（mode=ro、
+  参数化、缺库返回 STORE_ABSENT 不建库）+ 能力卡 `skills/aep-workspace-index` + 文档
+  `docs/WORKSPACE_INDEX_AND_SEATS.zh-CN.md`。全部 advisory，可见性≠接单。
+- **依赖闭包核验（关键方法）**：用 `git worktree add --detach` 建带 .git 的干净 checkout，
+  只叠加拟入库文件后跑全量 —— 这是精确 CI 模拟。据此发现并修两个真 bug：
+  ①`coord-deploy-check --workspace=Path.cwd()` 把本地绝对路径写进 manifest digest，
+  干净 checkout 必红 ⇒ 改为 `Path(".")`；②`test_relay_duty` 配额声明过期 flaky ⇒
+  冻结时钟到夹具时间，**未放宽断言、未接管 relay duty 实现 WIP**。
+- **入库纪律**：显式路径 add 27 文件；UIA WIP（commander_uia/uia3/handoff_worker/
+  relay_drill/foundation/io）、`relay/duty.py` 功能 WIP、托盘脚本、presence 改动、
+  运行时日志（uia_receipts/、hal-audit.txt、.pytest*.log）**一律不代提交**。
+- **回归**：worktree 精确态全量 **1982 passed, 9 skipped, 1060 subtests, exit 0**
+  （172.23s）；manifest 28/28、能力卡守线全绿；命令面 102（39 documented），绝对路径默认 0。
+- **发版对账**：commit `0768ab9` → push main（`0249bdc..0768ab9`）→ tag/Release `v0.6.49`
+  → Latest=v0.6.49、body 逐字一致（2048 chars）、`origin/main...HEAD=0 0`、版本三处一致。
+- **未变口径**：本轮无新增最终 ACK；qoder 仍是唯一真正闭环。三判据不齐不真发、不重放、
+  不伪造 ACK。值守 automation `d44e2ba5…` 保持 ACTIVE 至 11-23 08:00。
+- **仍待原作者/后续轮**：托盘常驻、`local_takeover_brain`、`handoff_cli`、
+  `HANDOFF_UNDER_QUOTA` 等仍是未提交 WIP，本版不声称发布；等持有者收敛后再逐一入库。
