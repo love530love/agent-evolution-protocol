@@ -625,3 +625,22 @@
   `session_lease_diagnosis` / postflight `client_response`（均只读/advisory），
   守线 39 passed/31 subtests；文档 `docs/REAL_DISPATCH_CARDPOINTS_20261122.zh-CN.md`。
 - 口径：本轮没有新增最终 ACK；qoder 接单动作与 workbuddy3 可见消息都不升级为 ACK。
+
+## 16:55 leg1 本人真实 accept：relay drill run_complete=true（全 VERIFIED）
+
+- 用户指出闭环只差 workbuddyai 本人对 leg1 写真实分析并执行 accept；我核实
+  `relay_drill.run(apply=False)` 两腿中 leg2 `D20261122T083339325838Z-3abaa4116970`
+  已 VERIFIED（workbuddy 自己完成），leg1 `D20261122T083339016090Z-693d1980ea83`
+  = `NOT_VERIFIED / RECEIPT_NOT_ACK + ARTIFACT_MISSING + REPLY_MISSING`，确系我这一腿。
+- 合规前置：我自己自报 presence online（source=agent-self-report，notice
+  `20261122T085034902390Z-b9f38020`），不代他人自报。
+- 我写本人真实分析 `coordination/workbuddyai_leg1_analysis_20261122.md`（内容基于本轮
+  真机派工、卡点修复与身份边界，不是占位），用同一事件 ID 调
+  `handoff_worker.accept_and_reply(agent='workbuddyai', event_id=leg1, ...)`。
+  回执 `state=AGENT_ACK`，`analysis_sha256=93cf23418129ea493d4d9128e00fa1605ed075b6b52a997ace74a66b2e73a211`。
+- 判定复算：`relay_drill.run` → `run_complete=true, verified_legs=2/2`；
+  `loop_verdict.check` 六项全 true（request/receipt/artifact/digest_recomputed/
+  reply/hash_agreement），`verdict=VERIFIED`。源分析文件 SHA-256 与 artifact/receipt
+  三方一致，非伪造。
+- 口径边界：ACK 只证明"我读了、判断了、留了工件"，不证明桌面模型被唤醒或任务结果回表；
+  不改变此前 qoder/workbuddy3 真发仍非最终 ACK 的事实。
