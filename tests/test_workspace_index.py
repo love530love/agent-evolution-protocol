@@ -19,6 +19,15 @@ def _presence(root, agent, state="online", at="2026-11-22T11:00:00+00:00",
     }), encoding="utf-8")
 
 
+def _notice(root, agent, transition, at, name):
+    d = root / "presence" / "notices"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / name).write_text(json.dumps({
+        "agent": agent, "transition": transition, "at": at,
+        "source": "agent-self-report",
+    }), encoding="utf-8")
+
+
 def test_seat_directory_lists_every_identity_source(tmp_path):
     _presence(tmp_path, "qoder", "online")
     (tmp_path / "sessions").mkdir()
@@ -49,17 +58,35 @@ def test_very_old_seat_is_not_kept(tmp_path):
 
 def test_newcomers_finds_recent_first_evidence(tmp_path):
     _presence(tmp_path, "newbie", "online", at="2026-11-22T11:50:00+00:00")
-    _presence(tmp_path, "veteran", "online", at="2026-11-20T08:00:00+00:00")
+    _presence(tmp_path, "veteran", "online", at="2026-11-22T11:59:00+00:00")
+    _notice(tmp_path, "newbie", "joined", "2026-11-22T11:50:00+00:00", "new.json")
+    _notice(tmp_path, "veteran", "joined", "2026-11-20T08:00:00+00:00", "old.json")
+    _notice(tmp_path, "veteran", "rejoined", "2026-11-22T11:59:00+00:00", "rejoin.json")
     view = wi.newcomers(tmp_path, within_hours=24, at=FIXED)
     assert [n["agent"] for n in view["joined"]] == ["newbie"]
     assert view["count"] == 1
+    assert view["joined"][0]["evidence"].endswith("new.json")
 
 
 def test_newcomers_unknown_time_is_not_claimed_as_joined(tmp_path):
-    _presence(tmp_path, "mystery", "online", at="")
+    _presence(tmp_path, "mystery", "online", at="2026-11-22T11:59:00+00:00")
     view = wi.newcomers(tmp_path, at=FIXED)
     assert view["joined"] == []
     assert "unknown" in view["note"]
+
+
+def test_newcomers_ignores_future_and_corrupt_notices(tmp_path):
+    _notice(tmp_path, "future", "joined", "2026-11-22T12:01:00+00:00", "future.json")
+    _notice(tmp_path, "bad/name", "joined", "2026-11-22T11:00:00+00:00", "bad.json")
+    (tmp_path / "presence" / "notices" / "broken.json").write_text("{", encoding="utf-8")
+    assert wi.newcomers(tmp_path, at=FIXED)["joined"] == []
+
+
+def test_newcomers_rejects_invalid_window(tmp_path):
+    import pytest
+    for value in (0, -1, float("inf"), float("nan"), True):
+        with pytest.raises(ValueError):
+            wi.newcomers(tmp_path, within_hours=value, at=FIXED)
 
 
 def test_chat_uses_existing_journal_and_reports_cursor(tmp_path):
@@ -71,6 +98,39 @@ def test_chat_uses_existing_journal_and_reports_cursor(tmp_path):
     assert view["events"][0]["text"] == "hello team"
     assert view["next_cursor"] == view["events"][0]["id"]
     assert "not an ACK" in view["note"]
+
+
+def test_chat_scopes_explicit_workspace_and_excludes_unbound(tmp_path):
+    from agent_evolution_protocol.coordination.conversation_journal import append_event
+    ws_a = "W-" + "a" * 16
+    ws_b = "W-" + "b" * 16
+    append_event(tmp_path, room="team", actor="a", source="test", kind="message", text="结果: A-1", workspace_id=ws_a)
+    append_event(tmp_path, room="team", actor="b", source="test", kind="message", text="结果: A-1", workspace_id=ws_b)
+    append_event(tmp_path, room="team", actor="c", source="test", kind="message", text="结果: A-1")
+    append_event(tmp_path, room="other", actor="a", source="test", kind="message", text="结果: A-1", workspace_id=ws_a)
+    view = wi.chat(tmp_path, workspace_id=ws_a, room="team", contains="a-1")
+    assert view["count"] == 1
+    assert view["events"][0]["actor"] == "a"
+    assert view["scope"] == "workspace"
+    assert wi.chat(tmp_path)["count"] == 4
+
+
+def test_chat_filtered_cursor_does_not_skip_matching_results(tmp_path):
+    from agent_evolution_protocol.coordination.conversation_journal import append_event
+    ws_a = "W-" + "a" * 16
+    first = append_event(tmp_path, room="team", actor="a", source="test", kind="message", text="first", workspace_id=ws_a)
+    append_event(tmp_path, room="team", actor="b", source="test", kind="message", text="unbound")
+    second = append_event(tmp_path, room="team", actor="a", source="test", kind="message", text="second", workspace_id=ws_a)
+    page = wi.chat(tmp_path, workspace_id=ws_a, limit=1)
+    assert page["events"][0]["id"] == first["id"]
+    page2 = wi.chat(tmp_path, workspace_id=ws_a, after=page["next_cursor"], limit=1)
+    assert page2["events"][0]["id"] == second["id"]
+
+
+def test_chat_rejects_invalid_workspace_id(tmp_path):
+    import pytest
+    with pytest.raises(ValueError):
+        wi.chat(tmp_path, workspace_id="agent-evolution-protocol")
 
 
 def test_knowledge_store_absent_is_empty_not_created(tmp_path):

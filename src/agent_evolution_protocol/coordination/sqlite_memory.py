@@ -62,29 +62,32 @@ class MemoryStore:
     def append(self, *, event_id: str, agent: str, role: str, text: str,
                workspace: str = "", session_id: str = "",
                metadata: dict[str, Any] | None = None) -> bool:
-        self.db.execute("""INSERT OR IGNORE INTO events
+        cursor = self.db.execute("""INSERT OR IGNORE INTO events
           (event_id,agent,role,workspace,session_id,text,metadata_json,created_at)
           VALUES (?,?,?,?,?,?,?,?)""", (event_id, agent, role, workspace,
           session_id, text, json.dumps(metadata or {}, ensure_ascii=False),
           datetime.now(timezone.utc).isoformat()))
         self.db.commit()
-        return True
+        return cursor.rowcount == 1
 
-    def search(self, query: str, *, agent: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
-        if self.fts_enabled:
-            rows = self.db.execute("""SELECT e.* FROM events_fts f JOIN events e ON e.id=f.rowid
-              WHERE events_fts MATCH ? AND (? IS NULL OR e.agent=?)
-              ORDER BY e.created_at DESC LIMIT ?""", (query, agent, agent, limit)).fetchall()
-            # The default FTS tokenizer is intentionally conservative for
-            # CJK text. Preserve reliable substring recall as a fallback.
-            if not rows:
-                rows = self.db.execute("""SELECT * FROM events WHERE text LIKE ?
-                  AND (? IS NULL OR agent=?) ORDER BY created_at DESC LIMIT ?""",
-                  (f"%{query}%", agent, agent, limit)).fetchall()
-        else:
-            rows = self.db.execute("""SELECT * FROM events WHERE text LIKE ?
-              AND (? IS NULL OR agent=?) ORDER BY created_at DESC LIMIT ?""",
-              (f"%{query}%", agent, agent, limit)).fetchall()
+    def search(self, query: str, *, agent: str | None = None,
+               workspace: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
+        """Find literal substrings; pass workspace explicitly to isolate results.
+
+        FTS tokenization is not reliable for arbitrary Chinese substrings or
+        punctuation such as ``A-1``. Parameterized instr gives the same literal
+        semantics whether FTS5 is available or not; no FTS syntax is exposed.
+        Omitting workspace deliberately preserves the legacy all-workspace view.
+        """
+        if not isinstance(query, str):
+            raise ValueError("query must be a string")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500:
+            raise ValueError("limit must be between 1 and 500")
+        rows = self.db.execute("""SELECT * FROM events
+          WHERE instr(lower(text), lower(?)) > 0
+          AND (? IS NULL OR agent=?) AND (? IS NULL OR workspace=?)
+          ORDER BY created_at DESC, id DESC LIMIT ?""",
+          (query, agent, agent, workspace, workspace, limit)).fetchall()
         return [dict(row) for row in rows]
 
     def close(self) -> None:
