@@ -365,3 +365,49 @@
   receipt 的 `reason` + `session_marker_check` + `candidates` 三元，才能区分
   AGENT_BUSY（等/插话）与 SESSION_MARKER_MISSING（修配置）。
 - 该 profile 修复是运行时配置、可逆（备份在 `.workbuddy-ai/`），不改任何活路径判定代码。
+
+## 14:34 给其余 agent 的真实派工（用户追问"给其他人的派工呢"）
+
+### 桌面通道实时探测（只读，纠正 05:11 旧 probe）
+- OS 进程：`Qoder` 有 1 个可见窗口、`WorkBuddy` 1 个、`WorkBuddy AI` 1 个；
+  `Qoder CN`/`ChatGPT`/`Codex` 有进程但 **0 窗口**；`GitHub Copilot`/`CodeBuddy` 无进程。
+  旧 capability-probe（05:11 与 11-11）已过期，尤其 qoder 旧探测说 SESSION_UNATTESTED
+  但 14:25 真发成功——**probe 不能替代 coord-uia observe 的实时会话闸门**。
+- `coord-uia observe --agent qoder_cn`：`LAUNCH_FORBIDDEN: no window`（无 Qoder CN 进程，
+  非路径漂移，profile_path_check.reason=no pid to compare）。
+- `coord-uia observe --agent workbuddy3`：marker=旧任务"修复或对齐昆仑容器的triton包"、
+  `transcript-unreadable / seen=False`；capture 是 OCR 单行 lump，含
+  AEP-QUOTA-RELAY / AEP-CAPACITY-HEARTBEAT / Qwen，但**无法精确锚定会话**⇒按硬规则不盲投。
+
+### 六路真实派工（均带唯一挑战串、明确角色，回执到 workbuddyai 信箱）
+| 目标 | task / 挑战串 | 角色 |
+|---|---|---|
+| codex | AEP-SCOUT-DRILL-20261122 / S-C1D0E9F2 | scout 情报 |
+| copilot-github | AEP-CAPACITY-DRILL-20261122 / C-4A7B2D81 | 容量心跳 |
+| qoder_cn | AEP-RELAY-DRILL-20261122 / R-9E3C5A17 | 接力 |
+| workbuddy | AEP-QWEN-DRILL-20261122 / Q-7B2F4D90 | 本地模型 advisory |
+| github_copilot | AEP-GITHUB-INTEL-DRILL-20261122 / G-3F8A1C6D | GitHub 情报 |
+| workbuddy_ai | AEP-COMMANDER-BACKUP-DRILL-20261122 / B-6D4E2F80 | 指挥备岗 |
+- 事件：codex `...063219806391Z-1d880dce`、copilot-github `...063221704774Z-e9955317`、
+  qoder_cn `...063223639362Z-8daa177f`、workbuddy `...063225623237Z-e80a5332`、
+  github_copilot `...063238804878Z-3a7003c9`、workbuddy_ai `...063241085936Z-ddc7c6df`。
+  这些是**真实消息落盘**，不是 ACK；收到≠接单。全队通报 `20261122T063357403221Z-8eef5a04edd9`。
+
+### 又暴露两个卡点
+1. **one_event_id 守线**（我自己写错）：第一次 `coord-commander submit --target workbuddy_ai`
+   正文里塞了自动 `EVT-FB7E4FA30D` + 手写 `WAKE-DESKTOP-WBAI-20261122` 两个 event id ⇒
+   `DISPATCH_REFUSED / one_event_id`，`content_hash` 未变、无输入⇒安全重发。
+   修正为只留自动 event id 后重发（`...4dc43e90`）。
+2. **ORIGINAL_SESSION_PROFILE_REQUIRED**：修正后的 WorkBuddy AI 订单回执
+   "no verified UI profile; refusing raw UIA/CDP input into a guessed conversation"。
+   这是**正确的 fail-closed**（WorkBuddy 无 UIA 树、OCR lump 无法锚定会话），
+   不是 bug。桌面真发只对有 profile + 闸门证明的 agent 可行，当前只有 qoder。
+3. **qoder 订单双路径状态不一致**：profile 修复改了 session 指纹，commander 自动路径
+   attempt 3/5 报 `SESSION_FINGERPRINT_MISMATCH` 仍 DEFERRED（共 6 次 attempt 全是
+   preinput、无一次 task_delivered=true）；但我 14:25 手动 `coord-uia deliver` 已真发、
+   qoder 14:26 在原会话接单。**不重放**；等原会话 ACK 到达后再人工对齐订单状态。
+   `coord-commander ack` 当前 acked=[], checked=47。
+
+### 结论
+真实派工覆盖全部 6 个角色目标；桌面真发能力边界清晰=qoder 唯一可用，其余信箱/待 profile。
+卡点全部由真实派工暴露（否则只会看到"presence stale/没响应"的假象）。
