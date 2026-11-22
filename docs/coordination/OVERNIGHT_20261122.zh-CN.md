@@ -323,3 +323,45 @@
   `gh api .../releases/latest --jq .tag_name` = `v0.6.45`；
   Release body 与 `docs/releases/v0.6.45.md` 逐字一致（2818 chars）；
   `origin/main...HEAD = 0 0`。未替他人补发历史版本，未替 coalition 作者写 CHANGELOG。
+
+## 14:27 真实派工 AAR（用户批评："不真实派工就永远不知道卡在哪里"）
+
+### 事实链（全部可复算）
+- **改前判断错误**：此前只发 mailbox-only 状态询问，从不真实派工，因此看不到真实响应。
+  本轮按用户要求改为真实派工：`aep coord-wake --from workbuddyai --to qoder
+  --task AEP-RELAY-DRILL-20261122 --dispatch`（挑战串 `8F3C2A91`，event
+  `WAKE-20261122T062123225459Z-5dcd3a17`，order `...336ae5f6`）。
+- **第一回执 = 卡点**：`state=DEFERRED / task_delivered=false / AGENT_BUSY`
+  （"target reports an active generation/tool run"）；attempt[1] 的
+  `desktop_provider_plan.candidates=[] / execution_started=false` 证明**什么都没输入**，
+  按硬规则同一 event id 可安全推进，不构成重放。
+- **根因（配置 bug，非"没人在线"）**：`coordination/ui_profiles/qoder.json` 的
+  `session_marker` 误填为侧边栏按钮文字 `请加入项目协作区`；UIA observe 显示
+  `session_marker_check=absent / session_marker_seen=False` ⇒ 会话闸门永远拦住投递。
+  但会话转写里 `agent-evolution-protocol` 出现 13 次、模型 `DeepSeek-Flash` 1 次，
+  这两者本就在该 profile 的 `session_evidence_markers` / `model_evidence_markers` 里。
+- **最小修复（配置层，不动判定逻辑）**：备份 profile 到
+  `.workbuddy-ai/qoder.profile.bak-1425.json`，仅把 `session_marker` 改为
+  `agent-evolution-protocol`。复核：observe 的 `session_marker_check: absent→seen`、
+  `session_marker_seen: True`。守线 `test_commander_delivery_safety.py +
+  test_core_hardening_qoder.py + test_a11y.py` = **87 passed / 2 skipped**，
+  证明闸门判定未被放宽（仍要求 seen=True + 模型标记 + 输入前 attestation）。
+  `coordination/` 是 gitignore 运行时数据，此修复不进代码提交、不触发发版。
+- **真实投递成功**：`coord-commander resume-deferred` 把订单恢复 `DEPOSITED`；
+  `coord-uia deliver --agent qoder --event-id WAKE-... --urgent-interject`（不带
+  `--no-send` 即真发）返回 `status=message-visible / task_delivered=true /
+  session_marker_seen=True`。投递后 observe 转写中挑战串 `8F3C2A91` 与 event id
+  各出现 2 次，位于用户输入行；qoder **14:26 在原会话回复**
+  "收到真实派工。我先核对事件、manifest 与 coalition 计划证据，再按挑战串原样回执"，
+  并启动 2 个后台任务。全队通报事件 `20261122T062659612018Z-77223fbf1dbd`。
+- **收口状态**：截至 14:27 qoder 仍 `activity_state=busy`，ACK 挑战串尚未在回复中出现。
+  **未收到 ACK 不算接单/关单**；消息已真发且被读到，禁止重放。下一轮心跳用
+  `coord-uia observe --no-send` 或 `coord-ack` 读回执，确认后再升级状态。
+
+### 偏差与改进
+- 偏差：把 presence stale 与投递回执 DEFERRED 直接当作"没法协作"，没有顺着回执查
+  `session_marker_check`，因此错过了一个纯配置 bug。
+- 改进：真实派工应作为发现卡点的默认手段（信箱只作补充）；DEFERRED 回执必须读
+  receipt 的 `reason` + `session_marker_check` + `candidates` 三元，才能区分
+  AGENT_BUSY（等/插话）与 SESSION_MARKER_MISSING（修配置）。
+- 该 profile 修复是运行时配置、可逆（备份在 `.workbuddy-ai/`），不改任何活路径判定代码。
