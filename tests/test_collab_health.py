@@ -117,6 +117,25 @@ def test_dead_pid_is_not_reported_as_fresh_host():
         assert result["verdict"] == "HOSTS_STALE"
 
 
+def test_posix_pid_probe_distinguishes_missing_from_access_denied(monkeypatch):
+    import pytest
+    if os.name != "posix":
+        pytest.skip("POSIX process liveness semantics")
+
+    calls = []
+    def probe(pid, signal):
+        calls.append((pid, signal))
+        if pid == 11:
+            raise ProcessLookupError()
+        if pid == 12:
+            raise PermissionError()
+    monkeypatch.setattr(collab_health.os, "kill", probe)
+    assert collab_health._pid_alive(10) is True
+    assert collab_health._pid_alive(11) is False
+    assert collab_health._pid_alive(12) is None
+    assert calls == [(10, 0), (11, 0), (12, 0)]
+
+
 def test_reused_pid_is_not_reported_as_fresh_host(monkeypatch):
     with TemporaryDirectory() as folder:
         root = Path(folder)

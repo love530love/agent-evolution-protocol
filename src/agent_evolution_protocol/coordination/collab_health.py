@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import re
 
@@ -92,6 +93,14 @@ def _pid_alive(pid) -> bool | None:
     """
     if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
         return None
+    if os.name == "posix":
+        try:
+            os.kill(pid, 0)  # Existence probe; signal 0 does not signal the process.
+            return True
+        except ProcessLookupError:
+            return False
+        except (PermissionError, OSError):
+            return None
     try:
         import ctypes
         kernel32 = ctypes.windll.kernel32
