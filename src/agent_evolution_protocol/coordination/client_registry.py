@@ -20,6 +20,7 @@ from pathlib import Path
 import re
 from uuid import uuid4
 
+from agent_evolution_protocol.coordination import agent_identity
 from agent_evolution_protocol.coordination import process_info
 
 SAFE_NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
@@ -35,6 +36,22 @@ BUILTIN: dict[str, dict] = {
         "window_titles": ["WorkBuddy"],
         "electron": True,
         "transports": ["cdp", "uia", "ocr-paste"],
+    },
+    # This is a coordination identity, not a second desktop product.  It has
+    # no exe and no window by design: binding it to WorkBuddy.exe or
+    # WorkBuddyAI.exe would let a title match send another agent's work here.
+    # A registered workbuddyai.json may add notes, but cannot clear this flag.
+    "workbuddyai": {
+        "display": "WorkBuddy AI (coordination identity)",
+        "process": "",
+        "exe": "",
+        "window_titles": [],
+        "electron": False,
+        "transports": [],
+        "identity_only": True,
+        "notes": ("Exact mailbox identity workbuddyai. Distinct from workbuddy "
+                  "(domestic, renamed workbuddy3) and workbuddy_ai "
+                  "(WorkBuddyAI.exe). No desktop window is owned by this name."),
     },
     "qoder": {
         "display": "Qoder",
@@ -275,6 +292,12 @@ def profile(root: Path, agent: str) -> dict:
         builtin = BUILTIN.get(agent) or {}
         if builtin.get("out_of_scope"):
             data["out_of_scope"] = builtin["out_of_scope"]
+        if agent_identity.is_same(agent, agent_identity.SELF):
+            # A registration may document the identity but may not turn it
+            # into a targetable window.  Otherwise a typo in clients/ would
+            # reintroduce the exact wrong-recipient bug this flag prevents.
+            data["identity_only"] = True
+            data["distinct_identity"] = agent_identity.SELF
         return data
     if agent in BUILTIN:
         data = dict(BUILTIN[agent])
@@ -294,6 +317,10 @@ def known(root: Path) -> list[str]:
 
 
 def matches(profile_row: dict, window: dict) -> bool:
+    if profile_row.get("identity_only"):
+        # A coordination identity is not a desktop surface.  Never let a
+        # registered title or process make it a UIA/ocr target.
+        return False
     title = str(window.get("title", "")).lower()
     exact = bool(profile_row.get("window_titles_exact"))
     for wanted in profile_row.get("window_titles", []):
@@ -438,6 +465,7 @@ def discover(root: Path, agent: str = "") -> dict:
             "electron": row.get("electron", True),
             "transports": row.get("transports", []),
             "exe": row.get("exe", ""),
+            "identity_only": bool(row.get("identity_only")),
             "windows": hits,
             "unique": len(hits) == 1,
             "anchored": any(item["is_anchor"] for item in hits),

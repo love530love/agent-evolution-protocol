@@ -1,5 +1,6 @@
 """Atomic file mailbox and task claims for Codex and WorkBuddy."""
 import argparse
+from agent_evolution_protocol.coordination import agent_identity
 import base64
 from datetime import datetime, timezone
 import json
@@ -13,11 +14,11 @@ from urllib.request import Request, urlopen
 from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parent
-AGENTS = ("codex", "workbuddy", "qoder", "codebuddy", "github_copilot", "hermes_desktop", "autoclaw")
-# codex/workbuddy/qoder: 外部协作者; codebuddy: 本机宿主(爱丰/FlagGems T105);
-# github_copilot: GitHub Copilot 代理, 2026-09-28 接互区。
-# hermes_desktop: Hermes Desktop 手动/Hook 入口, 2026-09-29 加入协作。
-# autoclaw: AutoClaw/QClaw/OpenClaw 系工具入口, 2026-09-29 加入协作。
+AGENTS = agent_identity.LEGACY_BRIDGE_AGENTS
+# Single source of truth lives in coordination/agent_identity.py; the old inline
+# tuple omitted workbuddyai, so peers doing discovery only saw workbuddy and
+# sent receipts to the wrong mailbox.  workbuddy/workbuddy3/workbuddy_ai/
+# workbuddyai are four distinct agents, never aliases of each other.
 
 # Credentials that gate every direct API call to the competition platform.
 # Each entry is (env var, repo-relative path).  The health check only decodes

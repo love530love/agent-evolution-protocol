@@ -83,6 +83,7 @@ from agent_evolution_protocol.coordination import dependency_gate
 from agent_evolution_protocol.coordination import delivery_audit
 from agent_evolution_protocol.coordination import claim_conflicts
 from agent_evolution_protocol.coordination import process_probe
+from agent_evolution_protocol.coordination import agent_identity
 from agent_evolution_protocol.coordination import capability_bridge
 from agent_evolution_protocol.coordination import uia3
 from agent_evolution_protocol.routing import classify_intent, load_route_config
@@ -96,7 +97,7 @@ CHALLENGE_FIELDS = {"challenged_assumption", "alternative_hypothesis", "structur
 THREAT_FIELDS = {"source", "observed_at", "freshness_ttl", "confidence", "impact", "affected_assumptions", "cheapest_confirmation", "recommended_response", "response_deadline"}
 DECISION_FIELDS = {"decision", "alternatives_considered", "evidence_used", "dissent_preserved", "budget_spent", "prediction_vs_result", "what_would_reverse_decision", "next_review_at"}
 GENESIS_HASH = "0" * 64
-AGENTS = ("codex", "workbuddy", "qoder", "codebuddy", "github_copilot", "hermes_desktop", "autoclaw")
+AGENTS = agent_identity.LEGACY_BRIDGE_AGENTS
 MESSAGE_KINDS = ("update", "proposal", "question", "result", "warning", "context")
 WAKE_BUDGETS = ("one-shot", "bounded", "manual")
 # coord-uia actions that WRITE to a client. Both must carry their own event id

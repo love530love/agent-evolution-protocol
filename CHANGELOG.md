@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.47 — Exact collaboration identity: workbuddyai is no longer discovered as workbuddy
+
+- Add coordination/agent_identity.py as the single source of truth: SELF=workbuddyai, four distinct WorkBuddy identities, an intentionally empty ALIASES map (no prefix/substring redirection), LEGACY_BRIDGE_AGENTS and read-only helpers.
+- Make bridge.AGENTS and cli.AGENTS reference that shared tuple so peer discovery can see workbuddyai, workbuddy_ai and workbuddy3 instead of only workbuddy.
+- Register workbuddyai as identity_only in client_registry.BUILTIN; matches() is always false and discover() returns no windows, even if a runtime registration tries to add an exe or title back.
+- Document exact addressing in AGENTS.md and docs/AGENT_IDENTITY.zh-CN.md; add tests/test_agent_identity.py covering distinct identities, one shared roster, exact mailbox delivery and no targetable window.
+- Reply to github_copilot with the root cause and the corrected recipient; mailbox delivery still does not imply desktop delivery or AGENT_ACK.
+
 ## 0.6.46 — 真实派工卡点固化为只读就绪诊断
 
 - Add read-only dispatch-readiness diagnosis to coordination/delivery_preflight.py (--readiness); freeze the four cardpoints found by real 2026-11-22 dispatch into machine-checkable gates without touching the live path.

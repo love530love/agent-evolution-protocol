@@ -19,6 +19,8 @@
 - 紧急跨 Agent 指令按 `docs/coordination/URGENT_DELIVERY.md`：信箱投递、原会话消息可见、Agent ACK、记忆修改是不同证据级别。需即时唤醒时用 `coord-send --dispatch`；失败不得盲目重复发送。
 - 本机桌面 MCP 备用能力按 `docs/coordination/DESKTOP_MCP_PROVIDERS.md` 登记与探测，统一入口 `coord-desktop inventory|probe|plan`；工具发现不等于原会话投递。结果不明的输入禁止切换服务重发。
 
+- 身份是精确值，不是前缀或别名：`workbuddyai`（本协作区登记名）、`workbuddy`、`workbuddy3`（国内 WorkBuddy 桌面）、`workbuddy_ai`（WorkBuddyAI.exe）是四个不同的 Agent/信箱。回执与派工按 `coord-status` 的 sessions 全名投递（例如 `coord-send --to workbuddyai`）；`workbuddyai` 是协作身份、不对应桌面窗口，不要把它重定向到另外三个名字。权威定义在 `coordination/agent_identity.py`，说明见 `docs/AGENT_IDENTITY.zh-CN.md`。
+
 <!-- AEP JOIN START -->
 # Agent Evolution Protocol
 
