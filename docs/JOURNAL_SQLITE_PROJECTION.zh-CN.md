@@ -41,6 +41,7 @@ JSON 原文仍是事实来源，索引不会写回 JSON、唤醒 Agent、证明�
 
 ## 边界
 
+- MCP `aep_readback` 读取的是另一套旧 transcript 总线，其记录没有工作区水印，不能用本索引替代证明。默认不返回这些记录；调用方只有显式传入 `include_unbound=true` 才能读取协调根范围的共享记录，并应检查返回的 `workspace_filtered=false` 和 `scope=coord_root_unfiltered`。这是兼容行为变更，不代表 transcript 已具备工作区隔离。
 - 主 CLI 已接入；尚未接 MCP、后台增量监听或正式成员加入登记；`--unbound` 不代表可直接分配归属。
 - 未匹配或无标签的旧事件不会混入指定工作区，避免多会话串台。
 - 搜索以 SQLite `instr(lower(...))` 实现，默认 lower 的非 ASCII 大小写折叠由 SQLite 决定，
