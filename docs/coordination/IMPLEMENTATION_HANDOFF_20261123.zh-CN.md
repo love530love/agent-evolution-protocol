@@ -11,18 +11,21 @@
 ## 发现与需要决定的契约
 
 1. `federation/engine.py` 已在联邦工作区的 `state.json` 持久化 Workspace ID；`.aep/workspace.json` 保存本项目路径和协调根，但没有该 ID。还须核对 mission 与 federation 的 ID 如何对应，不能从目录名猜测，也不能每次加入重新创建 ID。
-2. `coordination/workspace_members.py` 以 `(workspace_id, agent)` 幂等登记，并与 `join_events` 同事务写入；当前只校验 ID 格式，未核实联邦工作区存在，也未认证成员来源。`scripts/join-agent.ps1` 当前只发 presence 和读 inbox，尚未接入这一登记。
+2. `coordination/workspace_members.py` 以 `(workspace_id, agent)` 幂等登记，并与 `join_events` 同事务写入；直接入口只校验 ID 格式，也未认证成员来源。`scripts/join-agent.ps1 -WorkspaceId` 已接入显式绑定验证和登记，省略 ID 则保持旧行为。
 3. `conversation_journal.py` 的 workspace ID 可选；`journal_projection.py` 为显式重建快照。历史未绑定消息不可自动归属。旧 transcript 总线无 workspace 水印，MCP `aep_readback` 默认不返回该共享数据，显式选择后也明确标识未过滤。
 4. 静态审计发现 `coordination/wake_router.py` 原允许 `agent_ack=True` 在缺失 ACK 事件/会话字段时回退为预期值；紧凑的可见标志也缺少显式逐事件、逐会话信息。本轮已修改并补测：同事件/同会话字段缺失时不升级 ACK，可见证据不完整时保持不确定并阻止自动换通道重发。属于代码和隔离测试修复，不证明现网曾发生假 ACK 或已完成实机派工；现有适配器须更新为明确提供 `visible_event_id`、`visible_session_id` 等字段。
 5. `scripts/aep-tray.ps1` 等文件当前是未跟踪的协作者工作，托盘或 Core 心跳不能单独证明桌面宿主正常、原会话已定位或指令已执行。对现有 WIP 先确认归属和认领。
 6. 队友新增 `docs/CAPACITY_DRILL_EVIDENCE.zh-CN.md` 与 `docs/WIP_OWNERSHIP_LEDGER.zh-CN.md`：前者记录隔离环境的额度故障注入与指挥接手状态机演练，后者记录当时 WIP 归属请求。演练不是实际额度耗尽、真实 Agent 收到消息或跨厂商接力的证据；台账随后可能变化。
 7. 身份子任务发现 `federation/intake.py` 原会在指定 workspace 加载失败时静默新建其他 workspace。本轮已修复：明确给定 ID 时加载失败直接报错，不创建替代工作区；未指定 ID 仍可创建。隔离测试覆盖缺失与读取错误，真实迁移和自动绑定另行实现。
-8. 身份子任务的 `workspace_binding.py` 已合入：显式绑定前通过 federation `engine.load` 核验 state schema/ID，同一 workspace 改绑拒绝、同一项目有多个 workspace 时要求明确 ID；跨进程首次建库采用事务及有界重试。其项目目录关联仍是调用方声明，未接入自动加入/MCP/唤醒，迁移和身份认证尚未实现。说明见 `docs/WORKSPACE_BINDING.zh-CN.md`。
+8. 身份子任务的 `workspace_binding.py` 已合入：显式绑定前通过 federation `engine.load` 核验 state schema/ID，同一 workspace 改绑拒绝、同一项目有多个 workspace 时要求明确 ID；跨进程首次建库采用事务及有界重试。其项目目录关联仍是调用方声明，已接入显式加入路径，但未接入 MCP/唤醒，迁移和身份认证尚未实现。说明见 `docs/WORKSPACE_BINDING.zh-CN.md`。
 9. 后续只读审计在隔离测试复现 wake router 的一个重复投递风险：适配器发送后抛异常会继续下一通道。本轮修复为异常或无明确未发送证据的失败均返回 `UNCERTAIN`；仅在适配器明确报告 `PROVEN_NOT_SENT`、`input_attempted=false` 且给出 `not_sent_evidence` 时才允许尝试其他通道。此证据为适配器声明，不等同独立核验。另发现 session registry 可能跨 workspace/provider 覆盖记录、缺少 freshness 校验，需单独设计迁移；这些均为隔离复现，不声明真实用户会话已受影响。
-10. 后续协作合入了显式加入和投影：`join-agent.ps1 -WorkspaceId` 验证现有绑定后登记，省略该参数保留旧行为；`coordination/join_journal.py` 将成员加入事件显式、可重放地投影进群聊 JSON，不自动唤醒或证明已读。延迟投影的事件时间可能早于消费者现有游标，消费端须按成员序号对账；参见 `docs/WORKSPACE_JOIN_JOURNAL.zh-CN.md`。
+10. 后续协作合入了显式加入和投影：`join-agent.ps1 -WorkspaceId` 验证现有绑定后登记，省略该参数保留旧行为；绑定加入会尝试将自身事件投影进群聊 JSON，失败可幂等重试，不自动唤醒或证明已读。延迟投影的事件时间可能早于消费者现有游标，消费端须按成员序号对账；参见 `docs/WORKSPACE_JOIN_JOURNAL.zh-CN.md`。
 11. session registry 已增加跨进程锁和冲突拒绝，避免新版写入者把同 agent/session 的不同 workspace/provider 覆盖；当前这类冲突会拒绝而不是支持并存，旧写入器不参与同一把锁。记录时间新鲜度仍须独立设计和验证。审计还发现 wake router 多次独立调用同一 event 尚无持久去重/会话租约，须在真正接入执行器前设计并测试；本次仅修复单次调用内异常后的盲重试。
 12. 后续接手时已让显式绑定加入在成员登记后自动尝试本地群聊投影；失败返回 `PENDING`，再次执行相同加入可幂等重试。两个存储不是原子事务，日志不是客户端通知、ACK 或唤醒，进程崩溃后的自动后台恢复仍待建设。
 13. 回执审计发现 `INPUT_SUBMITTED` 原被当作已证明送达。本轮改为 `unconfirmed`，并使联邦 supervisor 在 `record` 策略下也暂停推进直到核对；只有消息可见或真实 ACK 等证据才是送达。没有明确 assistant/incoming 归属的文本现在仅是待核实候选，不自动认定 Agent ACK；这会使目前只支持未知角色的采集器无法自动 ACK，需升级采集器而非推断。
+14. 后续已为实验性 `wake_router` 引入按 event ID 持久防重，先记录 IN_FLIGHT，崩溃或无法读取账本时不自动重发；并要求会话注册时间新鲜。两项均只覆盖相应模块，不等于所有生产派工渠道共用原会话租约/防重，也不证明客户端在线；恢复不确定事件仍需要实际证据与 reconcile 流程。
+15. 实机排查发现 DesktopHost 计划任务为 Ready、旧心跳过期；旧 PID `107436` 已被 node 复用，未触碰该进程。已另以隐藏 PowerShell 启动 `scripts/aep-supervisor.ps1 -ObserveOnly`，17:29/17:30 两次心跳来自 Python PID `52884`、`dispatch_enabled=false`、`dispatched=[]`；启动者 PID `91120`。这是当前交互会话的单独观察进程，**不是计划任务已恢复运行，也不证明任何客户端唤醒**。运行时采用了共享树中他人的 supervisor WIP，需由持有者审查入库并验证正式部署；不应盲目启动第二个写入器。
+16. 进程健康审计已合入 `resident_status`：新鲜心跳和真实 PID/创建时间分别报告；未知或复用不再声称 READY。17:35 实机检查 Desktop `HEALTHY` 且创建时间 `VERIFIED`，Core 心跳新鲜但旧实例缺少创建时间令牌，故 Core `PROCESS_UNKNOWN`、控制面 `HOLD`；没有因此重启或停止 Core。当前状态会变化，接手时重查。驻留的 PowerShell 启动方式及日志见本节第 15 项，正式计划任务、开机恢复和托盘状态尚需单独验收。
 
 ## 可并行攻坚与验收
 

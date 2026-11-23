@@ -52,3 +52,8 @@ $env:PYTHONPATH = Join-Path (Get-Location) 'src'
 ```
 
 - `task_delivered=true` 仍只代表 `MESSAGE_VISIBLE`；需要目标生成的同事件 ACK，随后还要读回实际结果。不可因 CLI return code、窗口存在或输入框有文字而跳级。
+
+## 2026-11-23：PowerShell 7 无计划任务 cmdlet 的只读替代
+
+- 本机 `Get-ScheduledTask -TaskName 'AEP-DesktopHost'` 退出码 1，错误为 `The term 'Get-ScheduledTask' is not recognized`；不要据此判定任务不存在，也没有切换到 Windows PowerShell 5.1。
+- 同一 pwsh 会话执行 `schtasks.exe /Query /TN AEP-DesktopHost /V /FO LIST` 退出码 0，可只读查看状态和上次结果；实际任务状态会变化，须重查。观察到 Ready 不等于宿主循环在运行，也不能据此证明派工。
