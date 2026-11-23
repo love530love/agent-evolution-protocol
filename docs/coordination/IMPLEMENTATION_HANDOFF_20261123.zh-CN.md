@@ -17,6 +17,7 @@
 5. `scripts/aep-tray.ps1` 等文件当前是未跟踪的协作者工作，托盘或 Core 心跳不能单独证明桌面宿主正常、原会话已定位或指令已执行。对现有 WIP 先确认归属和认领。
 6. 队友新增 `docs/CAPACITY_DRILL_EVIDENCE.zh-CN.md` 与 `docs/WIP_OWNERSHIP_LEDGER.zh-CN.md`：前者记录隔离环境的额度故障注入与指挥接手状态机演练，后者记录当时 WIP 归属请求。演练不是实际额度耗尽、真实 Agent 收到消息或跨厂商接力的证据；台账随后可能变化。
 7. 身份子任务发现 `federation/intake.py` 原会在指定 workspace 加载失败时静默新建其他 workspace。本轮已修复：明确给定 ID 时加载失败直接报错，不创建替代工作区；未指定 ID 仍可创建。隔离测试覆盖缺失与读取错误，真实迁移和自动绑定另行实现。
+8. 身份子任务的 `workspace_binding.py` 已合入：显式绑定前通过 federation `engine.load` 核验 state schema/ID，同一 workspace 改绑拒绝、同一项目有多个 workspace 时要求明确 ID；跨进程首次建库采用事务及有界重试。其项目目录关联仍是调用方声明，未接入自动加入/MCP/唤醒，迁移和身份认证尚未实现。说明见 `docs/WORKSPACE_BINDING.zh-CN.md`。
 
 ## 可并行攻坚与验收
 
