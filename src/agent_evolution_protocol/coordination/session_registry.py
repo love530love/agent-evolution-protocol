@@ -9,8 +9,11 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 from uuid import uuid4
+
+from ..federation.locking import workspace_lock
 
 STATES = {"discovered", "registered", "delivered", "acknowledged", "offline", "failed"}
 
@@ -32,25 +35,44 @@ def _dir(root: Path) -> Path:
     return path
 
 
+def _key(agent: str, session_id: str) -> str:
+    return f"{agent}__{session_id}".replace("/", "_").replace("\\", "_")
+
+
+def _workspace_key(value: str) -> str:
+    return os.path.normcase(str(Path(value).resolve()))
+
+
 def register(root: Path, *, agent: str, workspace: str, provider: str,
              session_id: str, window_id: str = "", conversation_id: str = "",
              capabilities: list[str] | None = None) -> dict:
     if not all(isinstance(x, str) and x.strip() for x in (agent, workspace, provider, session_id)):
         raise ValueError("agent, workspace, provider and session_id are required")
-    key = f"{agent}__{session_id}".replace("/", "_").replace("\\", "_")
-    old = _read(_dir(root) / f"{key}.json")
-    row = {**old, "agent": agent, "workspace": str(Path(workspace).resolve()),
-           "provider": provider, "session_id": session_id, "window_id": window_id,
-           "conversation_id": conversation_id, "capabilities": capabilities or old.get("capabilities", []),
-           "state": "registered", "updated_at": _now(), "registered_at": old.get("registered_at", _now())}
-    _write(_dir(root) / f"{key}.json", row)
-    return row
+    directory = _dir(root)
+    path = directory / f"{_key(agent, session_id)}.json"
+    with workspace_lock(directory / ".registry.lock"):
+        old = _read(path)
+        if path.exists():
+            if not isinstance(old, dict) or not all(isinstance(old.get(k), str) and old[k].strip()
+                                                    for k in ("agent", "workspace", "provider", "session_id")):
+                raise ValueError("SESSION_RECORD_UNREADABLE")
+            if (old["agent"] != agent or old["session_id"] != session_id
+                    or old["provider"] != provider
+                    or _workspace_key(old["workspace"]) != _workspace_key(workspace)):
+                raise ValueError("SESSION_IDENTITY_CONFLICT")
+        row = {**old, "agent": agent, "workspace": str(Path(workspace).resolve()),
+               "provider": provider, "session_id": session_id, "window_id": window_id,
+               "conversation_id": conversation_id, "capabilities": capabilities or old.get("capabilities", []),
+               "state": "registered", "updated_at": _now(), "registered_at": old.get("registered_at", _now())}
+        _write(path, row)
+        return row
 
 
 def _read(path: Path) -> dict:
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        value = json.loads(path.read_text(encoding="utf-8"))
+        return value if isinstance(value, dict) else {}
+    except (OSError, UnicodeError, json.JSONDecodeError):
         return {}
 
 
@@ -81,11 +103,12 @@ def resolve(root: Path, *, agent: str, workspace: str = "", session_id: str = ""
 def transition(root: Path, *, agent: str, session_id: str, state: str,
                event_id: str = "", detail: str = "") -> dict:
     if state not in STATES: raise ValueError(f"invalid state: {state}")
-    rows = list_sessions(root, agent=agent, session_id=session_id)
-    if len(rows) != 1: raise ValueError("session not uniquely registered")
-    row = dict(rows[0]); row["state"] = state; row["updated_at"] = _now()
-    if event_id: row["last_event_id"] = event_id
-    if detail: row["last_detail"] = detail
-    key = f"{agent}__{session_id}".replace("/", "_").replace("\\", "_")
-    _write(_dir(root) / f"{key}.json", row)
-    return row
+    directory = _dir(root)
+    with workspace_lock(directory / ".registry.lock"):
+        rows = list_sessions(root, agent=agent, session_id=session_id)
+        if len(rows) != 1: raise ValueError("session not uniquely registered")
+        row = dict(rows[0]); row["state"] = state; row["updated_at"] = _now()
+        if event_id: row["last_event_id"] = event_id
+        if detail: row["last_detail"] = detail
+        _write(directory / f"{_key(row['agent'], row['session_id'])}.json", row)
+        return row
