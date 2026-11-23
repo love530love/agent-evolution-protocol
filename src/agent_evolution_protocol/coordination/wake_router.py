@@ -7,9 +7,8 @@ flag into delivery.  A delivery receipt must prove that *this event* became
 visible in the already-resolved original session.
 
 Execution adapters return ordinary dictionaries.  The minimum proof for
-``DELIVERED`` is either ``original_session_message_visible=True`` or the
-three-part receipt ``event_id_visible=True``, ``visible_session_id`` (or
-``session_id``) equal to the resolved session id, and the event id itself.
+``DELIVERED`` requires ``event_id_visible=True``, an explicit matching
+``visible_event_id`` and an explicit matching ``visible_session_id``.
 ``ACKNOWLEDGED`` additionally requires an explicit same-session agent-ACK
 receipt.  All weaker send reports stay in an intermediate/uncertain state so a
 caller cannot mistake an input injection for a completed wake.
@@ -37,18 +36,12 @@ def _visible_in_resolved_session(result: dict[str, Any], *, event_id: str,
                                  session_id: str) -> bool:
     """Return true only for an event-level, original-session readback.
 
-    ``original_session_message_visible`` is the compact adapter contract.  The
-    expanded form exists so low-level UIA/CDP adapters can surface their actual
-    readback fields without inventing a higher-level flag.
+    A generic boolean or a requested session ID is not evidence of a readback.
+    Adapters must report the event and session they actually observed.
     """
-    if result.get("original_session_message_visible") is True:
-        return True
-    visible_event = (
-        result.get("event_id_visible") is True
-        or result.get("visible_event_id") == event_id
-    )
-    visible_session = result.get("visible_session_id", result.get("session_id", ""))
-    return visible_event and isinstance(visible_session, str) and visible_session == session_id
+    return bool(event_id and session_id and result.get("event_id_visible") is True
+                and result.get("visible_event_id") == event_id
+                and result.get("visible_session_id") == session_id)
 
 
 def _same_session_ack(result: dict[str, Any], *, event_id: str, session_id: str,
@@ -56,8 +49,8 @@ def _same_session_ack(result: dict[str, Any], *, event_id: str, session_id: str,
     """An adapter acknowledgement is not an agent acknowledgement by itself."""
     if not message_visible or result.get("agent_ack") is not True:
         return False
-    ack_event = result.get("ack_event_id", event_id)
-    ack_session = result.get("ack_session_id", session_id)
+    ack_event = result.get("ack_event_id")
+    ack_session = result.get("ack_session_id")
     return ack_event == event_id and ack_session == session_id
 
 
@@ -77,6 +70,10 @@ def _possibly_mutated(result: dict[str, Any], status: str) -> bool:
         or result.get("sent") is True
         or result.get("submitted") is True
         or result.get("task_delivered") is True
+        or result.get("original_session_message_visible") is True
+        or result.get("event_id_visible") is True
+        or bool(result.get("visible_event_id"))
+        or result.get("agent_ack") is True
         or status in {"SENT", "DELIVERED", "ACCEPTED", "ACKNOWLEDGED", "MESSAGE_VISIBLE"}
     )
 

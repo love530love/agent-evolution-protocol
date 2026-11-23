@@ -26,7 +26,7 @@ def test_router_records_delivery_and_stops_on_first_success(tmp_path: Path):
     calls = []
     def send(p):
         calls.append(p["event_id"])
-        return {"status": "message-visible", "event_id_visible": True,
+        return {"status": "message-visible", "event_id_visible": True, "visible_event_id": p["event_id"],
                 "visible_session_id": p["session"]["session_id"]}
     result = wake_router.route(tmp_path, agent="qoder", text="x", event_id="e1",
                                transports=[wake_router.Transport("uia", send)], execute=True)
@@ -81,7 +81,7 @@ def test_router_requires_explicit_same_session_agent_ack(tmp_path: Path):
     result = wake_router.route(
         tmp_path, agent="qoder", text="x", event_id="e1",
         transports=[wake_router.Transport("uia", lambda _: {
-            "event_id_visible": True, "visible_session_id": "s1",
+            "event_id_visible": True, "visible_event_id": "e1", "visible_session_id": "s1",
             "agent_ack": True, "ack_event_id": "e1", "ack_session_id": "s1",
         })],
         execute=True,
@@ -100,3 +100,41 @@ def test_router_does_not_treat_adapter_acknowledged_as_agent_ack(tmp_path: Path)
     )
     assert result["status"] == "UNCERTAIN"
     assert session_registry.resolve(tmp_path, agent="qoder")["session"]["state"] == "registered"
+
+
+def test_router_incomplete_visibility_is_uncertain_and_never_retries(tmp_path: Path):
+    session_registry.register(tmp_path, agent="qoder", workspace=str(tmp_path),
+                              provider="uia", session_id="s1")
+    calls = []
+    result = wake_router.route(
+        tmp_path, agent="qoder", text="x", event_id="e1",
+        transports=[wake_router.Transport("first", lambda _: {"original_session_message_visible": True}),
+                    wake_router.Transport("second", lambda _: calls.append("retried") or {"ok": True})],
+        execute=True,
+    )
+    assert result["status"] == "UNCERTAIN"
+    assert calls == []
+
+
+def test_router_requires_explicit_matching_ack_event_and_session(tmp_path: Path):
+    for ack in ({}, {"ack_event_id": "e1"}, {"ack_session_id": "s1"},
+                {"ack_event_id": "old", "ack_session_id": "s1"},
+                {"ack_event_id": "e1", "ack_session_id": "other"}):
+        session_registry.register(tmp_path, agent="qoder", workspace=str(tmp_path),
+                                  provider="uia", session_id="s1")
+        receipt = {"event_id_visible": True, "visible_event_id": "e1",
+                   "visible_session_id": "s1", "agent_ack": True, **ack}
+        result = wake_router.route(tmp_path, agent="qoder", text="x", event_id="e1",
+                                   transports=[wake_router.Transport("uia", lambda _: receipt)], execute=True)
+        assert result["status"] == "DELIVERED"
+
+
+def test_router_requires_explicit_matching_visible_event(tmp_path: Path):
+    for observed in (None, "old-event"):
+        session_registry.register(tmp_path, agent="qoder", workspace=str(tmp_path),
+                                  provider="uia", session_id="s1")
+        receipt = {"event_id_visible": True, "visible_session_id": "s1",
+                   "visible_event_id": observed}
+        result = wake_router.route(tmp_path, agent="qoder", text="x", event_id="e1",
+                                   transports=[wake_router.Transport("uia", lambda _: receipt)], execute=True)
+        assert result["status"] == "UNCERTAIN"
