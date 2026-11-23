@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import math
 import os
 from pathlib import Path
 from uuid import uuid4
@@ -16,6 +17,7 @@ from uuid import uuid4
 from ..federation.locking import workspace_lock
 
 STATES = {"discovered", "registered", "delivered", "acknowledged", "offline", "failed"}
+DEFAULT_REGISTRATION_MAX_AGE_SECONDS = 900.0
 
 
 def _now() -> str:
@@ -60,10 +62,13 @@ def register(root: Path, *, agent: str, workspace: str, provider: str,
                     or old["provider"] != provider
                     or _workspace_key(old["workspace"]) != _workspace_key(workspace)):
                 raise ValueError("SESSION_IDENTITY_CONFLICT")
+        registered_now = _now()
         row = {**old, "agent": agent, "workspace": str(Path(workspace).resolve()),
                "provider": provider, "session_id": session_id, "window_id": window_id,
                "conversation_id": conversation_id, "capabilities": capabilities or old.get("capabilities", []),
-               "state": "registered", "updated_at": _now(), "registered_at": old.get("registered_at", _now())}
+               "state": "registered", "updated_at": registered_now,
+               "registration_refreshed_at": registered_now,
+               "registered_at": old.get("registered_at", registered_now)}
         _write(path, row)
         return row
 
@@ -88,7 +93,21 @@ def list_sessions(root: Path, *, agent: str = "", workspace: str = "", session_i
 
 
 def resolve(root: Path, *, agent: str, workspace: str = "", session_id: str = "",
-            conversation_id: str = "", window_id: str = "") -> dict:
+            conversation_id: str = "", window_id: str = "",
+            max_age_seconds: float = DEFAULT_REGISTRATION_MAX_AGE_SECONDS,
+            now: datetime | None = None) -> dict:
+    """Resolve one identity with a recent registration, not a live observation.
+
+    Timestamps from state transitions never renew the registration. Old rows
+    lacking registration_refreshed_at must be explicitly re-registered.
+    """
+    if isinstance(max_age_seconds, bool) or not isinstance(max_age_seconds, (int, float)) \
+            or not math.isfinite(max_age_seconds) or max_age_seconds <= 0:
+        raise ValueError("max_age_seconds must be a finite positive number")
+    if now is None:
+        now = datetime.now(timezone.utc)
+    if not isinstance(now, datetime) or now.utcoffset() is None:
+        raise ValueError("now must be a timezone-aware datetime")
     rows = list_sessions(root, agent=agent, workspace=workspace)
     if session_id: rows = [r for r in rows if r.get("session_id") == session_id]
     if conversation_id: rows = [r for r in rows if r.get("conversation_id") == conversation_id]
@@ -97,7 +116,24 @@ def resolve(root: Path, *, agent: str, workspace: str = "", session_id: str = ""
     if len(live) != 1:
         reason = "NO_SESSION" if not live else "AMBIGUOUS_SESSION"
         return {"ok": False, "reason": reason, "candidates": live}
-    return {"ok": True, "session": live[0]}
+    row = live[0]
+    stamp = row.get("registration_refreshed_at")
+    try:
+        if not isinstance(stamp, str) or not stamp.strip():
+            raise ValueError("registration timestamp missing")
+        registered = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        if registered.utcoffset() is None:
+            raise ValueError("registration timestamp has no timezone")
+        age = (now - registered).total_seconds()
+    except (ValueError, TypeError, OverflowError):
+        return {"ok": False, "reason": "SESSION_REGISTRATION_TIME_UNKNOWN", "candidates": live}
+    if age < 0:
+        return {"ok": False, "reason": "SESSION_REGISTRATION_IN_FUTURE", "candidates": live}
+    if age > max_age_seconds:
+        return {"ok": False, "reason": "SESSION_REGISTRATION_STALE", "candidates": live,
+                "registration_age_seconds": age}
+    return {"ok": True, "session": row, "registration_age_seconds": age,
+            "session_observation_verified": False}
 
 
 def transition(root: Path, *, agent: str, session_id: str, state: str,
