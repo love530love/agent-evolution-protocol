@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.51 — Fault-injection drill for quota handoff
+
+- Add federation/capacity_drill.py: replayable quota-exhaustion drill using the real command_handoff + capability_bridge state machine in an isolated root. Asserts 14 hard properties (weak successor fail-closed, single ACTIVE holder, idempotent yield/volunteer/takeover, hash chain valid, state persisted). Explicitly not a real agent ACK or desktop delivery.
+- Add tests/test_capacity_drill.py (5 items) and docs/CAPACITY_DRILL_EVIDENCE.zh-CN.md. No new CLI command; manifest unchanged (28/28).
+- Published a WIP ownership claim request to agent-legion plus 5 direct mailboxes; no agent has claimed the tray/UIA/presence WIP, so they remain untouched. codebuddy self-reported ownership of capability_bridge (3800e88/332c7f2) and that it did not touch others WIP.
+
 ## 0.6.50 — Concurrency-safe workspace membership joins
 
 - Fix P0 in workspace_members.join: schema DDL had been executed via executescript() on every connection, racing concurrent writers and raising "attempt to write a readonly database" on Windows (reproduced 3/3, then 8/8 green after fix). Schema initialization now runs inside the BEGIN IMMEDIATE write transaction, with a bounded idempotent retry on transient locked/readonly errors; first attribution and single-notification semantics are unchanged, no assertion relaxed.
