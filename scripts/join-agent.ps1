@@ -1,7 +1,8 @@
 param(
   [Parameter(Mandatory = $true)][ValidatePattern('^[a-z][a-z0-9_-]{0,63}$')][string]$Agent,
   [string]$SessionId = '',
-  [ValidateRange(1, 120)][int]$TtlMinutes = 30
+  [ValidateRange(1, 120)][int]$TtlMinutes = 30,
+  [string]$WorkspaceId = ''
 )
 
 # The one-command, shared-workspace entry point for agents without a custom
@@ -15,6 +16,15 @@ $env:PYTHONPATH = (Join-Path $repoRoot 'src') + [IO.Path]::PathSeparator + $env:
 $python = (Get-Command python -ErrorAction Stop).Source
 $coordination = Join-Path $repoRoot 'coordination'
 $bridge = Join-Path $repoRoot 'src\agent_evolution_protocol\coordination'
+
+# An explicit workspace may only be joined after its existing binding is
+# validated. A failed validation aborts before presence or inbox access.
+if ($PSBoundParameters.ContainsKey('WorkspaceId')) {
+  & $python -m agent_evolution_protocol.coordination.workspace_join `
+    --coord-root $coordination --project-root $repoRoot --workspace-id $WorkspaceId `
+    --agent $Agent --session-id $SessionId
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
 
 & $python -m agent_evolution_protocol.coordination.presence signal `
   --root $coordination --agent $Agent --state online --source shared-workspace `

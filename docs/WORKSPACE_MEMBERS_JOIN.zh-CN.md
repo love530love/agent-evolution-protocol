@@ -2,7 +2,15 @@
 
 `workspace_members` 为显式工作区 ID 提供成员目录和可续读的加入事件。成员行及同一加入通知在一个 SQLite 事务中保存；同一工作区与身份重复登记只产生一条记录。不同工作区即使有同名 Agent 也独立存储。
 
-本模块已接入 `coord-workspace-members` 主 CLI，**尚未接入现有 `join-agent.ps1`、群聊或 MCP**，不会自动采集旧消息、通知桌面程序或唤醒 Agent。`source` 和 `session_id` 是调用方声明，并未认证；持有一条成员记录不证明在线、已读或已接单。工作区 ID 校验格式，但尚未验证该工作区是否存在或属于调用者；由调用方先核对已有工作区身份。
+本模块已接入 `coord-workspace-members` 主 CLI；`join-agent.ps1 -WorkspaceId` 会先核对现有项目绑定和 federation 状态，然后登记成员和加入事件，最后按既有流程声明在线并读信箱。未指定 `-WorkspaceId` 保持原有行为，不创建工作区成员记录。绑定检查失败时不会登记或发送 presence；登记成功后若 presence 或读信箱失败，成员记录仍存在，检查输出并可幂等重试。两者不是跨数据库原子事务。
+
+以下示例的 ID 是占位符，必须替换为**已显式绑定到本项目**的真实 ID；由本人在已有会话自行执行：
+
+```powershell
+& 'K:\PythonProjects5\agent-evolution-protocol\scripts\join-agent.ps1' -Agent 'codex' -SessionId 'example-session' -WorkspaceId 'W-aaaaaaaaaaaaaaaa'
+```
+
+尚未接入群聊或 MCP 投递，不会自动采集旧消息、通知桌面程序或唤醒 Agent。`source` 和 `session_id` 是调用方声明，并未认证；成员记录不证明在线、已读或已接单。直接调用 `coord-workspace-members` 仍只校验 ID 格式，不验证工作区存在；应优先使用绑定检查路径。
 
 下列命令分别是一行。请以真实工作区 ID 替换示例 `W-aaaaaaaaaaaaaaaa`；路径按实际项目位置调整。
 
@@ -28,4 +36,4 @@
 
 通知返回 `next_cursor`，供调用者在同一工作区继续读取；它不会修改读取游标或声称已读。首次登记会创建 `coordination/workspace_members.sqlite3`，只读查询在缺失时不会创建数据库。`join` 返回 `created=false` 表示该身份先前登记过，原始 `source`、`session_id` 和时间保持不变。
 
-上线前还需要：接通真实加入流程并核验 workspace identity；决定从登记事务到共享聊天日志的可靠 outbox/投影和通知重试；并发跨进程验收、退出/重新加入语义、数据库迁移，以及厂商原会话是否实际接收通知的独立证据。
+上线前还需要：接入其余加入流程并加强 workspace 和调用者认证；决定从登记事务到共享聊天日志的可靠 outbox/投影和通知重试；退出/重新加入语义、数据库迁移，以及厂商原会话是否实际接收通知的独立证据。
