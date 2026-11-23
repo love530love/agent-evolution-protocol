@@ -138,3 +138,41 @@ def test_router_requires_explicit_matching_visible_event(tmp_path: Path):
         result = wake_router.route(tmp_path, agent="qoder", text="x", event_id="e1",
                                    transports=[wake_router.Transport("uia", lambda _: receipt)], execute=True)
         assert result["status"] == "UNCERTAIN"
+
+
+def test_router_does_not_retry_after_transport_raises(tmp_path: Path):
+    session_registry.register(tmp_path, agent="qoder", workspace=str(tmp_path),
+                              provider="uia", session_id="s1")
+    calls = []
+    def sent_then_error(_):
+        calls.append("possibly-sent")
+        raise RuntimeError("receipt unavailable")
+    result = wake_router.route(tmp_path, agent="qoder", text="x", event_id="e1",
+        transports=[wake_router.Transport("first", sent_then_error),
+                    wake_router.Transport("second", lambda _: calls.append("retry") or {"ok": True})],
+        execute=True)
+    assert result["status"] == "UNCERTAIN"
+    assert result["attempts"][0]["status"] == "TRANSPORT_ERROR"
+    assert calls == ["possibly-sent"]
+
+
+def test_router_requires_pre_input_proof_before_trying_other_transport(tmp_path: Path):
+    session_registry.register(tmp_path, agent="qoder", workspace=str(tmp_path),
+                              provider="uia", session_id="s1")
+    calls = []
+    def second(_):
+        calls.append("second")
+        return {"ok": True}
+    for first in ({"status": "failed"}, {"status": "PROVEN_NOT_SENT"},
+                  {"status": "PROVEN_NOT_SENT", "input_attempted": False}):
+        result = wake_router.route(tmp_path, agent="qoder", text="x", event_id="e1",
+            transports=[wake_router.Transport("first", lambda _: first),
+                        wake_router.Transport("second", second)], execute=True)
+        assert result["status"] == "UNCERTAIN"
+        assert calls == []
+    result = wake_router.route(tmp_path, agent="qoder", text="x", event_id="e1",
+        transports=[wake_router.Transport("first", lambda _: {"status": "PROVEN_NOT_SENT",
+                    "input_attempted": False, "not_sent_evidence": "composer missing before input"}),
+                    wake_router.Transport("second", second)], execute=True)
+    assert result["status"] == "UNCERTAIN"
+    assert calls == ["second"]

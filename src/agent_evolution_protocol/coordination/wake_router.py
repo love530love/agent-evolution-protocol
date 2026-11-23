@@ -96,8 +96,11 @@ def route(root, *, agent: str, text: str, event_id: str, transports: list[Transp
     for transport in sorted(transports, key=lambda x: x.priority):
         try:
             result = dict(transport.send(payload) or {})
-        except Exception as exc:  # adapters must not crash the coordinator
-            result = {"status": "TRANSPORT_ERROR", "error": str(exc)}
+        except Exception as exc:  # the adapter may have sent before failing
+            result = {"status": "TRANSPORT_ERROR", "error": str(exc),
+                      "transport": transport.name, "event_id": event_id}
+            attempts.append(result)
+            return {"status": "UNCERTAIN", "event_id": event_id, "attempts": attempts}
         result.update({"transport": transport.name, "event_id": event_id})
         attempts.append(result)
         status = _status(result)
@@ -115,5 +118,11 @@ def route(root, *, agent: str, text: str, event_id: str, transports: list[Transp
         if _input_submitted(result, status):
             return {"status": "INPUT_SUBMITTED", "event_id": event_id, "attempts": attempts}
         if _possibly_mutated(result, status):
+            return {"status": "UNCERTAIN", "event_id": event_id, "attempts": attempts}
+        # Only an adapter's explicit pre-input proof permits trying a second
+        # transport. A generic failure/empty result can follow an actual send.
+        proof = result.get("not_sent_evidence")
+        if not (status == "PROVEN_NOT_SENT" and result.get("input_attempted") is False
+                and isinstance(proof, str) and proof.strip()):
             return {"status": "UNCERTAIN", "event_id": event_id, "attempts": attempts}
     return {"status": "FAILED", "event_id": event_id, "attempts": attempts}
