@@ -42,10 +42,10 @@ def request_hash(*, event_id: str, agent: str, text: str, session: dict) -> str:
 
 
 def read(path: Path) -> dict | None:
-    if not path.exists():
-        return None
     try:
         row = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
     except (OSError, ValueError, UnicodeError):
         return {"state": "UNREADABLE"}
     if (not isinstance(row, dict) or row.get("schema") != "aep-wake-event-fence-v1"

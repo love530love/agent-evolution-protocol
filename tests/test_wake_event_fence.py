@@ -160,3 +160,19 @@ def test_lock_timeout_is_uncertain(tmp_path, monkeypatch):
     result = wake_router.route(tmp_path, agent="qoder", text="x", event_id="evt", transports=[], execute=True)
     assert result["status"] == "UNCERTAIN"
     assert result["reason"] == "EVENT_OR_SESSION_LOCK_BUSY"
+
+
+def test_event_file_access_denied_is_not_treated_as_absent(tmp_path, monkeypatch):
+    setup_session(tmp_path)
+    ledger = wake_event_fence.event_paths(tmp_path, "evt")[1]
+    real_read = Path.read_text
+    def denied(path, *args, **kwargs):
+        if path == ledger:
+            raise PermissionError("denied")
+        return real_read(path, *args, **kwargs)
+    monkeypatch.setattr(Path, "read_text", denied)
+    calls = []
+    result = wake_router.route(tmp_path, agent="qoder", text="x", event_id="evt",
+                               transports=[wake_router.Transport("uia", lambda _: calls.append(1))], execute=True)
+    assert result["status"] == "UNCERTAIN"
+    assert result["reason"] == "EVENT_FENCE_UNREADABLE" and not calls
