@@ -62,17 +62,14 @@ def intake(root, coord_root, *, text, agents, workspace_id="", goal="",
     if not agents:
         raise ValueError("at least one agent is required")
     root = Path(root)
-    # A provisional ID must still be a legal one: the workspace watermark is
-    # validated everywhere it travels, so a made-up "WS-INTAKE-<time>" string
-    # would be rejected by the first order that carried it.
-    from agent_evolution_protocol.coordination.workspace_identity import new_workspace_id
-    workspace_id = workspace_id or new_workspace_id()
     evidence = []
-
-    try:
+    # An explicit ID is an identity constraint.  Never silently replace it on
+    # missing, corrupt or unreadable state; doing so can dispatch in the wrong
+    # workspace. Only an omitted ID authorizes creating a new workspace.
+    if workspace_id:
         workspace = engine.load(root, workspace_id)
         evidence.append("workspace:existing")
-    except (OSError, ValueError):
+    else:
         workspace = engine.create(root, goal=goal or text.strip(),
                                   acceptance=list(acceptance or [text.strip()]),
                                   moment=moment)

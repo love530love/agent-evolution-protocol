@@ -16,6 +16,7 @@
 4. 静态审计发现 `coordination/wake_router.py` 原允许 `agent_ack=True` 在缺失 ACK 事件/会话字段时回退为预期值；紧凑的可见标志也缺少显式逐事件、逐会话信息。本轮已修改并补测：同事件/同会话字段缺失时不升级 ACK，可见证据不完整时保持不确定并阻止自动换通道重发。属于代码和隔离测试修复，不证明现网曾发生假 ACK 或已完成实机派工；现有适配器须更新为明确提供 `visible_event_id`、`visible_session_id` 等字段。
 5. `scripts/aep-tray.ps1` 等文件当前是未跟踪的协作者工作，托盘或 Core 心跳不能单独证明桌面宿主正常、原会话已定位或指令已执行。对现有 WIP 先确认归属和认领。
 6. 队友新增 `docs/CAPACITY_DRILL_EVIDENCE.zh-CN.md` 与 `docs/WIP_OWNERSHIP_LEDGER.zh-CN.md`：前者记录隔离环境的额度故障注入与指挥接手状态机演练，后者记录当时 WIP 归属请求。演练不是实际额度耗尽、真实 Agent 收到消息或跨厂商接力的证据；台账随后可能变化。
+7. 身份子任务发现 `federation/intake.py` 原会在指定 workspace 加载失败时静默新建其他 workspace。本轮已修复：明确给定 ID 时加载失败直接报错，不创建替代工作区；未指定 ID 仍可创建。隔离测试覆盖缺失与读取错误，真实迁移和自动绑定另行实现。
 
 ## 可并行攻坚与验收
 
