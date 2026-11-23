@@ -18,7 +18,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Any
 
-from . import session_registry
+from ..federation.locking import LockTimeout
+from . import session_registry, wake_event_fence
 
 
 @dataclass(frozen=True)
@@ -85,9 +86,59 @@ def route(root, *, agent: str, text: str, event_id: str, transports: list[Transp
     if not execute:
         return {"status": "PREVIEW", "agent": agent, "event_id": event_id,
                 "transports": [t.name for t in sorted(transports, key=lambda x: x.priority)]}
-    resolved = session_registry.resolve(root, agent=agent, workspace=workspace,
-                                        session_id=session_id, conversation_id=conversation_id,
-                                        window_id=window_id)
+    try:
+        return _route_guarded(root, agent=agent, text=text, event_id=event_id,
+                              transports=transports, workspace=workspace, session_id=session_id,
+                              conversation_id=conversation_id, window_id=window_id)
+    except LockTimeout:
+        # Another caller may already have performed the write. A lock timeout
+        # proves neither failed delivery nor that another route is safe.
+        return {"status": "UNCERTAIN", "event_id": event_id, "attempts": [],
+                "reason": "EVENT_OR_SESSION_LOCK_BUSY"}
+
+
+def _route_guarded(root, *, agent: str, text: str, event_id: str,
+                   transports: list[Transport], workspace: str, session_id: str,
+                   conversation_id: str, window_id: str) -> dict[str, Any]:
+    _, fence_path = wake_event_fence.event_paths(root, event_id)
+    with wake_event_fence.acquire(root, event_id):
+        previous = wake_event_fence.read(fence_path)
+        if previous is not None and (previous.get("state") == "UNREADABLE"
+                                     or previous.get("event_id") != event_id):
+            return {"status": "UNCERTAIN", "event_id": event_id, "attempts": [],
+                    "reason": "EVENT_FENCE_UNREADABLE", "already_recorded": True}
+        resolved = session_registry.resolve(root, agent=agent, workspace=workspace,
+                                            session_id=session_id, conversation_id=conversation_id,
+                                            window_id=window_id)
+        if not resolved.get("ok"):
+            if previous is not None:
+                return {"status": "UNCERTAIN", "event_id": event_id, "attempts": [],
+                        "reason": "EVENT_RECORDED_SESSION_UNAVAILABLE", "already_recorded": True}
+            return {"status": resolved.get("reason", "NO_SESSION"), "agent": agent,
+                    "event_id": event_id, "candidates": resolved.get("candidates", [])}
+        digest = wake_event_fence.request_hash(event_id=event_id, agent=agent, text=text,
+                                                session=resolved["session"])
+        if previous is not None:
+            if previous.get("request_sha256") != digest:
+                return {"status": "EVENT_ID_CONFLICT", "event_id": event_id,
+                        "attempts": [], "already_recorded": True}
+            status = previous.get("status") if previous.get("state") == "FINAL" else "UNCERTAIN"
+            if status not in {"ACKNOWLEDGED", "DELIVERED", "INPUT_SUBMITTED", "FAILED", "UNCERTAIN"}:
+                status = "UNCERTAIN"
+            return {"status": status, "event_id": event_id, "attempts": [],
+                    "reason": "EVENT_ALREADY_RECORDED", "already_recorded": True}
+        # Persist before calling arbitrary adapter code. If the process dies at
+        # any later point, IN_FLIGHT remains and the next caller cannot resend.
+        wake_event_fence.write(fence_path, event_id=event_id, request_sha256=digest, state="IN_FLIGHT")
+        result = _route_resolved(root, agent=agent, text=text, event_id=event_id,
+                                 transports=transports, resolved=resolved)
+        wake_event_fence.write(fence_path, event_id=event_id, request_sha256=digest,
+                               state="FINAL", status=result["status"])
+        return result
+
+
+def _route_resolved(root, *, agent: str, text: str, event_id: str,
+                    transports: list[Transport], resolved: dict) -> dict[str, Any]:
     if not resolved.get("ok"):
         return {"status": resolved.get("reason", "NO_SESSION"), "agent": agent,
                 "event_id": event_id, "candidates": resolved.get("candidates", [])}

@@ -117,25 +117,27 @@ def test_router_incomplete_visibility_is_uncertain_and_never_retries(tmp_path: P
 
 
 def test_router_requires_explicit_matching_ack_event_and_session(tmp_path: Path):
-    for ack in ({}, {"ack_event_id": "e1"}, {"ack_session_id": "s1"},
+    for index, ack in enumerate(({}, {"ack_event_id": "e1"}, {"ack_session_id": "s1"},
                 {"ack_event_id": "old", "ack_session_id": "s1"},
-                {"ack_event_id": "e1", "ack_session_id": "other"}):
-        session_registry.register(tmp_path, agent="qoder", workspace=str(tmp_path),
+                {"ack_event_id": "e1", "ack_session_id": "other"})):
+        root = tmp_path / str(index)
+        session_registry.register(root, agent="qoder", workspace=str(root),
                                   provider="uia", session_id="s1")
         receipt = {"event_id_visible": True, "visible_event_id": "e1",
                    "visible_session_id": "s1", "agent_ack": True, **ack}
-        result = wake_router.route(tmp_path, agent="qoder", text="x", event_id="e1",
+        result = wake_router.route(root, agent="qoder", text="x", event_id="e1",
                                    transports=[wake_router.Transport("uia", lambda _: receipt)], execute=True)
         assert result["status"] == "DELIVERED"
 
 
 def test_router_requires_explicit_matching_visible_event(tmp_path: Path):
-    for observed in (None, "old-event"):
-        session_registry.register(tmp_path, agent="qoder", workspace=str(tmp_path),
+    for index, observed in enumerate((None, "old-event")):
+        root = tmp_path / str(index)
+        session_registry.register(root, agent="qoder", workspace=str(root),
                                   provider="uia", session_id="s1")
         receipt = {"event_id_visible": True, "visible_session_id": "s1",
                    "visible_event_id": observed}
-        result = wake_router.route(tmp_path, agent="qoder", text="x", event_id="e1",
+        result = wake_router.route(root, agent="qoder", text="x", event_id="e1",
                                    transports=[wake_router.Transport("uia", lambda _: receipt)], execute=True)
         assert result["status"] == "UNCERTAIN"
 
@@ -163,14 +165,14 @@ def test_router_requires_pre_input_proof_before_trying_other_transport(tmp_path:
     def second(_):
         calls.append("second")
         return {"ok": True}
-    for first in ({"status": "failed"}, {"status": "PROVEN_NOT_SENT"},
-                  {"status": "PROVEN_NOT_SENT", "input_attempted": False}):
-        result = wake_router.route(tmp_path, agent="qoder", text="x", event_id="e1",
+    for index, first in enumerate(({"status": "failed"}, {"status": "PROVEN_NOT_SENT"},
+                  {"status": "PROVEN_NOT_SENT", "input_attempted": False})):
+        result = wake_router.route(tmp_path, agent="qoder", text="x", event_id=f"invalid-{index}",
             transports=[wake_router.Transport("first", lambda _: first),
                         wake_router.Transport("second", second)], execute=True)
         assert result["status"] == "UNCERTAIN"
         assert calls == []
-    result = wake_router.route(tmp_path, agent="qoder", text="x", event_id="e1",
+    result = wake_router.route(tmp_path, agent="qoder", text="x", event_id="valid-proof",
         transports=[wake_router.Transport("first", lambda _: {"status": "PROVEN_NOT_SENT",
                     "input_attempted": False, "not_sent_evidence": "composer missing before input"}),
                     wake_router.Transport("second", second)], execute=True)
