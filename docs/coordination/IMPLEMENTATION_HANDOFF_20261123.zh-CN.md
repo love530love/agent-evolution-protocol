@@ -21,6 +21,8 @@
 9. 后续只读审计在隔离测试复现 wake router 的一个重复投递风险：适配器发送后抛异常会继续下一通道。本轮修复为异常或无明确未发送证据的失败均返回 `UNCERTAIN`；仅在适配器明确报告 `PROVEN_NOT_SENT`、`input_attempted=false` 且给出 `not_sent_evidence` 时才允许尝试其他通道。此证据为适配器声明，不等同独立核验。另发现 session registry 可能跨 workspace/provider 覆盖记录、缺少 freshness 校验，需单独设计迁移；这些均为隔离复现，不声明真实用户会话已受影响。
 10. 后续协作合入了显式加入和投影：`join-agent.ps1 -WorkspaceId` 验证现有绑定后登记，省略该参数保留旧行为；`coordination/join_journal.py` 将成员加入事件显式、可重放地投影进群聊 JSON，不自动唤醒或证明已读。延迟投影的事件时间可能早于消费者现有游标，消费端须按成员序号对账；参见 `docs/WORKSPACE_JOIN_JOURNAL.zh-CN.md`。
 11. session registry 已增加跨进程锁和冲突拒绝，避免新版写入者把同 agent/session 的不同 workspace/provider 覆盖；当前这类冲突会拒绝而不是支持并存，旧写入器不参与同一把锁。记录时间新鲜度仍须独立设计和验证。审计还发现 wake router 多次独立调用同一 event 尚无持久去重/会话租约，须在真正接入执行器前设计并测试；本次仅修复单次调用内异常后的盲重试。
+12. 后续接手时已让显式绑定加入在成员登记后自动尝试本地群聊投影；失败返回 `PENDING`，再次执行相同加入可幂等重试。两个存储不是原子事务，日志不是客户端通知、ACK 或唤醒，进程崩溃后的自动后台恢复仍待建设。
+13. 回执审计发现 `INPUT_SUBMITTED` 原被当作已证明送达。本轮改为 `unconfirmed`，并使联邦 supervisor 在 `record` 策略下也暂停推进直到核对；只有消息可见或真实 ACK 等证据才是送达。没有明确 assistant/incoming 归属的文本现在仅是待核实候选，不自动认定 Agent ACK；这会使目前只支持未知角色的采集器无法自动 ACK，需升级采集器而非推断。
 
 ## 可并行攻坚与验收
 

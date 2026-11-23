@@ -3,7 +3,7 @@
 Verifies that:
 1. own_text guard rejects self-echoes from role="unknown" lines.
 2. The new reason names (own_text, not_agent_role) are used.
-3. role_source is set when role="unknown" passes via own_text inference.
+3. Unknown role or direction is retained as unverified candidate evidence.
 """
 
 import sys
@@ -65,9 +65,8 @@ class TestOwnTextGuard(unittest.TestCase):
         self.assertEqual(verdict["reason"], "own_text",
                          "Reason should be own_text, not not_assistant")
 
-    def test_own_text_allows_unknown_role_when_not_self_echo(self):
-        """A role="unknown" line that does NOT match the order body should
-        pass the own_text guard and proceed to session/timestamp checks."""
+    def test_non_echo_unknown_role_is_not_proof_of_ack(self):
+        """A non-echo is still not proof that the agent authored the line."""
         order_body = f"Please reply with {TOKEN} when you understand."
 
         order = {
@@ -93,10 +92,8 @@ class TestOwnTextGuard(unittest.TestCase):
         ]
 
         verdict = ack_protocol.verdict(order, events=events, now=NOW)
-        self.assertTrue(verdict["accepted"],
-                        "Non-self-echo from role=unknown should pass own_text guard")
-        self.assertEqual(verdict["reason"], "",
-                         "Accepted events should have empty reason")
+        self.assertFalse(verdict["accepted"])
+        self.assertEqual(verdict["reason"], "role_unverified")
 
     def test_not_agent_role_for_user_and_system(self):
         """role="user" and role="system" must be rejected as not_agent_role."""
@@ -139,6 +136,8 @@ class TestOwnTextGuard(unittest.TestCase):
             "not_assistant",
             "own_text_outgoing",
             "not_incoming",
+            "role_unverified",
+            "direction_unverified",
             "foreign_session",
             "session_unknown",
             "stale",
@@ -147,9 +146,8 @@ class TestOwnTextGuard(unittest.TestCase):
         self.assertEqual(set(ack_protocol.REJECTIONS.keys()), expected_keys,
                          "REJECTIONS must have the documented reasons")
 
-    def test_verdict_carries_role_source_for_unknown(self):
-        """When role="unknown" passes via own_text inference, the verdict
-        should carry role_source so a supervisor can see how it was decided."""
+    def test_unknown_direction_is_retained_as_unverified(self):
+        """An assistant label alone does not prove an incoming response."""
         order = {
             "id": "order-1",
             "target": "qoder",
@@ -163,7 +161,7 @@ class TestOwnTextGuard(unittest.TestCase):
         events = [
             {
                 "id": "evt-other",
-                "role": "unknown",
+                "role": "assistant",
                 "direction": "unknown",
                 "session_id": "4242",
                 "recorded_at": "2026-11-02T10:00:01Z",
@@ -172,11 +170,8 @@ class TestOwnTextGuard(unittest.TestCase):
         ]
 
         verdict = ack_protocol.verdict(order, events=events, now=NOW)
-        self.assertTrue(verdict["accepted"])
-        self.assertIsNotNone(verdict["evidence"],
-                             "evidence should exist for an accepted event")
-        self.assertEqual(verdict["evidence"]["role_source"], "inferred_absent_own_text",
-                         "role_source should be set in evidence when role=unknown passes via own_text inference")
+        self.assertFalse(verdict["accepted"])
+        self.assertEqual(verdict["reason"], "direction_unverified")
 
 
 if __name__ == "__main__":

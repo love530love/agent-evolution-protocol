@@ -9,7 +9,7 @@ import argparse
 import json
 from pathlib import Path
 
-from . import workspace_binding, workspace_members
+from . import join_journal, workspace_binding, workspace_members
 
 
 def join(coord_root: Path, project_root: Path, *, workspace_id: str,
@@ -22,8 +22,24 @@ def join(coord_root: Path, project_root: Path, *, workspace_id: str,
         coord_root, workspace_id=binding["workspace_id"], agent=agent,
         source="shared-workspace", session_id=session_id,
     )
+    # Membership and JSON journal are distinct stores.  Repeating this join
+    # retries the same sequence with a deterministic ID, even if membership
+    # was already committed before the previous projection failed.
+    seq = membership["event_seq"]
+    try:
+        projected = join_journal.project(coord_root, workspace_id=binding["workspace_id"],
+                                         after=seq - 1, limit=1)
+        records = projected["events"]
+        if len(records) != 1 or records[0]["sequence"] != seq:
+            raise ValueError("JOIN_EVENT_NOT_PROJECTED")
+        journal = {"status": "RECORDED", **records[0]}
+    except Exception as exc:
+        # Preserve the already committed membership and surface the pending
+        # work; do not report journal publication or agent notification.
+        journal = {"status": "PENDING", "sequence": seq,
+                   "error_type": type(exc).__name__, "error": str(exc)}
     return {"schema": "aep-bound-workspace-join-v1", "binding": binding,
-            "membership": membership, "presence_signalled": False,
+            "membership": membership, "journal_projection": journal, "presence_signalled": False,
             "notification_delivered": False, "agent_ack": False,
             "note": "Self-declared member and session; no client or delivery verified."}
 

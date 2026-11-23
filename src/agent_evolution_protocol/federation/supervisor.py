@@ -306,6 +306,11 @@ def _settle(root, coord_root, workspace_id, adapters, *, moment, actions,
                              "reasons": strict_blockers, "ack": verdict,
                              "result": _result_receipt(result_verdict)})
                 continue
+            if verdict.get("reason") == "delivery_unconfirmed":
+                # Possible input/send requires reconciliation under every
+                # policy; "record" must not turn uncertainty into completion.
+                held.append({"task": task_id, "action": "hold_delivery_unconfirmed", **verdict})
+                continue
             if verdict.get("verdict") == "hold" and ack_policy == "enforce":
                 held.append({"task": task_id, "action": "hold_unacked", **verdict})
                 continue
@@ -465,6 +470,10 @@ def _ack_blocks(adapter, task_id, *, now=None, hold_limit_seconds=None):
         return {"verdict": "abandon", "reason": "abandoned", "state": value.get("state"),
                 "by": signoff.get("by", ""), "at": signoff.get("at", ""),
                 "reason_text": signoff.get("reason", "")}
+    if value.get("delivery") == "unconfirmed":
+        return {"verdict": "hold", "reason": "delivery_unconfirmed",
+                "state": value.get("state"), "order": value.get("order_id", ""),
+                "event_id": value.get("event_id", "")}
     if not value.get("sent"):
         return {"verdict": "clear", "reason": "not_sent", "state": value.get("state")}
     if ack_protocol.may_advance(value):

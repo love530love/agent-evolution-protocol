@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from agent_evolution_protocol.coordination import workspace_binding, workspace_join, workspace_members
+from agent_evolution_protocol.coordination import conversation_journal, join_journal, workspace_binding, workspace_join, workspace_members
 from agent_evolution_protocol.federation import engine
 
 
@@ -28,12 +28,35 @@ def test_join_requires_bound_workspace_and_is_idempotent(tmp_path):
     second = workspace_join.join(coord, project, workspace_id=ident, agent="codex", session_id="s1")
     assert first["membership"]["created"] is True
     assert second["membership"]["created"] is False
+    assert first["journal_projection"]["status"] == "RECORDED"
+    assert first["journal_projection"]["created"] is True
+    assert second["journal_projection"]["created"] is False
+    assert len(conversation_journal.read_events(coord)) == 1
     assert workspace_members.notifications(coord, workspace_id=ident)["count"] == 1
     assert first["binding"]["project_association_verified"] is False
     assert first["presence_signalled"] is False
     assert first["notification_delivered"] is False
     assert first["agent_ack"] is False
     assert not (coord / "presence").exists()
+
+
+def test_join_keeps_membership_and_retries_failed_journal_projection(tmp_path, monkeypatch):
+    project, federation, coord, ident = setup_binding(tmp_path)
+    real_project = join_journal.project
+    def fail(*args, **kwargs):
+        raise OSError("journal unavailable")
+    monkeypatch.setattr(join_journal, "project", fail)
+    first = workspace_join.join(coord, project, workspace_id=ident, agent="codex")
+    assert first["membership"]["created"] is True
+    assert first["journal_projection"]["status"] == "PENDING"
+    assert first["journal_projection"]["error_type"] == "OSError"
+    assert first["notification_delivered"] is False
+    monkeypatch.setattr(join_journal, "project", real_project)
+    second = workspace_join.join(coord, project, workspace_id=ident, agent="codex")
+    assert second["membership"]["created"] is False
+    assert second["journal_projection"]["status"] == "RECORDED"
+    assert second["journal_projection"]["created"] is True
+    assert len(conversation_journal.read_events(coord)) == 1
 
 
 def test_missing_or_wrong_binding_never_records_membership(tmp_path):

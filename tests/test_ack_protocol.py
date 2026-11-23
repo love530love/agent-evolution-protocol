@@ -177,6 +177,17 @@ class CeasedIsNotOneFactTests(unittest.TestCase):
         self.assertFalse(value["sent"])
         self.assertFalse(value["accepted"])
 
+    def test_input_submitted_alone_is_not_delivery_proof(self):
+        for order in (_order(state="INPUT_SUBMITTED"),
+                      _order(state="ABANDONED", state_before_abandon="INPUT_SUBMITTED"),
+                      _order(state="CEASED", attempts=[{"state": "INPUT_SUBMITTED"}])):
+            self.assertEqual(ack_protocol.delivery(order), "unconfirmed")
+            self.assertFalse(ack_protocol.sent(order))
+
+    def test_later_visible_proof_beats_earlier_unconfirmed_input(self):
+        order = _order(state="INPUT_SUBMITTED", attempts=[{"state": "MESSAGE_VISIBLE"}])
+        self.assertEqual(ack_protocol.delivery(order), "proven")
+
     def test_an_adapter_that_failed_before_typing_is_still_not_sent(self):
         order = self._ceased("DELIVERY_UNPROVEN: adapter failed; manual diagnosis required")
         self.assertEqual(ack_protocol.delivery(order), "none")
@@ -186,7 +197,7 @@ class CeasedIsNotOneFactTests(unittest.TestCase):
         # An earlier attempt that reached the conversation settles the question:
         # the later failure does not un-send it.
         order = _order(state="CEASED", attempts=[
-            {"state": "INPUT_SUBMITTED"},
+            {"state": "MESSAGE_VISIBLE"},
             {"state": "CEASED", "note": "SUBMISSION_UNCONFIRMED: possible send"},
         ])
         self.assertEqual(ack_protocol.delivery(order), "proven")
@@ -234,7 +245,7 @@ class AbandonedIsNotACeilingTests(unittest.TestCase):
     """
 
     def _abandoned(self, **extra):
-        return _order(state="ABANDONED", attempts=[{"state": "INPUT_SUBMITTED"}],
+        return _order(state="ABANDONED", attempts=[{"state": "MESSAGE_VISIBLE"}],
                       abandoned_by="love", abandoned_at=NOW.isoformat(),
                       abandon_reason="the client is wedged; re-planning tomorrow", **extra)
 

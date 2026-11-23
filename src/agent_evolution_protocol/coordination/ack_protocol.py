@@ -1,12 +1,10 @@
 """One answer to "did the target agent actually accept this task".
 
 The token we ask the agent to reply with is written into the message we send,
-so it also appears in our own request. Production captures do not reliably
-attribute speaker or direction; ``unknown`` is therefore a capture fact, not
-evidence against a reply. An unknown line may pass only if the original order
-body is available and the captured event can be shown not to be that body.
-Missing comparison data is not proof of a reply. Explicit ``user``/``system``
-roles and ``outgoing`` direction remain refusals. The remaining guards are:
+so it also appears in our own request. Production captures may not reliably
+attribute speaker or direction. Unknown attribution remains a candidate for
+inspection, but cannot prove an agent reply. Explicit assistant and incoming
+attribution are required in addition to the remaining guards:
 
 * the order's ``session_id`` -- another conversation answering the same question
   is not this task's answer; an order with no session id is ``session_unknown``.
@@ -47,7 +45,8 @@ SCHEMA = "aep-ack-verdict-v1"
 #: Must stay identical to ``commander.ACK_TOKEN`` and ``dispatch_gate.ACK_TOKEN``.
 ACK_TOKEN = "AEP-ACK"
 #: Order states that prove characters reached the conversation.
-SENT_STATES = frozenset({"INPUT_SUBMITTED", "MESSAGE_VISIBLE", "AGENT_ACK"})
+SENT_STATES = frozenset({"MESSAGE_VISIBLE", "AGENT_ACK"})
+UNCONFIRMED_STATES = frozenset({"INPUT_SUBMITTED", "SUBMITTED_UNCONFIRMED"})
 #: Prefix ``commander`` writes on a ``CEASED`` attempt whose send may have
 #: happened.  Matched as a prefix rather than a whole sentence so the note can
 #: gain explanation without silently losing its meaning here.
@@ -89,6 +88,8 @@ REJECTIONS = {
     "own_text_outgoing": ("the line was captured as outgoing and matches the order's own body; "
                           "this is our send, not a reply"),
     "not_incoming": "the line was captured as outgoing, so it is something we sent",
+    "role_unverified": "the capture does not attribute the candidate to the target agent",
+    "direction_unverified": "the capture does not attribute the candidate to an incoming message",
     "foreign_session": "the reply came from a different conversation than the order's",
     "session_unknown": ("the order recorded no session id, so no reply can be attributed to "
                         "it -- not the same fact as a reply from elsewhere, and not fixable by "
@@ -119,9 +120,8 @@ def delivery(order: dict[str, Any]) -> str:
 
     ``proven`` means an attempt recorded a state that cannot exist without the
     characters having reached the conversation.  ``unconfirmed`` means an attempt
-    ended in ``CEASED`` with a note saying a send may have happened; that is not
-    evidence of delivery, but it is also not evidence of the opposite, and the
-    two must not share a word.
+    only recorded input or ended with a note saying a send may have happened;
+    that is neither proof of delivery nor proof that no send occurred.
 
     ``state_before_abandon`` is read as well, because abandoning an order
     overwrites ``state`` with ``ABANDONED`` and would otherwise delete the only
@@ -138,6 +138,11 @@ def delivery(order: dict[str, Any]) -> str:
             return "proven"
     if any(str(attempt.get("state", "")) in SENT_STATES for attempt in attempts):
         return "proven"
+    if any(str(candidate) in UNCONFIRMED_STATES
+           for candidate in (order.get("state", ""), order.get("state_before_abandon", ""))):
+        return "unconfirmed"
+    if any(str(attempt.get("state", "")) in UNCONFIRMED_STATES for attempt in attempts):
+        return "unconfirmed"
     if any(str(attempt.get("note", "")).startswith(UNCONFIRMED_NOTE) for attempt in attempts):
         return "unconfirmed"
     return "none"
@@ -215,26 +220,8 @@ def classify(event: dict[str, Any], *, token: str, session_id: str,
              line: str = "") -> dict[str, Any]:
     """Judge one candidate event.  Returns ``accepted`` plus the reason it was not.
 
-    The ``role`` guard is three-valued, not binary:
-
-    * ``assistant`` -- passes (the capture layer attributed this line to the
-      agent).
-    * ``user`` / ``system`` -- rejected as ``not_agent_role`` (explicitly not
-      the agent).
-    * ``unknown`` -- the capture layer did not attribute the line.  This is the
-      default for all three production capture points
-      (``transcript_patrol``, ``commander``, ``cli``), because a UIA/OCR scan
-      of a window returns the whole screen and cannot tell whose line it is.
-      It passes only when the order body is available and the captured event
-      does not match it.  A missing body is ``own_text_unavailable``: absence
-      of the data needed to distinguish our own send is not proof of an ACK.
-      Otherwise the event passes this guard with ``role_source`` recorded, and
-      the remaining checks (session, timestamp) decide.
-
-    ``direction`` follows the same pattern: ``incoming`` passes; ``outgoing``
-    is checked against ``own_text`` and rejected as ``own_text_outgoing`` if it
-    matches, or ``not_incoming`` if it does not; ``unknown`` is treated like
-    ``incoming`` for the purpose of this guard.
+    Unknown role or direction is retained as rejected candidate evidence, not
+    inferred to be an agent response just because it differs from our prompt.
     """
     row = {
         "event": str(event.get("id", "")),
@@ -263,9 +250,8 @@ def classify(event: dict[str, Any], *, token: str, session_id: str,
         if _is_own_text(line or "", own_text, token):
             row["reason"] = "own_text"
             return row
-        # Not own text: accept the attribution gap and proceed.
-        # Record that we inferred this from absence rather than presence.
-        row["role_source"] = "inferred_absent_own_text"
+        row["reason"] = "role_unverified"
+        return row
 
     # --- Direction guard (same three-valued pattern) ---
     if direction == "outgoing":
@@ -274,7 +260,9 @@ def classify(event: dict[str, Any], *, token: str, session_id: str,
             return row
         row["reason"] = "not_incoming"
         return row
-    # direction == "incoming" or "unknown": proceed
+    if direction != "incoming":
+        row["reason"] = "direction_unverified"
+        return row
 
     if not session_id:
         # Measured on the real inbox: 6 of 24 orders carry no session id, so this

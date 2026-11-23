@@ -1,6 +1,6 @@
 # 成员加入事件到群聊 journal 的可重放投影
 
-`join_journal` 将已记录的成员加入声明按明确的工作区 ID 投影为群聊 JSON 日志；来源是 `workspace_members.sqlite3` 的 `join_events`，不创建成员、不推测工作区、不校验或认证加入者。调用结果不表示 Agent 在线、已读、接单或被唤醒。
+`join_journal` 将已记录的成员加入声明按明确的工作区 ID 投影为群聊 JSON 日志；来源是 `workspace_members.sqlite3` 的 `join_events`，不创建成员、不推测工作区、不校验或认证加入者。显式绑定加入时会尝试投影自身事件；失败仍保留成员并返回 `PENDING`，可重复加入重试。调用结果不表示 Agent 在线、已读、接单或被唤醒。
 
 一条独立 PowerShell 命令（其中 ID 必须换成已经核验的实际工作区 ID）：
 

@@ -20,7 +20,8 @@ def test_join_is_indexed_once_and_isolated_by_existing_workspace(tmp_path):
     assert joined["notification_delivered"] is False
     assert joined["agent_ack"] is False
     assert workspace_join.join(coord, project, workspace_id=first, agent="qoder")["membership"]["created"] is False
-    assert join_journal.project(coord, workspace_id=first)["events"][0]["created"] is True
+    assert joined["journal_projection"]["status"] == "RECORDED"
+    assert joined["journal_projection"]["created"] is True
     assert join_journal.project(coord, workspace_id=first)["events"][0]["created"] is False
     database = coord / "journal-index.sqlite3"
     assert journal_projection.rebuild(coord, database)["indexed"] == 1

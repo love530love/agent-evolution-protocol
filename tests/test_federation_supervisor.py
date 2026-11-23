@@ -186,6 +186,31 @@ class AckGateTests(unittest.TestCase):
         # The reviewer must not start on work nobody accepted.
         self.assertEqual(result["tasks"]["review"]["state"], "pending")
 
+    def test_unconfirmed_input_holds_even_under_record_policy(self):
+        receipt, adapters = self._intake()
+        order = commander._orders(self.coord)[0]
+        _set_order(self.coord, order["id"], "INPUT_SUBMITTED", session_id="4242")
+        _report(self.coord, "execute", "alpha")
+        result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
+                                 dispatch=False, ack_policy="record")
+        self.assertEqual(result["closed"], [])
+        self.assertEqual(result["held"][0]["action"], "hold_delivery_unconfirmed")
+        self.assertEqual(result["tasks"]["execute"]["state"], "running")
+        self.assertEqual(result["tasks"]["review"]["state"], "pending")
+
+    def test_unconfirmed_ceased_attempt_also_holds(self):
+        receipt, adapters = self._intake()
+        order = commander._orders(self.coord)[0]
+        path = Path(self.coord) / "commander" / "inbox" / f"{order['id']}.json"
+        order["state"] = "CEASED"
+        order["attempts"] = [{"state": "CEASED", "note": "SUBMISSION_UNCONFIRMED: possible send"}]
+        path.write_text(json.dumps(order), encoding="utf-8")
+        _report(self.coord, "execute", "alpha")
+        result = supervisor.step(self.root, self.coord, receipt["workspace"], adapters,
+                                 dispatch=False, ack_policy="record")
+        self.assertEqual(result["closed"], [])
+        self.assertEqual(result["held"][0]["action"], "hold_delivery_unconfirmed")
+
     def test_the_same_task_closes_once_the_ack_arrives(self):
         from agent_evolution_protocol.coordination import transcript_bus
         receipt, adapters = self._intake()

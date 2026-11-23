@@ -10,7 +10,7 @@
 & 'K:\PythonProjects5\agent-evolution-protocol\scripts\join-agent.ps1' -Agent 'codex' -SessionId 'example-session' -WorkspaceId 'W-aaaaaaaaaaaaaaaa'
 ```
 
-尚未接入群聊或 MCP 投递，不会自动采集旧消息、通知桌面程序或唤醒 Agent。`source` 和 `session_id` 是调用方声明，并未认证；成员记录不证明在线、已读或已接单。直接调用 `coord-workspace-members` 仍只校验 ID 格式，不验证工作区存在；应优先使用绑定检查路径。
+显式绑定加入会尝试将该加入事件投影到本地群聊日志，结果在 `journal_projection.status`：`RECORDED` 仅代表文件已记录，`PENDING` 表示成员已保存但投影失败，应检查错误并重试相同加入操作。此重试幂等；没有自动后台重试或 MCP 推送，不会自动通知桌面程序或唤醒 Agent。旧的未绑定入口及直接调用 `coord-workspace-members` 不会自动投影。`source` 和 `session_id` 是调用方声明，并未认证；成员记录不证明在线、已读或已接单。直接调用 `coord-workspace-members` 仍只校验 ID 格式，不验证工作区存在；应优先使用绑定检查路径。
 
 下列命令分别是一行。请以真实工作区 ID 替换示例 `W-aaaaaaaaaaaaaaaa`；路径按实际项目位置调整。
 
