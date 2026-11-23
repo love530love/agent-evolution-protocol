@@ -10,12 +10,14 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import time
 from datetime import datetime, timezone
 
 from .workspace_identity import validate_workspace_id
 from ..federation import engine
 
 DB_NAME = "workspace_bindings.sqlite3"
+_SCHEMA = "CREATE TABLE IF NOT EXISTS bindings (workspace_id TEXT PRIMARY KEY, project_root TEXT NOT NULL, project_key TEXT NOT NULL, federation_root TEXT NOT NULL, federation_key TEXT NOT NULL, bound_at TEXT NOT NULL)"
 
 
 def _directory(value: Path) -> tuple[str, str]:
@@ -33,11 +35,15 @@ def bind(coord_root: Path, federation_root: Path, project_root: Path, workspace_
     engine.load(Path(federation), workspace_id)
     coord = Path(coord_root)
     coord.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(coord / DB_NAME, timeout=10, isolation_level=None) as db:
-        db.execute("PRAGMA busy_timeout=10000")
-        db.execute("CREATE TABLE IF NOT EXISTS bindings (workspace_id TEXT PRIMARY KEY, project_root TEXT NOT NULL, project_key TEXT NOT NULL, federation_root TEXT NOT NULL, federation_key TEXT NOT NULL, bound_at TEXT NOT NULL)")
-        db.execute("BEGIN IMMEDIATE")
+    for attempt in range(5):
+        db = None
         try:
+            db = sqlite3.connect(coord / DB_NAME, timeout=30, isolation_level=None)
+            db.execute("BEGIN IMMEDIATE")
+            # Serialize first-time DDL with all other writes, including across
+            # processes. SQLite can still transiently report readonly on
+            # Windows during first creation, so retry the entire transaction.
+            db.execute(_SCHEMA)
             existing = db.execute("SELECT project_root, project_key, federation_root, federation_key, bound_at FROM bindings WHERE workspace_id=?", (workspace_id,)).fetchone()
             if existing and (existing[1] != key or existing[3] != federation_key):
                 raise ValueError("WORKSPACE_BINDING_CONFLICT")
@@ -45,12 +51,24 @@ def bind(coord_root: Path, federation_root: Path, project_root: Path, workspace_
             if created:
                 db.execute("INSERT INTO bindings VALUES(?,?,?,?,?,?)", (workspace_id, project, key, federation, federation_key, datetime.now(timezone.utc).isoformat()))
             db.commit()
+            return {"schema": "aep-workspace-binding-v1", "workspace_id": workspace_id,
+                    "project_root": project, "federation_root": federation, "created": created,
+                    "workspace_state_validated": True, "project_association_verified": False,
+                    "identity_verified": False, "session_verified": False}
+        except sqlite3.OperationalError as exc:
+            if db is not None and db.in_transaction:
+                db.rollback()
+            if attempt == 4 or not any(word in str(exc).lower() for word in ("locked", "readonly")):
+                raise
+            time.sleep(0.01 * (2 ** attempt))
         except BaseException:
-            db.rollback()
+            if db is not None and db.in_transaction:
+                db.rollback()
             raise
-    return {"schema": "aep-workspace-binding-v1", "workspace_id": workspace_id,
-            "project_root": project, "federation_root": federation, "created": created,
-            "identity_verified": False, "session_verified": False}
+        finally:
+            if db is not None:
+                db.close()
+    raise AssertionError("unreachable")  # pragma: no cover
 
 
 def lookup(coord_root: Path, project_root: Path, workspace_id: str = "") -> dict:
@@ -72,6 +90,7 @@ def lookup(coord_root: Path, project_root: Path, workspace_id: str = "") -> dict
     # Detect removal or mismatch of the authoritative state; do not mint a new ID.
     engine.load(Path(result["federation_root"]), result["workspace_id"])
     return {"schema": "aep-workspace-binding-v1", **result,
+            "workspace_state_validated": True, "project_association_verified": False,
             "identity_verified": False, "session_verified": False}
 
 

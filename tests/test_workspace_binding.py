@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import sys
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -29,6 +30,8 @@ def test_existing_workspace_binds_idempotently_and_readonly_survives_reload(tmp_
     assert row["workspace_id"] == ident
     assert row["identity_verified"] is False
     assert row["session_verified"] is False
+    assert row["workspace_state_validated"] is True
+    assert row["project_association_verified"] is False
     assert not (tmp_path / "coord").exists()
 
 
@@ -86,10 +89,52 @@ def test_cli_concurrent_processes_share_single_binding(tmp_path):
                "--project-root", str(project), "--workspace-id", ident]
     env = {**os.environ, "PYTHONUTF8": "1"}
     children = [subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                 text=True, encoding="utf-8", env=env) for _ in range(4)]
+                                 text=True, encoding="utf-8", env=env,
+                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)) for _ in range(8)]
     outputs = []
     for child in children:
         output, error = child.communicate(timeout=30)
         assert child.returncode == 0, error
         outputs.append(json.loads(output))
     assert sum(output["created"] for output in outputs) == 1
+
+
+@pytest.mark.parametrize("errors,expected_calls", [
+    (["database is locked", "attempt to write a readonly database"], 3),
+    (["database is locked"] * 5, 5),
+    (["disk I/O error"], 1),
+])
+def test_initialization_retries_only_bounded_transient_sqlite_failures(tmp_path, monkeypatch, errors, expected_calls):
+    coord, federation, project = tmp_path / "coord", tmp_path / "federation", tmp_path / "project"
+    federation.mkdir()
+    project.mkdir()
+    ident = "W-" + "a" * 16
+    workspace(federation, ident)
+    real_connect = sqlite3.connect
+    remaining = list(errors)
+    calls = []
+
+    class Proxy:
+        def __init__(self, connection):
+            self.connection = connection
+
+        def execute(self, statement, *args):
+            if statement == binding._SCHEMA and remaining:
+                raise sqlite3.OperationalError(remaining.pop(0))
+            return self.connection.execute(statement, *args)
+
+        def __getattr__(self, name):
+            return getattr(self.connection, name)
+
+    def failing_connect(*args, **kwargs):
+        calls.append(1)
+        return Proxy(real_connect(*args, **kwargs))
+
+    monkeypatch.setattr(binding.sqlite3, "connect", failing_connect)
+    monkeypatch.setattr(binding.time, "sleep", lambda _: None)
+    if expected_calls == 3:
+        assert binding.bind(coord, federation, project, ident)["created"] is True
+    else:
+        with pytest.raises(sqlite3.OperationalError):
+            binding.bind(coord, federation, project, ident)
+    assert len(calls) == expected_calls

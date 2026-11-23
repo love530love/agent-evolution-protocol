@@ -14,4 +14,4 @@ python -m agent_evolution_protocol.coordination.workspace_binding lookup --coord
 
 一次绑定后同一 ID 不能悄悄改绑其他本地目录或 federation 数据根，须先设计并执行显式迁移；一个项目目录可以有多个逻辑工作区，省略 ID 查询时如果有多个则返回歧义错误。路径规范化解析符号链接并按本机操作系统规范大小写；跨机器复制或搬家后不可假设原目录自动有效。
 
-**局限**：本接口尚未接入 `join-agent.ps1`、MCP、群聊或成员登记；不会自动通知、唤醒或派工。仅检验已存的 federation 元数据，不能认证用户或 Agent 身份，也不能证明原会话匹配。并发绑定使用 SQLite 事务，历史未绑定消息不会自动归属；目录搬迁、备份还原、删除和别名迁移还需后续明确契约。
+**局限**：本接口尚未接入 `join-agent.ps1`、MCP、群聊或成员登记；不会自动通知、唤醒或派工。`engine.load` 只核对指定根目录中 state 文件的 schema 和 ID，项目目录与该 workspace 是否真实对应仍由调用方声明；两者不是一个跨文件系统和 SQLite 的原子事务。它不能认证用户或 Agent 身份，也不能证明原会话匹配。并发绑定在 `BEGIN IMMEDIATE` 后建立表并写入，遇 SQLite 短暂 locked/readonly 最多重试 5 次；历史未绑定消息不会自动归属。目录搬迁、备份还原、删除和别名迁移还需后续明确契约。
