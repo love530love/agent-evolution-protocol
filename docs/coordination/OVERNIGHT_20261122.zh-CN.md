@@ -904,3 +904,27 @@
   qoder 机器 AGENT_ACK 转化（只记录）；③新窗口/新 presence 先跑 readiness，三判据齐才真发；
   ④三路并发收敛且有新代码再跑全量；⑤临近/到达 11-23 08:00 写最终交接并置 PAUSED，
   无新代码不为发版而发版；版本落差 0.6.36–0.6.43 只 pin 未发版属人类裁定项，不替他人补发。
+
+
+## 最终交接（2026-11-23 08:10 CST，值守窗口 08:05 到期）
+
+- **版本/发版**：本值守末段有新代码，已发 **v0.6.50**。HEAD=`1761f5d`（fix: 并发安全 workspace join），
+  tag/Release Latest=v0.6.50（body 逐字一致 955 chars），`origin/main...HEAD=0 0`，版本三处一致。
+  队友 07:30–08:01 的 8+ 提交（workspace_members / journal_projection / scoped chat / mcp readback scope）
+  已在 HEAD 中一并整合发版；另有队友自建 Pre-release `snapshot-20261123-8c3aa52`，属他人产物未碰。
+- **本轮我做的事（workbuddyai）**：接手 P0——`workspace_members.join` 的 schema DDL 每次建连 `executescript`，
+  并发首次建库 3/3 稳定 `attempt to write a readonly database`（CI 必红）。修为 DDL 入 `BEGIN IMMEDIATE`
+  写事务 + 有界幂等重试，8/8 全绿、无断言放宽、first-attribution 语义不变。显式 add 5 文件，未碰任何 WIP。
+- **验证**：干净 worktree（HEAD + 仅本版 5 文件）全量 **2018 passed, 10 skipped, 1060 subtests, exit 0**；
+  manifest 守线 28/28、104 命令（41 有说明）。
+- **逐路派工盘点（只读，Explore agent 复核）**：8 路（qoder/qoder_cn/codex/github_copilot/workbuddy3/
+  chatgpt/codebuddy_cn/workbuddy）三判据全灭——presence `online=0 / stale=19`、observe 全 stale、
+  08:10Z 后无新带 event id 的 AEP-ACK。**当前没有任何一路可真发**；不盲投、不重放、不伪造 ACK。
+- **WIP 归属**：工作区约 55 项改动里，17 个 tracked 功能 WIP（commander_uia/uia3/handoff_worker/relay_drill/
+  relay/duty/presence/supervisor/core_host 等）属他人，未代提交；运行时垃圾（.pytest_*.log、uia_receipts/、
+  hal-audit.txt、assets/）明确排除。无「tracked 测试 import 未入库模块」的 CI 闭包缺口。
+- **已知未闭环（诚实记录）**：①两待跟进单 qoder `9e7bf8bf`（会话 ACK 未转机器 AGENT_ACK）、workbuddy3
+  `0372f1c8`（MESSAGE_VISIBLE，客户端“未知错误”）仍非最终 ACK；②Supervisor 宿主心跳此前停摆约 5h，
+  维持「需人工核查」、本 Agent 不重启；③项目自有模型 `.models/Qwen3-0.6B` 仍只 advisory/propose。
+- **automation**：值守窗口已到（validUntil 08:05），本轮写此最终交接后置 `d44e2ba5…` 为 **PAUSED**。
+  版本落差 0.6.36–0.6.43 只 pin 未发版仍属人类裁定项，不替他人补发。
