@@ -14,6 +14,9 @@ from math import isfinite
 from pathlib import Path
 from typing import Any
 
+from . import process_identity
+from ..isotime import parse_iso_or_none
+
 
 def _read(path: Path) -> dict[str, Any] | None:
     if not path.is_file():
@@ -27,9 +30,11 @@ def _read(path: Path) -> dict[str, Any] | None:
 
 def _plane(name: str, row: dict[str, Any] | None, *, now: datetime, max_age_seconds: float) -> dict[str, Any]:
     if row is None:
-        return {"plane": name, "status": "MISSING", "healthy": False}
+        return {"plane": name, "status": "MISSING", "healthy": False,
+                "heartbeat_fresh": None, "pid_alive": None, "pid_identity": "UNKNOWN"}
     if row.get("status") == "INVALID":
-        return {"plane": name, "status": "INVALID", "healthy": False, "reason": row["reason"]}
+        return {"plane": name, "status": "INVALID", "healthy": False, "reason": row["reason"],
+                "heartbeat_fresh": None, "pid_alive": None, "pid_identity": "UNKNOWN"}
     raw_time = row.get("completed_at") or row.get("at")
     try:
         at = datetime.fromisoformat(str(raw_time))
@@ -38,13 +43,30 @@ def _plane(name: str, row: dict[str, Any] | None, *, now: datetime, max_age_seco
         age = (now - at.astimezone(timezone.utc)).total_seconds()
     except (TypeError, ValueError):
         return {"plane": name, "status": "INVALID", "healthy": False,
-                "reason": "HEARTBEAT_TIMESTAMP_INVALID", "heartbeat": row}
+                "reason": "HEARTBEAT_TIMESTAMP_INVALID", "heartbeat": row,
+                "heartbeat_fresh": None, "pid_alive": None, "pid_identity": "UNKNOWN"}
     if age < 0:
         return {"plane": name, "status": "INVALID", "healthy": False,
-                "reason": "HEARTBEAT_TIMESTAMP_IN_FUTURE", "heartbeat": row}
-    healthy = row.get("status") in {"STARTED", "CYCLE_COMPLETED", "TICK_COMPLETED"} and age <= max_age_seconds
-    return {"plane": name, "status": "HEALTHY" if healthy else "STALE_OR_FAILED",
-            "healthy": healthy, "age_seconds": round(age, 3), "heartbeat": row}
+                "reason": "HEARTBEAT_TIMESTAMP_IN_FUTURE", "heartbeat": row,
+                "heartbeat_fresh": None, "pid_alive": None, "pid_identity": "UNKNOWN"}
+    heartbeat_fresh = row.get("status") in {"STARTED", "CYCLE_COMPLETED", "TICK_COMPLETED"} and age <= max_age_seconds
+    pid = row.get("pid")
+    pid_alive = process_identity.alive(pid)
+    claimed_start = row.get("process_started_at")
+    verified = (process_identity.verify_precise(pid, claimed_start)
+                if pid_alive is True and isinstance(claimed_start, str) and claimed_start else None)
+    parsed_start = parse_iso_or_none(claimed_start)
+    if (verified is True and parsed_start is not None and parsed_start.tzinfo is not None
+            and parsed_start.astimezone(timezone.utc) > at.astimezone(timezone.utc) + timedelta(milliseconds=1)):
+        verified = False
+    identity = "VERIFIED" if verified is True else "MISMATCH" if verified is False else "UNKNOWN"
+    state = ("STALE_OR_FAILED" if not heartbeat_fresh else
+             "DEAD_PROCESS" if pid_alive is False else
+             "PID_MISMATCH" if identity == "MISMATCH" else
+             "HEALTHY" if pid_alive is True and identity == "VERIFIED" else "PROCESS_UNKNOWN")
+    return {"plane": name, "status": state, "healthy": state == "HEALTHY",
+            "heartbeat_fresh": heartbeat_fresh, "pid_alive": pid_alive,
+            "pid_identity": identity, "age_seconds": round(age, 3), "heartbeat": row}
 
 
 def status(root: Path, *, max_age_seconds: float = 90.0,
@@ -97,6 +119,6 @@ def status(root: Path, *, max_age_seconds: float = 90.0,
         "desktop_mode": desktop_mode,
         "control_plane": control_plane,
         "delivery_claim": "NONE",
-        "note": "READY means resident coordination loops are healthy; it does not prove a message was delivered or acknowledged.",
+        "note": "READY requires fresh heartbeats and verified process identities; it does not prove a message was delivered or acknowledged.",
         "execution_started": False,
     }

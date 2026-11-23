@@ -9,11 +9,54 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import os
+import re
 
 from ..isotime import parse_iso_or_none
 
 _FIRST_FILETIME = datetime(1601, 1, 1, tzinfo=timezone.utc)
 _TOLERANCE = timedelta(seconds=2)
+
+
+def alive(pid: int) -> bool | None:
+    """Read-only process existence probe; access errors are not death proof."""
+    if not isinstance(pid, int) or isinstance(pid, bool) or not 0 < pid <= 0xFFFFFFFF:
+        return None
+    if os.name != "nt":
+        try:
+            os.kill(pid, 0)
+            if os.path.isdir("/proc"):
+                try:
+                    with open(f"/proc/{pid}/stat", encoding="ascii") as stat_file:
+                        state = stat_file.read().rsplit(")", 1)[1].strip().split()[0]
+                    if state in {"Z", "X"}:
+                        return False
+                except (OSError, IndexError, ValueError):
+                    return None
+            return True
+        except ProcessLookupError:
+            return False
+        except (PermissionError, OSError, OverflowError):
+            return None
+    try:
+        import ctypes
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_bool, ctypes.c_uint32]
+        kernel32.OpenProcess.restype = ctypes.c_void_p
+        handle = kernel32.OpenProcess(0x1000, False, pid)
+        if not handle:
+            # ERROR_INVALID_PARAMETER identifies a nonexistent PID; notably,
+            # ACCESS_DENIED and unknown OS errors cannot prove it has exited.
+            return False if ctypes.get_last_error() == 87 else None
+        try:
+            code = ctypes.c_ulong()
+            kernel32.GetExitCodeProcess.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+            kernel32.GetExitCodeProcess.restype = ctypes.c_bool
+            return code.value == 259 if kernel32.GetExitCodeProcess(handle, ctypes.byref(code)) else None
+        finally:
+            kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+            kernel32.CloseHandle(handle)
+    except (AttributeError, OSError, ValueError, OverflowError):
+        return None
 
 
 def _filetime_to_datetime(value: int) -> datetime:
@@ -88,3 +131,19 @@ def verify(pid: int, claimed_started_at: str) -> bool | None:
     if claim.tzinfo is None:
         claim = claim.replace(tzinfo=timezone.utc)
     return abs(claim.astimezone(timezone.utc) - actual) <= _TOLERANCE
+
+
+def verify_precise(pid: int, claimed_started_at: str) -> bool | None:
+    """Compare a timezone-aware creation token with at least ms precision.
+
+    Legacy coarse timestamps and unavailable OS creation times are unknown;
+    the wider two-second legacy tolerance could accept a quickly reused PID.
+    """
+    if not isinstance(claimed_started_at, str) or not re.search(
+            r"T\d{2}:\d{2}:\d{2}\.\d{3,}(?:Z|[+-]\d{2}:?\d{2})$", claimed_started_at):
+        return None
+    claim = parse_iso_or_none(claimed_started_at)
+    actual = started_at(pid)
+    if claim is None or claim.tzinfo is None or actual is None:
+        return None
+    return abs(claim.astimezone(timezone.utc) - actual) <= timedelta(milliseconds=1)

@@ -6,7 +6,15 @@ import pytest
 from agent_evolution_protocol.coordination import resident_status
 
 
-def _write(root, filename, payload):
+@pytest.fixture(autouse=True)
+def _verified_process(monkeypatch):
+    monkeypatch.setattr(resident_status.process_identity, "alive", lambda pid: True)
+    monkeypatch.setattr(resident_status.process_identity, "verify_precise", lambda pid, started: True)
+
+
+def _write(root, filename, payload, *, identity=True):
+    if identity:
+        payload = {"pid": 1234, "process_started_at": "2026-11-15T00:00:00+00:00", **payload}
     path = root / "runtime" / filename
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload), encoding="utf-8")
@@ -104,3 +112,68 @@ def test_future_heartbeat_cannot_keep_a_dead_host_healthy(tmp_path):
 def test_status_rejects_invalid_heartbeat_age_threshold(tmp_path, age):
     with pytest.raises(ValueError, match="finite and positive"):
         resident_status.status(tmp_path, max_age_seconds=age)
+
+
+@pytest.mark.parametrize("alive,verified,expected", [
+    (False, None, "DEAD_PROCESS"),
+    (None, None, "PROCESS_UNKNOWN"),
+    (True, None, "PROCESS_UNKNOWN"),
+    (True, False, "PID_MISMATCH"),
+])
+def test_fresh_heartbeat_does_not_prove_process_identity(tmp_path, monkeypatch, alive, verified, expected):
+    now = datetime(2026, 11, 16, tzinfo=timezone.utc)
+    _write(tmp_path, "aep-core-host.heartbeat.json", {"status": "CYCLE_COMPLETED", "completed_at": now.isoformat()})
+    _write(tmp_path, "aep-supervisor.heartbeat.json", {"status": "TICK_COMPLETED", "completed_at": now.isoformat(),
+            "mode": "dispatch", "dispatch_enabled": True})
+    monkeypatch.setattr(resident_status.process_identity, "alive", lambda pid: alive)
+    monkeypatch.setattr(resident_status.process_identity, "verify_precise", lambda pid, started: verified)
+    result = resident_status.status(tmp_path, now=now)
+    assert result["planes"]["core"]["heartbeat_fresh"] is True
+    assert result["planes"]["core"]["status"] == expected
+    assert result["planes"]["core"]["healthy"] is False
+    assert result["control_plane"] == "HOLD"
+
+
+def test_legacy_heartbeat_missing_process_token_is_unknown(tmp_path):
+    now = datetime(2026, 11, 16, tzinfo=timezone.utc)
+    _write(tmp_path, "aep-core-host.heartbeat.json", {"pid": 1234, "status": "CYCLE_COMPLETED",
+           "completed_at": now.isoformat()}, identity=False)
+    result = resident_status.status(tmp_path, now=now)
+    assert result["planes"]["core"]["heartbeat_fresh"] is True
+    assert result["planes"]["core"]["pid_alive"] is True
+    assert result["planes"]["core"]["pid_identity"] == "UNKNOWN"
+    assert result["planes"]["core"]["status"] == "PROCESS_UNKNOWN"
+    assert result["control_plane"] == "HOLD"
+
+
+def test_legacy_heartbeat_missing_pid_is_unknown(tmp_path, monkeypatch):
+    now = datetime(2026, 11, 16, tzinfo=timezone.utc)
+    monkeypatch.setattr(resident_status.process_identity, "alive", lambda pid: None)
+    _write(tmp_path, "aep-core-host.heartbeat.json", {"status": "CYCLE_COMPLETED",
+           "completed_at": now.isoformat()}, identity=False)
+    result = resident_status.status(tmp_path, now=now)
+    assert result["planes"]["core"]["heartbeat_fresh"] is True
+    assert result["planes"]["core"]["pid_alive"] is None
+    assert result["planes"]["core"]["pid_identity"] == "UNKNOWN"
+    assert result["planes"]["core"]["status"] == "PROCESS_UNKNOWN"
+    assert result["control_plane"] == "HOLD"
+
+
+def test_stale_heartbeat_cannot_be_healthy_with_verified_pid(tmp_path):
+    now = datetime(2026, 11, 16, tzinfo=timezone.utc)
+    _write(tmp_path, "aep-core-host.heartbeat.json", {"status": "CYCLE_COMPLETED",
+           "completed_at": (now - timedelta(minutes=5)).isoformat()})
+    result = resident_status.status(tmp_path, now=now)
+    assert result["planes"]["core"]["heartbeat_fresh"] is False
+    assert result["planes"]["core"]["pid_identity"] == "VERIFIED"
+    assert result["planes"]["core"]["healthy"] is False
+
+
+def test_heartbeat_written_before_process_start_is_not_healthy(tmp_path):
+    now = datetime(2026, 11, 16, tzinfo=timezone.utc)
+    _write(tmp_path, "aep-core-host.heartbeat.json", {"status": "CYCLE_COMPLETED",
+           "completed_at": now.isoformat(), "process_started_at": (now + timedelta(seconds=1)).isoformat()})
+    result = resident_status.status(tmp_path, now=now + timedelta(seconds=2))
+    assert result["planes"]["core"]["heartbeat_fresh"] is True
+    assert result["planes"]["core"]["pid_identity"] == "MISMATCH"
+    assert result["planes"]["core"]["status"] == "PID_MISMATCH"
