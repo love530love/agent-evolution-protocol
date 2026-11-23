@@ -19,6 +19,8 @@
 7. 身份子任务发现 `federation/intake.py` 原会在指定 workspace 加载失败时静默新建其他 workspace。本轮已修复：明确给定 ID 时加载失败直接报错，不创建替代工作区；未指定 ID 仍可创建。隔离测试覆盖缺失与读取错误，真实迁移和自动绑定另行实现。
 8. 身份子任务的 `workspace_binding.py` 已合入：显式绑定前通过 federation `engine.load` 核验 state schema/ID，同一 workspace 改绑拒绝、同一项目有多个 workspace 时要求明确 ID；跨进程首次建库采用事务及有界重试。其项目目录关联仍是调用方声明，未接入自动加入/MCP/唤醒，迁移和身份认证尚未实现。说明见 `docs/WORKSPACE_BINDING.zh-CN.md`。
 9. 后续只读审计在隔离测试复现 wake router 的一个重复投递风险：适配器发送后抛异常会继续下一通道。本轮修复为异常或无明确未发送证据的失败均返回 `UNCERTAIN`；仅在适配器明确报告 `PROVEN_NOT_SENT`、`input_attempted=false` 且给出 `not_sent_evidence` 时才允许尝试其他通道。此证据为适配器声明，不等同独立核验。另发现 session registry 可能跨 workspace/provider 覆盖记录、缺少 freshness 校验，需单独设计迁移；这些均为隔离复现，不声明真实用户会话已受影响。
+10. 后续协作合入了显式加入和投影：`join-agent.ps1 -WorkspaceId` 验证现有绑定后登记，省略该参数保留旧行为；`coordination/join_journal.py` 将成员加入事件显式、可重放地投影进群聊 JSON，不自动唤醒或证明已读。延迟投影的事件时间可能早于消费者现有游标，消费端须按成员序号对账；参见 `docs/WORKSPACE_JOIN_JOURNAL.zh-CN.md`。
+11. session registry 已增加跨进程锁和冲突拒绝，避免新版写入者把同 agent/session 的不同 workspace/provider 覆盖；当前这类冲突会拒绝而不是支持并存，旧写入器不参与同一把锁。记录时间新鲜度仍须独立设计和验证。审计还发现 wake router 多次独立调用同一 event 尚无持久去重/会话租约，须在真正接入执行器前设计并测试；本次仅修复单次调用内异常后的盲重试。
 
 ## 可并行攻坚与验收
 
