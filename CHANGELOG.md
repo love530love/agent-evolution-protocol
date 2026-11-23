@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.50 — Concurrency-safe workspace membership joins
+
+- Fix P0 in workspace_members.join: schema DDL had been executed via executescript() on every connection, racing concurrent writers and raising "attempt to write a readonly database" on Windows (reproduced 3/3, then 8/8 green after fix). Schema initialization now runs inside the BEGIN IMMEDIATE write transaction, with a bounded idempotent retry on transient locked/readonly errors; first attribution and single-notification semantics are unchanged, no assertion relaxed.
+- Verified with tests/test_workspace_members.py 8 consecutive green runs plus the full related suite (86 passed, 1 skipped). No other assertion, manifest, or CLI surface was changed.
+
 ## 0.6.49 — Shared workspace index, retained seats, active health query
 
 - Add coordination/workspace_index.py: one read-only command (coord-workspace-index) that turns the coordination area into a group chat plus an index directory, so any joining agent can read seats, newcomers, chat, roles and vetted knowledge without private context.

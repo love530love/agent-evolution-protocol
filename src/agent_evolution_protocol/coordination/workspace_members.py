@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sqlite3
+import time
 
 from .presence import NAME
 from .workspace_identity import validate_workspace_id
@@ -48,9 +49,14 @@ def _text(value: str, field: str, *, required: bool = False) -> str:
 def _write_connection(root: Path) -> sqlite3.Connection:
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
-    db = sqlite3.connect(str(root / DB_NAME), timeout=30)
+    # isolation_level=None keeps transactions fully explicit. Schema DDL must
+    # run *inside* the BEGIN IMMEDIATE write transaction in join(), not here:
+    # executescript() on every connection races concurrent writers and raises
+    # "attempt to write a readonly database" on Windows when 8+ threads/processes
+    # open the brand-new store at once. Serialising DDL under the write lock
+    # makes concurrent joins idempotent without relaxing any assertion.
+    db = sqlite3.connect(str(root / DB_NAME), timeout=30, isolation_level=None)
     db.row_factory = sqlite3.Row
-    db.executescript(SCHEMA)
     return db
 
 
@@ -75,31 +81,49 @@ def join(root: Path, *, workspace_id: str, agent: str, source: str,
     _valid_agent(agent)
     source = _text(source, "source", required=True)
     session_id = _text(session_id, "session_id")
-    db = _write_connection(root)
-    try:
-        db.execute("BEGIN IMMEDIATE")
-        at = datetime.now(timezone.utc).isoformat()
-        inserted = db.execute(
-            "INSERT OR IGNORE INTO members(workspace_id,agent,source,session_id,joined_at) VALUES(?,?,?,?,?)",
-            (workspace_id, agent, source, session_id, at),
-        ).rowcount == 1
-        if inserted:
-            db.execute("INSERT INTO join_events(workspace_id,agent,source,session_id,joined_at) VALUES(?,?,?,?,?)",
-                       (workspace_id, agent, source, session_id, at))
-        row = dict(db.execute("SELECT * FROM members WHERE workspace_id=? AND agent=?",
-                              (workspace_id, agent)).fetchone())
-        event = dict(db.execute("SELECT seq FROM join_events WHERE workspace_id=? AND agent=?",
-                                (workspace_id, agent)).fetchone())
-        db.commit()
-        return {"schema": "aep-workspace-member-join-v1", "created": inserted,
-                "member": row, "event_seq": event["seq"],
-                "delivery": "NOT_ATTEMPTED", "agent_ack": False,
-                "note": "Caller-supplied identity claim; not authenticated or proof of presence."}
-    except Exception:
-        db.rollback()
-        raise
-    finally:
-        db.close()
+    # Windows reports a transient "attempt to write a readonly database" when
+    # several threads open a brand-new SQLite file and race the first DDL, even
+    # under BEGIN IMMEDIATE. Retry the whole transaction with a short backoff;
+    # the store is idempotent (INSERT OR IGNORE + first-attribution preserved),
+    # so a retry can never create a second member or notification.
+    last_error: Exception | None = None
+    for attempt in range(5):
+        db = _write_connection(root)
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            for statement in (s for s in SCHEMA.split(";") if s.strip()):
+                db.execute(statement)
+            at = datetime.now(timezone.utc).isoformat()
+            inserted = db.execute(
+                "INSERT OR IGNORE INTO members(workspace_id,agent,source,session_id,joined_at) VALUES(?,?,?,?,?)",
+                (workspace_id, agent, source, session_id, at),
+            ).rowcount == 1
+            if inserted:
+                db.execute("INSERT INTO join_events(workspace_id,agent,source,session_id,joined_at) VALUES(?,?,?,?,?)",
+                           (workspace_id, agent, source, session_id, at))
+            row = dict(db.execute("SELECT * FROM members WHERE workspace_id=? AND agent=?",
+                                  (workspace_id, agent)).fetchone())
+            event = dict(db.execute("SELECT seq FROM join_events WHERE workspace_id=? AND agent=?",
+                                    (workspace_id, agent)).fetchone())
+            db.commit()
+            return {"schema": "aep-workspace-member-join-v1", "created": inserted,
+                    "member": row, "event_seq": event["seq"],
+                    "delivery": "NOT_ATTEMPTED", "agent_ack": False,
+                    "note": "Caller-supplied identity claim; not authenticated or proof of presence."}
+        except sqlite3.OperationalError as exc:
+            db.rollback()
+            if "locked" not in str(exc).lower() and "readonly" not in str(exc).lower():
+                raise
+            last_error = exc
+            if attempt == 4:
+                raise
+            time.sleep(0.01 * (2 ** attempt))
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+    raise last_error  # pragma: no cover - loop always returns or raises
 
 
 def members(root: Path, *, workspace_id: str) -> dict:
