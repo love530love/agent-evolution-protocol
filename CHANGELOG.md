@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.52 — Workspace onboarding and evidence-backed delivery
+
+- Add explicit existing-workspace bindings, idempotent membership joins and replayable journal projection. Bound joins attempt projection and report PENDING on failure; this is not an agent notification or ACK.
+- Reject silently replacing an explicitly requested workspace; prevent conflicting session-registry overwrites and reject stale or unverified registrations.
+- Require explicit matching message and ACK evidence; treat input-only delivery as unconfirmed, hold uncertain work, and stop unproven cross-transport retries. Experimental wake-router events have a durable at-most-once fence, not a shared production session lease.
+- Verify resident heartbeat freshness and process identity separately; legacy heartbeats without a creation token are PROCESS_UNKNOWN. Existing third-party desktop clients, always-on dispatch and cross-vendor takeover remain unverified.
+
 ## 0.6.51 — Fault-injection drill for quota handoff
 
 - Add federation/capacity_drill.py: replayable quota-exhaustion drill using the real command_handoff + capability_bridge state machine in an isolated root. Asserts 14 hard properties (weak successor fail-closed, single ACTIVE holder, idempotent yield/volunteer/takeover, hash chain valid, state persisted). Explicitly not a real agent ACK or desktop delivery.
