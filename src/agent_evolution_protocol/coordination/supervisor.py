@@ -17,7 +17,7 @@ import sys
 import time
 from typing import Iterator, TextIO
 
-from . import commander
+from . import commander, process_identity
 from .foundation import write_json_atomic
 
 
@@ -34,6 +34,7 @@ def _heartbeat(root: Path, payload: dict) -> dict:
     record = {
         "schema": "aep-supervisor-heartbeat-v1",
         "pid": os.getpid(),
+        "process_started_at": process_identity.current_started_at(),
         **payload,
     }
     # A resident tick can prove only that the loop is alive.  Even a nonempty

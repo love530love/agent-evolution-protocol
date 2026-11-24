@@ -39,6 +39,7 @@ def test_watch_writes_a_core_heartbeat_and_has_no_commander_import_path():
                                    interval_seconds=5, stream=output, sleep=lambda _: None) == 0
         heartbeat = Path(folder) / "runtime" / "aep-core-host.heartbeat.json"
         assert '"status": "CYCLE_COMPLETED"' in heartbeat.read_text(encoding="utf-8")
+        assert '"process_started_at"' in heartbeat.read_text(encoding="utf-8")
         assert '"ui_touched": false' in heartbeat.read_text(encoding="utf-8")
         assert '"desktop_dispatch_allowed": false' in heartbeat.read_text(encoding="utf-8")
         assert '"dispatch_performed": false' in heartbeat.read_text(encoding="utf-8")

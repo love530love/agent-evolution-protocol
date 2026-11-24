@@ -22,6 +22,7 @@ def test_watch_owns_one_python_tick_loop_and_writes_a_heartbeat():
         assert '"status": "STARTED"' in output.getvalue()
         heartbeat = Path(folder) / "runtime" / "aep-supervisor.heartbeat.json"
         assert '"status": "TICK_COMPLETED"' in heartbeat.read_text(encoding="utf-8")
+        assert '"process_started_at"' in heartbeat.read_text(encoding="utf-8")
 
 
 def test_main_reports_an_existing_owner_without_starting_another_loop(tmp_path):

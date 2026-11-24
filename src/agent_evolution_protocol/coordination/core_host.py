@@ -26,7 +26,7 @@ import sys
 import time
 from typing import Iterator, TextIO
 
-from . import campaign_tick, mission_pulse
+from . import campaign_tick, mission_pulse, process_identity
 from .foundation import write_json_atomic
 
 
@@ -41,6 +41,7 @@ def _heartbeat_path(root: Path) -> Path:
 def _heartbeat(root: Path, payload: dict) -> dict:
     record = {
         "schema": "aep-core-host-heartbeat-v1", "pid": os.getpid(),
+        "process_started_at": process_identity.current_started_at(),
         "ui_touched": False, **payload,
     }
     # The Core Host deliberately has no desktop hand.  Keep that invariant in
