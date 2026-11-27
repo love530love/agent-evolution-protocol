@@ -143,7 +143,12 @@ aep --coord-root coordination coord-unattended cancel `
 - `serve` 每个 tick 最多一个任务；没有就绪任务时返回 `IDLE` 并退出，避免空转。
 - 队列、回执和 journal 都在 `<coord-root>/unattended/`：
   `tasks/`、`receipts/`、`runs/`、`journal.jsonl`。
-- 若要让它在无人时长期运行，把 `serve` 交给现有的 host/service 调度入口；
+- 驻留主机可以直接消费队列：`aep-supervisor.ps1 -LocalQueue`（等价于
+  `python -m agent_evolution_protocol.coordination.supervisor --local-queue`）。
+  同一个循环里，只有“本 tick 没有把任何订单交给 Agent”时才执行至多一个本地
+  任务；observe-only 模式永不执行。心跳记录的 `local` 字段只是本地进程证据，
+  仍不是订单投递或 Agent ACK。
+- 已经注册的 `AEP-DesktopHost` 计划任务要带 `-LocalQueue` 重新注册才会启用；
   本命令不自行注册计划任务，也不改系统权限。
 
 ## 5. 与现有执行面的关系
@@ -152,6 +157,7 @@ aep --coord-root coordination coord-unattended cancel `
 |---|---|---|
 | `external_runner` | 一个有界命令、输出捕获、会话租约 | 不替代它；直接调用它执行 |
 | `federate serve` / supervisor | 把工作区任务派给 Agent、回读、换人 | 不接管 Agent 任务状态 |
+| `coordination/supervisor` watch（驻留主机） | 订单投递与回读；`--local-queue` 时顺带消费本队列 | 不把本地任务算作订单投递 |
 | `nightly_loop` | 一个明确绑定的原会话上下行 | 不打开或读取任何聊天窗口 |
 | `wake` / `commander` | 让离线 Agent 的会话被唤醒 | 不把本地进程算作 Agent 接单 |
 
@@ -186,3 +192,15 @@ python -m pytest tests/test_unattended_queue.py -q
 - 不提供自动回滚；`requeue` 只是重新执行，不会撤销第一次的副作用。
 - `RUNNING` 在机器崩溃后会保持原状，必须人工检查原始命令的副作用后才能
   `requeue --allow-unknown`。
+
+## 8. 掉线接手
+
+2026-11-27 用户明确：协作区里主控（kernel/orchestrator，当前由本会话担任）
+拥有最高接手权，因为队友经常因用量耗尽等原因掉线。执行含义：
+
+- Agent 被判定为掉线或额度耗尽后，不再“等它上线”：按
+  `docs/DISPATCH_STANDARD.zh-CN.md` 的重试与接管规则，改派仍在线且被授权的
+  Agent，或把该任务的显式本地计划交给 `coord-unattended` / 驻留主机执行。
+- 旧 Agent 归档为只读；恢复上线后先读交接包再继续，不重复投递同一 event id。
+- 接手只改变“谁来做”，不降低证据标准：本地进程退出、文件哈希、订单投递和
+  Agent ACK 仍是四种不同证据，不能互相冒充。

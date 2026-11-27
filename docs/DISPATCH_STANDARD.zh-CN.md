@@ -91,6 +91,11 @@ DEPOSITED
 - `AGENT_BUSY` / `ACTIVITY_UNCONFIRMED`：原 event 保持不变，进入 `DEFERRED`；Supervisor 只读探测 ready 边沿。
 - `SEND_UNCERTAIN`：冻结，不自动换通道重复发送；先用回读或 REA 诊断是否产生副作用。
 - `TOKEN_EXHAUSTED` / `PROCESS_EXIT`：生成 handoff packet，备用 Agent 接管；旧 Agent 只读归档。
+- 掉线 / 用量耗尽视为“不可用”，不是“等待中”。2026-11-27 用户明确：主控
+  （kernel/orchestrator，当前由主会话担任）拥有最高接手权，可改派在线 Agent，
+  或把显式本地计划交 `coord-unattended` 由驻留主机执行；恢复上线的旧 Agent
+  先读交接包再继续，不重复投递同一 event id。接手权不改变证据标准：本地进程
+  退出不是 Agent ACK。
 - `WINDOW_NOT_UNIQUE` / `SESSION_NOT_VERIFIED`：重新绑定 anchor，禁止猜测。
 
 ## 与红皇后—鲶鱼—创造性破坏的关系

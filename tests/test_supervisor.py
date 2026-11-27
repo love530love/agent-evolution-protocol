@@ -1,10 +1,11 @@
 from io import StringIO
 import json
 from pathlib import Path
+import sys
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from agent_evolution_protocol.coordination import supervisor
+from agent_evolution_protocol.coordination import supervisor, unattended_queue
 
 
 def test_watch_owns_one_python_tick_loop_and_writes_a_heartbeat():
@@ -68,3 +69,55 @@ def test_failed_dispatch_tick_keeps_mode_and_non_delivery_claim(tmp_path):
     assert tick["mode"] == "dispatch"
     assert tick["dispatch_enabled"] is True
     assert tick["delivery_claim"] == "NONE"
+
+
+def _enqueue_local(root: Path) -> Path:
+    workspace = root / "workspace"
+    workspace.mkdir()
+    unattended_queue.enqueue(root, {
+        "task_id": "L1", "workspace": str(workspace), "goal": "local",
+        "argv": [sys.executable, "-c",
+                 "from pathlib import Path; Path('out.txt').write_text('x', encoding='utf-8')"],
+        "expected_outputs": ["out.txt"]})
+    return workspace
+
+
+def test_a_tick_that_dispatched_nothing_runs_one_local_task(tmp_path):
+    _enqueue_local(tmp_path)
+    output = StringIO()
+    with patch.object(supervisor.commander, "tick", return_value={
+            "at": "2026-11-27T12:00:00+00:00", "dispatched": [],
+            "perceived": {"skipped": True}}), patch.object(supervisor.time, "sleep"):
+        assert supervisor.watch(tmp_path, interval_seconds=1, max_ticks=1,
+                                perceive_first=False, local_queue=True,
+                                stream=output) == 0
+    assert unattended_queue.status(tmp_path)["counts"]["SUCCEEDED"] == 1
+    tick = json.loads(output.getvalue().splitlines()[-1])
+    assert tick["local"] == {"state": "SUCCEEDED", "task_id": "L1", "error": ""}
+
+
+def test_the_local_queue_is_off_by_default_and_once_an_order_went_out(tmp_path):
+    _enqueue_local(tmp_path)
+    sent = {"at": "2026-11-27T12:00:00+00:00", "dispatched": [{"order": "x"}],
+            "perceived": {"skipped": True}}
+    with patch.object(supervisor.commander, "tick", return_value=sent), \
+            patch.object(supervisor.time, "sleep"):
+        assert supervisor.watch(tmp_path, interval_seconds=1, max_ticks=1,
+                                perceive_first=False, stream=StringIO()) == 0
+    assert unattended_queue.status(tmp_path)["counts"]["QUEUED"] == 1
+    with patch.object(supervisor.commander, "tick", return_value=sent), \
+            patch.object(supervisor.time, "sleep"):
+        assert supervisor.watch(tmp_path, interval_seconds=1, max_ticks=1,
+                                perceive_first=False, local_queue=True,
+                                stream=StringIO()) == 0
+    assert unattended_queue.status(tmp_path)["counts"]["QUEUED"] == 1
+
+
+def test_observe_only_never_runs_the_local_queue(tmp_path):
+    _enqueue_local(tmp_path)
+    with patch.object(supervisor.commander, "check_acks", return_value={"acked": []}), \
+            patch.object(supervisor.time, "sleep"):
+        assert supervisor.watch(tmp_path, interval_seconds=1, max_ticks=1,
+                                dispatch=False, local_queue=True,
+                                stream=StringIO()) == 0
+    assert unattended_queue.status(tmp_path)["counts"]["QUEUED"] == 1

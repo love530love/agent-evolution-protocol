@@ -3,6 +3,7 @@ param(
   [int]$IntervalMinutes = 1,
   [string]$CoordRoot = "",
   [switch]$ObserveOnly,
+  [switch]$LocalQueue,
   # 0 = no execution time limit (PT0S).  A positive value is the explicit bound
   # in hours.  The previous hard-coded 23h cut a long-lived host off before the
   # next overnight watch window, so the default must never truncate.
@@ -31,6 +32,7 @@ $pwsh = if ($systemPwsh -and (Test-Path -LiteralPath $systemPwsh -PathType Leaf)
 $launcher = Join-Path $root 'scripts\aep-supervisor.ps1'
 $argument = "-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -File `"$launcher`" -CoordRoot `"$coordRoot`" -IntervalSeconds $([Math]::Max(5, $IntervalMinutes * 60))"
 if ($ObserveOnly) { $argument += " -ObserveOnly" }
+if ($LocalQueue -and -not $ObserveOnly) { $argument += " -LocalQueue" }
 $mode = if ($ObserveOnly) { "observe-only" } else { "dispatch" }
 $executionLimit = if ($ExecutionTimeLimitHours -gt 0) { New-TimeSpan -Hours $ExecutionTimeLimitHours } else { [TimeSpan]::Zero }
 $executionLimitXml = if ($ExecutionTimeLimitHours -gt 0) { "PT$($ExecutionTimeLimitHours)H" } else { 'PT0S' }

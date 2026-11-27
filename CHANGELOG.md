@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.56 — Resident host drains the local queue
+
+- `coordination/supervisor watch` gains `local_queue` / `--local-queue`: when a dispatch tick handed no order to an agent, the same resident loop runs at most one `coord-unattended` task before sleeping. Observe-only mode never executes it, and the heartbeat `local` field is process evidence, never an order delivery or agent ACK.
+- Add `-LocalQueue` pass-through to `scripts/aep-supervisor.ps1` and `scripts/register-supervisor-task.ps1`. An already registered `AEP-DesktopHost` task keeps its current behaviour until re-registered with the flag; this change does not modify any registered OS task.
+- Record the 2026-11-27 takeover rule: a dropped or quota-exhausted agent is unavailable, not pending; the kernel orchestrator may reassign or run the explicit local plan, with the same evidence bar. Add 3 host-tick tests to `tests/test_supervisor.py`.
+
 ## 0.6.55 — Offline local queue for unattended work
 
 - Add `coordination/unattended_queue.py` and `coord-unattended`: hash-pinned task manifests, dependency-aware one-task-per-tick execution through `external_runner`, declared-output size/SHA256 receipts, an exclusive runner lock, and an explicit local fallback when no listed agent is online.

@@ -48,6 +48,10 @@ AEP 已具备会话唯一解析、多 transport、ACK lease、失败分类和 de
 - 新增 `coord-unattended`：在线 Agent 仍走 `assignment.assign`，全部离线时才
   执行调用方显式提供的本地计划；每个 tick 最多一个任务，退出码、输出文件
   大小与 SHA256 写入回执。
+- 驻留主机（`coordination.supervisor watch`，即 `AEP-DesktopHost` 运行体）新增
+  `--local-queue`：本 tick 没有把任何订单交给 Agent 时，执行至多一个本地队列
+  任务；observe-only 永不执行。已有计划任务需带 `-LocalQueue` 重新注册才启用，
+  本仓库不改动已注册的系统任务。
 - 超时、非零退出和缺少声明输出都不会自动重跑；`requeue` 必须带 actor/reason，
   `UNKNOWN` 还必须显式 `--allow-unknown`。这缩小了“无人时任务停摆”的缺口，
   但没有把本地进程退出变成 Agent ACK。

@@ -4,7 +4,8 @@ param(
   [int]$MaxTicks = 0,
   [string]$CoordRoot = '',
   [switch]$NoPerceive,
-  [switch]$ObserveOnly
+  [switch]$ObserveOnly,
+  [switch]$LocalQueue
 )
 
 $ErrorActionPreference = 'Stop'
@@ -28,5 +29,6 @@ $arguments = @('-m', 'agent_evolution_protocol.coordination.supervisor',
                '--max-ticks', [string][Math]::Max(0, $MaxTicks))
 if ($NoPerceive) { $arguments += '--no-perceive' }
 if ($ObserveOnly) { $arguments += '--observe-only' }
+if ($LocalQueue -and -not $ObserveOnly) { $arguments += '--local-queue' }
 & $python @arguments
 exit $LASTEXITCODE
