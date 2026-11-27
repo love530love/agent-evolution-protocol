@@ -310,6 +310,40 @@ def _dispatch_order(root: Path, *, order: dict) -> dict:
         return result
 
 
+def _profiled_ack_evidence(root: Path, order: dict, receipt: dict) -> tuple[bool, str]:
+    """Corroborate a claimed ACK against this order's persisted profile receipt.
+
+    The profiled relay returns a summary, which alone is not the challenge
+    response.  Missing or inconsistent evidence must never count as an ACK.
+    This does not independently authenticate an agent or prove the visible
+    window remained the intended conversation after the send.
+    """
+    expected = _root(root) / "receipts" / f"{order['event_id']}-{order['target']}-profile.json"
+    try:
+        reported = receipt.get("receipt_file")
+        if not isinstance(reported, str) or Path(reported).resolve() != expected.resolve():
+            return False, "ACK_RECEIPT_PATH_MISMATCH"
+        raw = json.loads(expected.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return False, "ACK_RECEIPT_UNREADABLE"
+    if not isinstance(raw, dict) or raw.get("agent") != order["target"] or raw.get("event_id") != order["event_id"]:
+        return False, "ACK_RECEIPT_IDENTITY_MISMATCH"
+    if (raw.get("state") != "AGENT_REPLY_VERIFIED" or raw.get("task_delivered") is not True
+            or raw.get("agent_accepted") is not True):
+        return False, "ACK_RECEIPT_STATE_MISMATCH"
+    challenge, expected_ack = raw.get("challenge"), raw.get("expected_ack")
+    excerpt, method = raw.get("reply_excerpt"), raw.get("ack_evidence")
+    if (not isinstance(challenge, str) or not re.fullmatch(r"(?:[0-9]{10}|[0-9A-F]{14})", challenge)
+            or challenge == challenge[::-1] or expected_ack != f"AEP-ACK:{challenge[::-1]}"
+            or not isinstance(excerpt, str)):
+        return False, "ACK_CHALLENGE_INVALID"
+    if method == "exact" and expected_ack in excerpt:
+        return True, "ACK_CHALLENGE_CORROBORATED"
+    if method == "reversed-nonce" and challenge[::-1] in excerpt:
+        return True, "ACK_CHALLENGE_CORROBORATED"
+    return False, "ACK_REPLY_EVIDENCE_MISSING"
+
+
 def _dispatch(root: Path, *, order: dict) -> dict:
     retired = next((row for row in _orders(root) if row.get("id") == order.get("id")
                     and row.get("state") == "RETIRED"), None)
@@ -509,9 +543,15 @@ def _dispatch(root: Path, *, order: dict) -> dict:
                                 urgent_interject=bool(order.get("urgent_interject")),
                                 workspace_id=str(order.get("workspace_id", "")))
     transport = "profiled-ui"
-    if transport == "profiled-ui" and receipt.get("agent_accepted") and receipt.get("task_delivered"):
-        return _record_attempt(root, order, state="AGENT_ACK", transport=transport, receipt=receipt,
-                               note="challenge-response verified by profiled original-session relay")
+    if transport == "profiled-ui" and receipt.get("agent_accepted") is True and receipt.get("task_delivered") is True:
+        ack_verified, ack_reason = _profiled_ack_evidence(root, order, receipt)
+        if ack_verified:
+            return _record_attempt(root, order, state="AGENT_ACK", transport=transport, receipt=receipt,
+                                   note="challenge-response corroborated by persisted profile receipt")
+        receipt = {**receipt, "adapter_agent_accepted": True, "agent_accepted": False,
+                   "ack_corroborated": False, "ack_corroboration_reason": ack_reason}
+        return _record_attempt(root, order, state="MESSAGE_VISIBLE", transport=transport, receipt=receipt,
+                               note=f"{ack_reason}: delivery reported, ACK not corroborated; do not resend")
     if receipt.get("task_delivered"):
         return _record_attempt(root, order, state="MESSAGE_VISIBLE", transport=transport, receipt=receipt)
     # A missing/failed adapter receipt proves neither typing nor sending.

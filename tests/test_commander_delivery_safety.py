@@ -375,19 +375,74 @@ class CommanderDeliverySafetyTests(unittest.TestCase):
         profile = self.root / "ui_profiles" / "qoder.json"
         profile.parent.mkdir(parents=True)
         profile.write_text("{}", encoding="utf-8")
+        receipt_path = self.root / "commander" / "receipts" / f"{order['event_id']}-qoder-profile.json"
+        receipt_path.parent.mkdir(parents=True)
+        receipt_path.write_text(json.dumps({
+            "agent": "qoder", "event_id": order["event_id"], "state": "AGENT_REPLY_VERIFIED",
+            "task_delivered": True, "agent_accepted": True, "challenge": "1234567890",
+            "expected_ack": "AEP-ACK:0987654321", "ack_evidence": "exact",
+            "reply_excerpt": "AEP-ACK:0987654321 received",
+        }), encoding="utf-8")
         client = {"agent": "qoder", "windows": [{"pid": 123}],
                   "unique": True, "anchored": False}
         with (patch.object(commander.registry, "discover", return_value={"clients": [client]}),
               patch.object(commander, "_pick_transport", return_value=("uia", {})),
               patch.object(commander, "_profiled_deliver", return_value={
                   "status": "AGENT_REPLY_VERIFIED", "task_delivered": True,
-                  "agent_accepted": True, "evidence": "receipt.json"}) as profiled,
+                  "agent_accepted": True, "receipt_file": str(receipt_path),
+                  "evidence": str(receipt_path)}) as profiled,
               patch.object(commander, "_uia_deliver") as raw):
             result = commander.dispatch(self.root, order=order)
         self.assertEqual(result["state"], "AGENT_ACK")
-        self.assertEqual(result["ack"]["evidence"], "receipt.json")
+        self.assertEqual(result["ack"]["evidence"], str(receipt_path))
         profiled.assert_called_once()
         raw.assert_not_called()
+
+    def test_profiled_ack_rejects_summary_without_corroborating_receipt(self):
+        order = commander.submit_order(self.root, target="qoder", task="notice",
+                                       text="Read this warning", sender="codex")
+        profile = self.root / "ui_profiles" / "qoder.json"
+        profile.parent.mkdir(parents=True)
+        profile.write_text("{}", encoding="utf-8")
+        client = {"agent": "qoder", "windows": [{"pid": 123}], "unique": True, "anchored": False}
+        with (patch.object(commander.registry, "discover", return_value={"clients": [client]}),
+              patch.object(commander, "_pick_transport", return_value=("uia", {})),
+              patch.object(commander, "_profiled_deliver", return_value={
+                  "status": "AGENT_REPLY_VERIFIED", "task_delivered": True,
+                  "agent_accepted": True, "receipt_file": "receipt.json"})):
+            result = commander.dispatch(self.root, order=order)
+        self.assertEqual(result["state"], "MESSAGE_VISIBLE")
+        self.assertIn("ACK_RECEIPT_PATH_MISMATCH", result["attempts"][-1]["note"])
+        self.assertIsNone(result["ack"])
+        self.assertFalse(result["attempts"][-1]["receipt"]["agent_accepted"])
+        self.assertTrue(result["attempts"][-1]["receipt"]["adapter_agent_accepted"])
+
+    def test_profiled_ack_checks_order_identity_and_challenge(self):
+        order = commander.submit_order(self.root, target="qoder", task="notice",
+                                       text="Read this warning", sender="codex")
+        path = self.root / "commander" / "receipts" / f"{order['event_id']}-qoder-profile.json"
+        path.parent.mkdir(parents=True)
+        proof = {"agent": "qoder", "event_id": order["event_id"], "state": "AGENT_REPLY_VERIFIED",
+                 "task_delivered": True, "agent_accepted": True, "challenge": "1234567890",
+                 "expected_ack": "AEP-ACK:0987654321", "ack_evidence": "exact",
+                 "reply_excerpt": "AEP-ACK:0987654321 received"}
+        summary = {"receipt_file": str(path)}
+        self.assertEqual(commander._profiled_ack_evidence(self.root, order, summary),
+                         (False, "ACK_RECEIPT_UNREADABLE"))
+        path.write_text("{broken", encoding="utf-8")
+        self.assertEqual(commander._profiled_ack_evidence(self.root, order, summary),
+                         (False, "ACK_RECEIPT_UNREADABLE"))
+        path.write_text(json.dumps(proof), encoding="utf-8")
+        self.assertTrue(commander._profiled_ack_evidence(self.root, order, summary)[0])
+        reversed_proof = {**proof, "ack_evidence": "reversed-nonce", "reply_excerpt": "0987654321"}
+        path.write_text(json.dumps(reversed_proof), encoding="utf-8")
+        self.assertTrue(commander._profiled_ack_evidence(self.root, order, summary)[0])
+        for key, value in (("event_id", "different"), ("agent", "qoder-cn"),
+                           ("expected_ack", "AEP-ACK:wrong"), ("reply_excerpt", "no token"),
+                           ("state", "WAITING_REPLY")):
+            bad = {**proof, key: value}
+            path.write_text(json.dumps(bad), encoding="utf-8")
+            self.assertFalse(commander._profiled_ack_evidence(self.root, order, summary)[0], key)
 
     def test_busy_profiled_agent_is_deferred_not_ceased(self):
         order = commander.submit_order(self.root, target="qoder", task="notice",
