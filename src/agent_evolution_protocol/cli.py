@@ -32,6 +32,7 @@ from agent_evolution_protocol.coordination.mechanism_audit import audit as audit
 from agent_evolution_protocol.coordination import a11y
 from agent_evolution_protocol.coordination import codex_rollout
 from agent_evolution_protocol.coordination import nightly_loop
+from agent_evolution_protocol.coordination import unattended_queue
 from agent_evolution_protocol.coordination import process_info
 from agent_evolution_protocol.coordination import project_evidence
 from agent_evolution_protocol.coordination import uia_argv
@@ -3312,6 +3313,57 @@ def coord_nightly_loop(args: argparse.Namespace) -> None:
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+def coord_unattended(args: argparse.Namespace) -> None:
+    """Queue or run one bounded local task, routing to a live agent first."""
+    root = coord_root(args)
+    try:
+        if args.action == "enqueue":
+            if args.manifest_file is None:
+                raise ProtocolError("enqueue requires --manifest-file")
+            manifest = json.loads(args.manifest_file.read_text(encoding="utf-8"))
+            payload = unattended_queue.enqueue(root, manifest)
+        elif args.action == "run":
+            payload = unattended_queue.run_once(root, task_id=args.task)
+        elif args.action == "status":
+            payload = unattended_queue.status(root)
+        elif args.action == "serve":
+            payload = unattended_queue.serve(
+                root, interval=args.interval, max_ticks=args.max_ticks,
+                stop_file=args.stop_file)
+        elif args.action == "requeue":
+            if not args.task or not args.actor or not args.reason:
+                raise ProtocolError("requeue requires --task --actor --reason")
+            payload = unattended_queue.requeue(
+                root, args.task, actor=args.actor, reason=args.reason,
+                allow_unknown=args.allow_unknown)
+        elif args.action == "cancel":
+            if not args.task or not args.actor or not args.reason:
+                raise ProtocolError("cancel requires --task --actor --reason")
+            payload = unattended_queue.cancel(
+                root, args.task, actor=args.actor, reason=args.reason)
+        else:
+            if not args.workspace_id or not args.task or not args.agents:
+                raise ProtocolError("dispatch requires --workspace-id --task --agents")
+            requirement = args.requirement or ""
+            if args.requirement_file is not None:
+                requirement = args.requirement_file.read_text(encoding="utf-8")
+            if not requirement.strip():
+                raise ProtocolError("dispatch requires --requirement or --requirement-file")
+            local_manifest = None
+            if args.local_manifest_file is not None:
+                local_manifest = json.loads(
+                    args.local_manifest_file.read_text(encoding="utf-8"))
+            payload = unattended_queue.dispatch_or_queue(
+                root, args.federation_root, workspace_id=args.workspace_id,
+                task_id=args.task, requirement=requirement, agents=args.agents,
+                local_manifest=local_manifest, sender=args.sender,
+                priority=args.priority, ttl_hours=args.ttl_hours,
+                allow_launch=args.allow_launch)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise ProtocolError(f"unattended queue failed: {exc}") from exc
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
 def coord_project_evidence(args: argparse.Namespace) -> None:
     """Seal, verify or inspect time-bounded advisory evidence from another project."""
     root = coord_root(args)
@@ -4280,6 +4332,30 @@ def build_parser() -> argparse.ArgumentParser:
     nightly.add_argument("--config", type=Path,
                          help="JSON loop config; defaults to coordination/nightly_loop/config.json")
     nightly.set_defaults(func=coord_nightly_loop)
+    unattended = commands.add_parser(
+        "coord-unattended",
+        help="durable local queue: route to a live agent, or run one bounded task per tick")
+    unattended.add_argument("action", choices=("enqueue", "run", "status", "serve",
+                                               "requeue", "cancel", "dispatch"))
+    unattended.add_argument("--manifest-file", type=Path)
+    unattended.add_argument("--task")
+    unattended.add_argument("--interval", type=float, default=30.0)
+    unattended.add_argument("--max-ticks", type=int, default=0)
+    unattended.add_argument("--stop-file", type=Path)
+    unattended.add_argument("--actor")
+    unattended.add_argument("--reason")
+    unattended.add_argument("--allow-unknown", action="store_true")
+    unattended.add_argument("--workspace-id")
+    unattended.add_argument("--requirement")
+    unattended.add_argument("--requirement-file", type=Path)
+    unattended.add_argument("--agents", nargs="+")
+    unattended.add_argument("--local-manifest-file", type=Path)
+    unattended.add_argument("--federation-root", type=Path, default=Path(".agent-evolution"))
+    unattended.add_argument("--sender", default="kernel")
+    unattended.add_argument("--priority", choices=("urgent", "normal", "low"), default="normal")
+    unattended.add_argument("--ttl-hours", type=float, default=24.0)
+    unattended.add_argument("--allow-launch", action="store_true")
+    unattended.set_defaults(func=coord_unattended)
     relay = commands.add_parser("coord-relay-drill", help="one-shot relay drill: plan or execute in-turn multi-agent dispatch")
     relay.add_argument("--bridge-root", type=Path); relay.add_argument("--apply", action="store_true"); relay.set_defaults(func=coord_relay_drill)
 

@@ -4,10 +4,10 @@
 > 手改会让 `tests/test_skill_manifest.py` 失败——这是刻意的：
 > 上一版研究文档把 `schema=aep-next-action-v1` 写错了整整两天，因为散文不会报错。
 
-- 命令总数：**104**
-- 风险分布：read-only 21、mutating 68、irreversible 15
-- 用途已记录：**41** / 104（未记录 63，只允许减少）
-- 清单摘要：`sha256:630f082a74f657712a7570b7274b085927a4b243b81ba3cca132da0ae3aae16f`
+- 命令总数：**105**
+- 风险分布：read-only 21、mutating 69、irreversible 15
+- 用途已记录：**42** / 105（未记录 63，只允许减少）
+- 清单摘要：`sha256:9e83f5de2cdfa6d99b24d7d1ad700b7b00c578e455537d8d539743ee47a0ed45`
 
 风险分级是**声明**而不是推导：未登记的命令一律按 `mutating` 处理。
 把会写的命令标成 `read-only` 是这里唯一有代价的错误，所以默认值朝安全方向倒。
@@ -111,6 +111,7 @@
 | `coord-trajectory` | mutating | `ACTION` | Record, check and replay a run without letting the replay re-fire it. |
 | `coord-transcript` | irreversible | `ACTION` | Shared conversation bus so every agent can perceive every other session. |
 | `coord-uia` | irreversible | `ACTION --agent` | Desktop transport: calibrate is read-only; compose/deliver can write an original chat. |
+| `coord-unattended` | mutating | `ACTION` | Queue or run one bounded local task, routing to a live agent first. |
 | `coord-vision` | read-only | `ACTION` | Ask a grounder where a control is, and compare it with a known answer. |
 | `coord-volley-plan` | mutating | `--manifest-file --results-file --quota-remaining` | *未记录* |
 | `coord-wake` | irreversible | `--from --to --task --reason` | *未记录* |

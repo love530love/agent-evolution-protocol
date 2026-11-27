@@ -42,3 +42,15 @@ AEP 已具备会话唯一解析、多 transport、ACK lease、失败分类和 de
 
 因此当前状态应标记为 `longrun_ready_with_adapters`，而不是无条件的
 `fully_unattended`。任何宣称完成都必须带真实 ACK、产物和验收证据。
+
+## 2026-11-27 增量：离线本地回退
+
+- 新增 `coord-unattended`：在线 Agent 仍走 `assignment.assign`，全部离线时才
+  执行调用方显式提供的本地计划；每个 tick 最多一个任务，退出码、输出文件
+  大小与 SHA256 写入回执。
+- 超时、非零退出和缺少声明输出都不会自动重跑；`requeue` 必须带 actor/reason，
+  `UNKNOWN` 还必须显式 `--allow-unknown`。这缩小了“无人时任务停摆”的缺口，
+  但没有把本地进程退出变成 Agent ACK。
+- 仍未满足的条件不变：真实 GUI 会话验证、跨天 checkpoint 的调度器接管、
+  统一产物验收清单；本机故障恢复和跨登录能力仍只能按已登记证据声明。
+- 详见 `docs/UNATTENDED_QUEUE.zh-CN.md`。

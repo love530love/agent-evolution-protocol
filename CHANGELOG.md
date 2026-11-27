@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.55 — Offline local queue for unattended work
+
+- Add `coordination/unattended_queue.py` and `coord-unattended`: hash-pinned task manifests, dependency-aware one-task-per-tick execution through `external_runner`, declared-output size/SHA256 receipts, an exclusive runner lock, and an explicit local fallback when no listed agent is online.
+- A process exit is not an agent ACK. `FAILED`/`UNKNOWN` are terminal; `requeue` requires actor/reason and `UNKNOWN` additionally requires `--allow-unknown`, so a command that may have written partial output is never replayed silently.
+- Route online work through the existing `assignment.assign` path, with the order deposited in the coord mailbox and the DAG kept in the federation root; offline work runs only an explicitly supplied local plan. Add 20 tests and `docs/UNATTENDED_QUEUE.zh-CN.md`; regenerate the CLI surface manifest (105 commands).
+
 ## 0.6.54 — Stable Desktop Host PowerShell selection
 
 - Prefer the system PowerShell 7 executable when registering Desktop Host rather than a host application's versioned runtime directory; retain PATH discovery as fallback.

@@ -1,7 +1,7 @@
 {
   "by_risk": {
     "irreversible": 15,
-    "mutating": 68,
+    "mutating": 69,
     "read-only": 21
   },
   "commands": [
@@ -4958,6 +4958,189 @@
       "arguments": [
         {
           "choices": [
+            "cancel",
+            "dispatch",
+            "enqueue",
+            "requeue",
+            "run",
+            "serve",
+            "status"
+          ],
+          "dest": "action",
+          "flags": [],
+          "kind": "positional",
+          "required": true
+        },
+        {
+          "dest": "manifest_file",
+          "flags": [
+            "--manifest-file"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "task",
+          "flags": [
+            "--task"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 30.0,
+          "dest": "interval",
+          "flags": [
+            "--interval"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 0,
+          "dest": "max_ticks",
+          "flags": [
+            "--max-ticks"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "stop_file",
+          "flags": [
+            "--stop-file"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "actor",
+          "flags": [
+            "--actor"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "reason",
+          "flags": [
+            "--reason"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "allow_unknown",
+          "flags": [
+            "--allow-unknown"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "dest": "workspace_id",
+          "flags": [
+            "--workspace-id"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "requirement",
+          "flags": [
+            "--requirement"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "requirement_file",
+          "flags": [
+            "--requirement-file"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "agents",
+          "flags": [
+            "--agents"
+          ],
+          "kind": "option",
+          "nargs": "+",
+          "required": false
+        },
+        {
+          "dest": "local_manifest_file",
+          "flags": [
+            "--local-manifest-file"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": ".agent-evolution",
+          "dest": "federation_root",
+          "flags": [
+            "--federation-root"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": "kernel",
+          "dest": "sender",
+          "flags": [
+            "--sender"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "choices": [
+            "low",
+            "normal",
+            "urgent"
+          ],
+          "default": "normal",
+          "dest": "priority",
+          "flags": [
+            "--priority"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": 24.0,
+          "dest": "ttl_hours",
+          "flags": [
+            "--ttl-hours"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "allow_launch",
+          "flags": [
+            "--allow-launch"
+          ],
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "documented": true,
+      "name": "coord-unattended",
+      "purpose": "Queue or run one bounded local task, routing to a live agent first.",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "choices": [
             "ground",
             "providers"
           ],
@@ -6609,9 +6792,9 @@
       "risk": "mutating"
     }
   ],
-  "count": 104,
-  "digest": "sha256:630f082a74f657712a7570b7274b085927a4b243b81ba3cca132da0ae3aae16f",
-  "documented": 41,
+  "count": 105,
+  "digest": "sha256:9e83f5de2cdfa6d99b24d7d1ad700b7b00c578e455537d8d539743ee47a0ed45",
+  "documented": 42,
   "generated_from": "agent_evolution_protocol.cli:build_parser",
   "global_arguments": [
     {

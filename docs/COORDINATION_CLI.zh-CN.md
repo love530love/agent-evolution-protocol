@@ -32,6 +32,20 @@ aep --coord-root coordination coord-onboarding --agent hermes_desktop
 aep --coord-root coordination coord-guided-retry --attempted-action "submit upload" --error "timeout" --risk-level high
 ```
 
+## 无人值守本地任务
+
+在线 Agent 优先走派工；全部离线时，把显式本地计划排入有界队列：
+
+```powershell
+aep --coord-root coordination coord-unattended enqueue --manifest-file tasks/s007-local.json
+aep --coord-root coordination coord-unattended run
+aep --coord-root coordination coord-unattended status
+aep --coord-root coordination coord-unattended serve --interval 30
+```
+
+进程退出和声明输出只算本地证据，不是 Agent ACK；失败的第一次执行不会自动重跑。
+清单格式、状态和恢复规则见 `docs/UNATTENDED_QUEUE.zh-CN.md`。
+
 ## 恢复内核 / 资源锁命令
 
 当多个 agent 可能同时操作同一浏览器 Tab、同一文件、同一上传额度或同一外部平台时，使用 `kernel-*` 命令记录可恢复的资源锁和幂等操作：
