@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.53 — Recover join projections and corroborate delivery evidence
+
+- Reconcile join-journal projections for explicitly bound workspaces during bounded Core cycles, with durable cursors and replay after process restart. This does not send a desktop notification or prove an ACK.
+- Corroborate profiled-agent ACK claims against the persisted order receipt, identity, event and challenge reply; incomplete evidence stays at MESSAGE_VISIBLE.
+- Prepare hidden Desktop Host registration with no default execution limit and bounded failure restarts. Existing tasks must be separately registered and verified; operating-system permissions may block deployment.
+
 ## 0.6.52 — Workspace onboarding and evidence-backed delivery
 
 - Add explicit existing-workspace bindings, idempotent membership joins and replayable journal projection. Bound joins attempt projection and report PENDING on failure; this is not an agent notification or ACK.

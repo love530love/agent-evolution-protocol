@@ -1,3 +1,3 @@
 """Agent Evolution Protocol shadow tooling."""
 
-__version__ = "0.6.52"
+__version__ = "0.6.53"
