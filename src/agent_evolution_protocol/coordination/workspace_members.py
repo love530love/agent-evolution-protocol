@@ -60,11 +60,11 @@ def _write_connection(root: Path) -> sqlite3.Connection:
     return db
 
 
-def _read_connection(root: Path) -> sqlite3.Connection | None:
+def _read_connection(root: Path, *, timeout_seconds: float = 30) -> sqlite3.Connection | None:
     path = Path(root) / DB_NAME
     if not path.is_file():
         return None
-    db = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=30)
+    db = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=timeout_seconds)
     db.row_factory = sqlite3.Row
     return db
 
@@ -142,13 +142,13 @@ def members(root: Path, *, workspace_id: str) -> dict:
 
 
 def notifications(root: Path, *, workspace_id: str, after: int = 0,
-                  limit: int = 50) -> dict:
+                  limit: int = 50, timeout_seconds: float = 30) -> dict:
     validate_workspace_id(workspace_id)
     if isinstance(after, bool) or not isinstance(after, int) or after < 0:
         raise ValueError("after must be a non-negative integer")
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500:
         raise ValueError("limit must be between 1 and 500")
-    db = _read_connection(root)
+    db = _read_connection(root, timeout_seconds=timeout_seconds)
     try:
         rows = [] if db is None else [dict(row) for row in db.execute(
             "SELECT seq,workspace_id,agent,source,session_id,joined_at FROM join_events "

@@ -26,7 +26,7 @@ import sys
 import time
 from typing import Iterator, TextIO
 
-from . import campaign_tick, mission_pulse, process_identity
+from . import campaign_tick, join_reconcile_scan, mission_pulse, process_identity
 from .foundation import write_json_atomic
 
 
@@ -98,6 +98,13 @@ def cycle(coord_root: Path, *, bridge_root: Path, kernel_root: Path | None = Non
         "missions": mission_pulse.pulse(coord_root, apply=True, sender=sender),
         "federation": {"status": "SKIPPED", "reason": "FEDERATION_CONTEXT_MISSING"},
     }
+    try:
+        result["join_reconciliation"] = join_reconcile_scan.run(coord_root)
+    except Exception as exc:
+        # A corrupt/inaccessible cursor must not prevent mission processing or
+        # masquerade as a successful projection. Retry on a later cycle.
+        result["join_reconciliation"] = {"status": "ERROR",
+                                          "error": f"{type(exc).__name__}: {exc}"[:500]}
     if all(supplied):
         from agent_evolution_protocol.federation import supervisor as federation_supervisor
 
@@ -146,7 +153,8 @@ def watch(coord_root: Path, *, bridge_root: Path, kernel_root: Path | None = Non
                            "completed_at": datetime.now(timezone.utc).isoformat(),
                            "duration_seconds": round(time.monotonic() - began, 3),
                            "queued_orders": len(result["missions"].get("queued") or []),
-                           "federation": result["federation"].get("status", "STEPPED")}
+                           "federation": result["federation"].get("status", "STEPPED"),
+                           "join_reconciliation": result.get("join_reconciliation", {})}
             except Exception as exc:  # retain liveness evidence rather than dying silently
                 count += 1
                 payload = {"status": "CYCLE_FAILED", "tick": count, "started_at": started_at,

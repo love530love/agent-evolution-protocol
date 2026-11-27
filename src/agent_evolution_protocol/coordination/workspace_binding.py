@@ -71,7 +71,7 @@ def bind(coord_root: Path, federation_root: Path, project_root: Path, workspace_
     raise AssertionError("unreachable")  # pragma: no cover
 
 
-def lookup(coord_root: Path, project_root: Path, workspace_id: str = "") -> dict:
+def lookup(coord_root: Path, project_root: Path, workspace_id: str = "", *, timeout_seconds: float = 5) -> dict:
     """Resolve a binding; ambiguous directories require explicit workspace ID."""
     if workspace_id:
         validate_workspace_id(workspace_id)
@@ -79,7 +79,7 @@ def lookup(coord_root: Path, project_root: Path, workspace_id: str = "") -> dict
     db_path = Path(coord_root) / DB_NAME
     if not db_path.is_file():
         raise ValueError("BINDING_NOT_FOUND")
-    with sqlite3.connect(db_path.resolve().as_uri() + "?mode=ro", uri=True) as db:
+    with sqlite3.connect(db_path.resolve().as_uri() + "?mode=ro", uri=True, timeout=timeout_seconds) as db:
         db.row_factory = sqlite3.Row
         rows = db.execute("SELECT workspace_id,project_root,federation_root,bound_at FROM bindings WHERE project_key=? AND (?='' OR workspace_id=?) ORDER BY workspace_id", (key, workspace_id, workspace_id)).fetchall()
     if not rows:

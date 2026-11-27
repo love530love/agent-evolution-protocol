@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import time
 from uuid import uuid4
 
 from . import conversation_journal, workspace_members
@@ -66,16 +67,24 @@ def _publish(folder: Path, event: dict) -> bool:
         temporary.unlink(missing_ok=True)
 
 
+def _check_deadline(deadline: float | None) -> None:
+    if deadline is not None and time.monotonic() >= deadline:
+        raise TimeoutError("JOIN_RECOVERY_BUDGET_EXCEEDED")
+
+
 def project(coord_root: Path, *, workspace_id: str, after: int = 0,
-            limit: int = 50, room: str = "agent-legion") -> dict:
+            limit: int = 50, room: str = "agent-legion", timeout_seconds: float = 30,
+            deadline: float | None = None) -> dict:
     if not isinstance(room, str) or not room.strip() or len(room) > 200:
         raise ValueError("invalid room")
     room = room.strip()
+    _check_deadline(deadline)
     batch = workspace_members.notifications(coord_root, workspace_id=workspace_id,
-                                            after=after, limit=limit)
+                                            after=after, limit=limit, timeout_seconds=timeout_seconds)
     folder = conversation_journal.archive_root(coord_root) / "events"
     records = []
     for row in batch["events"]:
+        _check_deadline(deadline)
         event = _event(row, room)
         created = _publish(folder, event)
         records.append({"sequence": row["seq"], "event_id": event["id"],

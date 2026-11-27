@@ -59,14 +59,15 @@ def _anchor(row: dict) -> str:
                              separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
-def _page(root: Path, workspace_id: str, *, after: int, limit: int) -> list[dict] | None:
+def _page(root: Path, workspace_id: str, *, after: int, limit: int,
+          timeout_seconds: float = 30) -> list[dict] | None:
     source = Path(root) / workspace_members.DB_NAME
     try:
         source.stat()
     except FileNotFoundError:
         return None
     # An inaccessible or malformed source is an error, never an empty queue.
-    db = sqlite3.connect(source.resolve(strict=True).as_uri() + "?mode=ro", uri=True, timeout=30)
+    db = sqlite3.connect(source.resolve(strict=True).as_uri() + "?mode=ro", uri=True, timeout=timeout_seconds)
     db.row_factory = sqlite3.Row
     try:
         return [dict(row) for row in db.execute(
@@ -101,20 +102,25 @@ def status(root: Path, *, workspace_id: str, room: str = "agent-legion") -> dict
 
 
 def reconcile(root: Path, *, workspace_id: str, room: str = "agent-legion",
-              limit: int = 50) -> dict:
+              limit: int = 50, lock_timeout_seconds: float = 10,
+              timeout_seconds: float = 30, deadline: float | None = None) -> dict:
     """Process one bounded source page; replay safely after an interrupted call."""
     room, digest = _key(workspace_id, room)
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500:
         raise ValueError("limit must be between 1 and 500")
     cursor_path = _cursor_path(root, digest)
-    with workspace_lock(cursor_path.with_suffix(".lock")):
+    join_journal._check_deadline(deadline)
+    with workspace_lock(cursor_path.with_suffix(".lock"), timeout=lock_timeout_seconds):
+        join_journal._check_deadline(deadline)
         cursor = _read_cursor(cursor_path, workspace_id, room)
         before = cursor["sequence"]
         if before:
-            previous = _page(root, workspace_id, after=before - 1, limit=1)
+            join_journal._check_deadline(deadline)
+            previous = _page(root, workspace_id, after=before - 1, limit=1, timeout_seconds=timeout_seconds)
             if not previous or previous[0]["seq"] != before or _anchor(previous[0]) != cursor["source_anchor"]:
                 raise ValueError("SOURCE_CURSOR_MISMATCH")
-        page = _page(root, workspace_id, after=before, limit=limit)
+        join_journal._check_deadline(deadline)
+        page = _page(root, workspace_id, after=before, limit=limit, timeout_seconds=timeout_seconds)
         common = {"schema": "aep-join-reconcile-v1", "workspace_id": workspace_id,
                   "room": room, "previous_sequence": before, "sequence": before,
                   "notification_delivered": False, "agent_ack": False}
@@ -123,14 +129,17 @@ def reconcile(root: Path, *, workspace_id: str, room: str = "agent-legion",
         if not page:
             return {**common, "status": "IDLE", "projected": 0}
         result = join_journal.project(root, workspace_id=workspace_id, room=room,
-                                      after=before, limit=limit)
+                                      after=before, limit=limit, timeout_seconds=timeout_seconds,
+                                      deadline=deadline)
         if [row["sequence"] for row in result["events"]] != [row["seq"] for row in page]:
             raise ValueError("SOURCE_CHANGED_DURING_PROJECTION")
-        if _page(root, workspace_id, after=before, limit=limit) != page:
+        join_journal._check_deadline(deadline)
+        if _page(root, workspace_id, after=before, limit=limit, timeout_seconds=timeout_seconds) != page:
             raise ValueError("SOURCE_CHANGED_DURING_PROJECTION")
         last = page[-1]
         updated = {"schema": SCHEMA, "workspace_id": workspace_id, "room": room,
                    "sequence": last["seq"], "source_anchor": _anchor(last)}
+        join_journal._check_deadline(deadline)
         _write_cursor(cursor_path, updated)
         return {**common, "status": "PROJECTED", "sequence": last["seq"],
                 "projected": len(page), "events": result["events"]}
