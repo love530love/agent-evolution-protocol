@@ -46,7 +46,11 @@ function schtasks.exe {
     assert root.find("t:Settings/t:ExecutionTimeLimit", ns).text == "PT0S"
     assert root.find("t:Settings/t:RestartOnFailure/t:Count", ns).text == "3"
     assert root.find("t:Settings/t:MultipleInstancesPolicy", ns).text == "IgnoreNew"
-    assert root.find("t:Actions/t:Exec/t:Command", ns).text.lower().endswith("pwsh.exe")
+    command = root.find("t:Actions/t:Exec/t:Command", ns).text
+    assert command.lower().endswith("pwsh.exe")
+    system_pwsh = Path(os.environ.get("ProgramFiles", "")) / "PowerShell" / "7" / "pwsh.exe"
+    if system_pwsh.is_file():
+        assert os.path.normcase(command) == os.path.normcase(str(system_pwsh))
     arguments = root.find("t:Actions/t:Exec/t:Arguments", ns).text
     assert "-WindowStyle Hidden" in arguments
     assert "-ObserveOnly" in arguments

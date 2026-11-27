@@ -20,7 +20,14 @@ $coordRoot = if ($CoordRoot) {
 } else {
   Join-Path $root 'coordination'
 }
-$pwsh = (Get-Command pwsh.exe -ErrorAction Stop).Source
+# Prefer the stable system installation over a host application's bundled
+# version, whose versioned directory can disappear on the next app update.
+$systemPwsh = if ($env:ProgramFiles) { Join-Path $env:ProgramFiles 'PowerShell\7\pwsh.exe' } else { '' }
+$pwsh = if ($systemPwsh -and (Test-Path -LiteralPath $systemPwsh -PathType Leaf)) {
+  $systemPwsh
+} else {
+  (Get-Command pwsh.exe -ErrorAction Stop).Source
+}
 $launcher = Join-Path $root 'scripts\aep-supervisor.ps1'
 $argument = "-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -File `"$launcher`" -CoordRoot `"$coordRoot`" -IntervalSeconds $([Math]::Max(5, $IntervalMinutes * 60))"
 if ($ObserveOnly) { $argument += " -ObserveOnly" }

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.54 — Stable Desktop Host PowerShell selection
+
+- Prefer the system PowerShell 7 executable when registering Desktop Host rather than a host application's versioned runtime directory; retain PATH discovery as fallback.
+- Add clean-checkout task XML coverage for stable executable selection. The task still requires appropriate Windows registration permissions and separate post-login/restart validation.
+
 ## 0.6.53 — Recover join projections and corroborate delivery evidence
 
 - Reconcile join-journal projections for explicitly bound workspaces during bounded Core cycles, with durable cursors and replay after process restart. This does not send a desktop notification or prove an ACK.
