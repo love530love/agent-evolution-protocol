@@ -80,6 +80,27 @@ def test_round_robin_survives_fresh_interpreter_processes(tmp_path):
     assert set(found) == set(ids)
 
 
+def test_real_core_process_recovers_after_restart_without_duplicate(tmp_path):
+    coord, _, ids = _setup(tmp_path)
+    env = dict(os.environ, PYTHONUTF8="1", PYTHONPATH=str(Path(__file__).resolve().parents[1] / "src"))
+    command = [sys.executable, "-m", "agent_evolution_protocol.coordination.core_host",
+               "--coord-root", str(coord), "--bridge-root", str(coord),
+               "--interval-seconds", "1", "--max-ticks", "1"]
+    results = []
+    for _ in range(2):
+        process = subprocess.run(command, env=env, capture_output=True, text=True,
+                                 encoding="utf-8", timeout=30,
+                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        assert process.returncode == 0, process.stderr
+        results.append(json.loads(process.stdout.splitlines()[-1]))
+    assert results[0]["status"] == "CYCLE_COMPLETED"
+    assert results[0]["join_reconciliation"]["rows"][0]["status"] == "PROJECTED"
+    assert results[1]["join_reconciliation"]["rows"][0]["status"] == "IDLE"
+    assert all(row["dispatch_performed"] is False and row["delivery_claim"] == "NONE" for row in results)
+    assert len(conversation_journal.read_events(coord)) == 1
+    assert join_reconciler.status(coord, workspace_id=ids[0])["sequence"] > 0
+
+
 def test_one_bad_binding_does_not_stop_another_workspace(tmp_path):
     coord, federation, ids = _setup(tmp_path, count=2)
     engine._state_path(federation, ids[0]).unlink()
