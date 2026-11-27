@@ -3,7 +3,7 @@
 ## 0.6.54 — Stable Desktop Host PowerShell selection
 
 - Prefer the system PowerShell 7 executable when registering Desktop Host rather than a host application's versioned runtime directory; retain PATH discovery as fallback.
-- Add clean-checkout task XML coverage for stable executable selection. The task still requires appropriate Windows registration permissions and separate post-login/restart validation.
+- Add clean-checkout task XML coverage for stable executable selection. On a real isolated scheduled task, terminating its verified test process produced exit 15 and no observed automatic restart despite the configured failure-restart setting. Cross-login and fault recovery remain unverified.
 
 ## 0.6.53 — Recover join projections and corroborate delivery evidence
 
