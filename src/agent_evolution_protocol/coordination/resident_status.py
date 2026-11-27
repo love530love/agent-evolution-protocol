@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import json
 from math import isfinite
+import os
 from pathlib import Path
 from typing import Any
 
@@ -28,7 +29,8 @@ def _read(path: Path) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else {"status": "INVALID", "reason": "NOT_OBJECT"}
 
 
-def _plane(name: str, row: dict[str, Any] | None, *, now: datetime, max_age_seconds: float) -> dict[str, Any]:
+def _plane(name: str, row: dict[str, Any] | None, *, now: datetime, max_age_seconds: float,
+           healthy_statuses: set[str] | None = None) -> dict[str, Any]:
     if row is None:
         return {"plane": name, "status": "MISSING", "healthy": False,
                 "heartbeat_fresh": None, "pid_alive": None, "pid_identity": "UNKNOWN"}
@@ -49,7 +51,8 @@ def _plane(name: str, row: dict[str, Any] | None, *, now: datetime, max_age_seco
         return {"plane": name, "status": "INVALID", "healthy": False,
                 "reason": "HEARTBEAT_TIMESTAMP_IN_FUTURE", "heartbeat": row,
                 "heartbeat_fresh": None, "pid_alive": None, "pid_identity": "UNKNOWN"}
-    heartbeat_fresh = row.get("status") in {"STARTED", "CYCLE_COMPLETED", "TICK_COMPLETED"} and age <= max_age_seconds
+    healthy_statuses = healthy_statuses or {"STARTED", "CYCLE_COMPLETED", "TICK_COMPLETED"}
+    heartbeat_fresh = row.get("status") in healthy_statuses and age <= max_age_seconds
     pid = row.get("pid")
     pid_alive = process_identity.alive(pid)
     claimed_start = row.get("process_started_at")
@@ -75,14 +78,26 @@ def status(root: Path, *, max_age_seconds: float = 90.0,
     if (isinstance(max_age_seconds, bool) or not isinstance(max_age_seconds, (int, float))
             or not isfinite(max_age_seconds) or max_age_seconds <= 0):
         raise ValueError("max_age_seconds must be finite and positive")
-    now = now or datetime.now(timezone.utc)
     runtime = Path(root) / "runtime"
-    core = _plane("core", _read(runtime / "aep-core-host.heartbeat.json"),
+    # Read all records before sampling ``now``.  A writer can atomically
+    # replace a heartbeat between a caller's first clock read and its file
+    # read; sampling afterwards prevents that harmless microsecond race from
+    # looking like a clock that moved into the future.  An explicit ``now`` is
+    # retained unchanged for deterministic audit/test calls.
+    core_row = _read(runtime / "aep-core-host.heartbeat.json")
+    desktop_row = _read(runtime / "aep-supervisor.heartbeat.json")
+    high_integrity_row = _read(runtime / "aep-elevated-worker.heartbeat.json")
+    guardian_row = _read(runtime / "aep-desktop-guardian.heartbeat.json")
+    now = now or datetime.now(timezone.utc)
+    core = _plane("core", core_row,
                   now=now, max_age_seconds=float(max_age_seconds))
-    desktop = _plane("desktop", _read(runtime / "aep-supervisor.heartbeat.json"),
+    desktop = _plane("desktop", desktop_row,
                      now=now, max_age_seconds=float(max_age_seconds))
-    high_integrity = _plane("elevated", _read(runtime / "aep-elevated-worker.heartbeat.json"),
+    high_integrity = _plane("elevated", high_integrity_row,
                             now=now, max_age_seconds=float(max_age_seconds))
+    guardian = _plane("desktop_guardian", guardian_row,
+                      now=now, max_age_seconds=float(max_age_seconds),
+                      healthy_statuses={"WORKER_STARTED", "HEALTHY"})
     # Elevated workers are one-shot by design: their absence is normal, unlike
     # core/desktop.  It becomes relevant only for a particular high-integrity
     # order and must not make the whole control plane look dead.
@@ -104,7 +119,25 @@ def status(root: Path, *, max_age_seconds: float = 90.0,
         desktop_mode = "observe-only"
     else:
         desktop_mode = "UNVERIFIED"
+    guardian_heartbeat = guardian.get("heartbeat") or {}
+    if guardian["status"] == "MISSING":
+        recovery_assurance = "LEGACY_UNSUPERVISED"
+    elif not guardian["healthy"]:
+        recovery_assurance = "GUARDIAN_UNHEALTHY"
+    elif guardian_heartbeat.get("child_pid") != desktop_heartbeat.get("pid"):
+        recovery_assurance = "GUARDIAN_CHILD_MISMATCH"
+    elif os.name == "nt" and guardian_heartbeat.get("child_containment") != "WINDOWS_JOB":
+        # On Windows, a Guardian that cannot prove Job containment could leave
+        # a Desktop Host alive after its own failure.  Do not represent that as
+        # supervised recovery merely because its heartbeat is fresh.
+        recovery_assurance = "GUARDIAN_UNCONTAINED"
+    else:
+        recovery_assurance = "SUPERVISED"
     if not all(row["healthy"] for row in required):
+        control_plane = "HOLD"
+    elif recovery_assurance in {"GUARDIAN_UNHEALTHY", "GUARDIAN_CHILD_MISMATCH", "GUARDIAN_UNCONTAINED"}:
+        # A guardian that claims a different child must not be ignored: the
+        # desktop heartbeat could be a surviving pre-upgrade process.
         control_plane = "HOLD"
     elif desktop_mode == "observe-only":
         control_plane = "OBSERVE_ONLY"
@@ -115,8 +148,9 @@ def status(root: Path, *, max_age_seconds: float = 90.0,
     return {
         "schema": "aep-resident-status-v1", "at": now.isoformat(),
         "coord_root": str(Path(root).resolve()), "max_age_seconds": max_age_seconds,
-        "planes": {row["plane"]: row for row in (core, desktop, high_integrity)},
+        "planes": {row["plane"]: row for row in (core, desktop, high_integrity, guardian)},
         "desktop_mode": desktop_mode,
+        "recovery_assurance": recovery_assurance,
         "control_plane": control_plane,
         "delivery_claim": "NONE",
         "note": "READY requires fresh heartbeats and verified process identities; it does not prove a message was delivered or acknowledged.",

@@ -20,6 +20,8 @@ JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK = 0x00001000
 JOB_OBJECT_ASSIGN_PROCESS = 0x0001
 JOB_OBJECT_QUERY = 0x0004
 JOB_OBJECT_TERMINATE = 0x0008
+PROCESS_TERMINATE = 0x0001
+PROCESS_SET_QUOTA = 0x0100
 ERROR_FILE_NOT_FOUND = 2
 ERROR_ALREADY_EXISTS = 183
 
@@ -78,6 +80,7 @@ def _api():
         "TerminateJobObject": ([wintypes.HANDLE, wintypes.UINT], wintypes.BOOL),
         "CloseHandle": ([wintypes.HANDLE], wintypes.BOOL),
         "ProcessIdToSessionId": ([wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)], wintypes.BOOL),
+        "OpenProcess": ([wintypes.DWORD, wintypes.BOOL, wintypes.DWORD], wintypes.HANDLE),
     }
     for name, (arguments, result) in declarations.items():
         function = getattr(api, name)
@@ -90,11 +93,12 @@ def _name(name):
 
     ``AEPValidation`` remains reserved for the fixed validation bootstrap.
     ``AEPExternal`` is used by the separate external-CLI bootstrap and
-    ``AEPProbe`` owns one bounded desktop-MCP tool-discovery run.  Keeping
+    ``AEPProbe`` owns one bounded desktop-MCP tool-discovery run, and
+    ``AEPResident`` owns exactly one Desktop Guardian's worker tree. Keeping
     these prefixes narrow matters: opening an arbitrary named job would let a
     corrupted receipt point this module at an unrelated Windows job object.
     """
-    if not isinstance(name, str) or re.fullmatch(r"AEP(?:Validation|External|Probe)-[0-9a-f]{32}", name) is None:
+    if not isinstance(name, str) or re.fullmatch(r"AEP(?:Validation|External|Probe|Resident)-[0-9a-f]{32}", name) is None:
         raise ValueError("invalid AEP job name")
     return name
 
@@ -225,6 +229,32 @@ class Job:
             raise ValueError("validation job does not enforce required containment")
         if not self._api.AssignProcessToJobObject(self._require_handle(), self._api.GetCurrentProcess()):
             raise ctypes.WinError(ctypes.get_last_error())
+
+    def assign_process(self, pid: int):
+        """Assign one exact, already-created child process to this Job.
+
+        Callers must hold the corresponding ``Popen`` handle; this API never
+        discovers a process by name.  The required access is intentionally
+        narrow and sufficient for ``AssignProcessToJobObject`` on Windows.
+        """
+        if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+            raise ValueError("pid must be a positive integer")
+        access = PROCESS_SET_QUOTA | PROCESS_TERMINATE
+        process = self._api.OpenProcess(access, False, pid)
+        if not process:
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            if not self._api.AssignProcessToJobObject(self._require_handle(), process):
+                raise ctypes.WinError(ctypes.get_last_error())
+        except BaseException:
+            # Preserve the assignment failure as the actionable error.  A
+            # CloseHandle failure must not mask it and turn a containment
+            # diagnostic into an unrelated cleanup message.
+            self._api.CloseHandle(process)
+            raise
+        else:
+            if not self._api.CloseHandle(process):
+                raise ctypes.WinError(ctypes.get_last_error())
 
     def terminate(self):
         if not self._api.TerminateJobObject(self._require_handle(), 1):

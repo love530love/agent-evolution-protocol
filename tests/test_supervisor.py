@@ -32,6 +32,12 @@ def test_main_reports_an_existing_owner_without_starting_another_loop(tmp_path):
         assert supervisor.main() == 0
 
 
+def test_guardian_managed_main_reports_an_existing_owner_as_temporary_failure(tmp_path):
+    with patch.object(supervisor, "watch", side_effect=supervisor.AlreadyRunning("held")), \
+         patch("sys.argv", ["supervisor", "--coord-root", str(tmp_path), "--guardian-managed"]):
+        assert supervisor.main() == 75
+
+
 def test_watch_rejects_invalid_intervals_before_starting_a_loop(tmp_path):
     for interval, ticks in ((0, 0), (1, -1)):
         try:

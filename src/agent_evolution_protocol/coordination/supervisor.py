@@ -170,6 +170,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-perceive", action="store_true")
     parser.add_argument("--observe-only", action="store_true",
                         help="read same-event ACK evidence only; never touch a window or dispatch")
+    parser.add_argument("--guardian-managed", action="store_true",
+                        help="use a distinct exit code when the Desktop Guardian cannot acquire this host lock")
     parser.add_argument("--local-queue", action="store_true",
                         help="run at most one coord-unattended task when a tick dispatched nothing")
     args = parser.parse_args(argv)
@@ -180,7 +182,12 @@ def main(argv: list[str] | None = None) -> int:
     except AlreadyRunning as exc:
         print(json.dumps({"status": "ALREADY_RUNNING", "coord_root": str(args.coord_root.resolve()),
                           "detail": str(exc)}, ensure_ascii=False), flush=True)
-        return 0
+        # A manually launched legacy host keeps the historic benign result.
+        # Guardian must distinguish that condition from a healthy child that
+        # chose to finish: otherwise an orphaned pre-upgrade host looks like a
+        # sequence of ordinary EXIT_0 recoveries and obscures the real lock
+        # owner.  75 is the conventional temporary-failure status.
+        return 75 if args.guardian_managed else 0
     except ValueError as exc:
         parser.error(str(exc))
     return 2  # pragma: no cover - argparse raises before this line

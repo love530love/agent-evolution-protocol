@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.57 — Desktop Guardian: bounded process recovery
+
+- Add `coordination.resident_guardian`: a per-user parent process that owns only the Desktop Host it started, binds that exact child PID to a `KILL_ON_JOB_CLOSE` Windows Job, persists a bounded restart ledger, detects a missing/stale child heartbeat, and enters explicit backoff rather than creating a process storm. If Job containment cannot be created it refuses to launch the Host. It never scans or kills vendor MCP/client processes by name.
+- Route newly registered `AEP-DesktopHost` tasks through `scripts/aep-desktop-guardian.ps1`; the default remains observe-only when registered as observe-only. Existing tasks are unchanged until separately migrated and verified.
+- Add `recovery_assurance` to resident status (`SUPERVISED`, `LEGACY_UNSUPERVISED`, or explicit guardian failure/mismatch/uncontained states). A Guardian whose child does not match the live Desktop Host or cannot prove Windows Job containment forces `HOLD`.
+- Make a Guardian-managed Supervisor report a held legacy lock as temporary failure `75`, which is recorded as `WORKER_LOCK_HELD` instead of being mistaken for a normal `EXIT_0`.
+- Register the task through a direct base-Python runner instead of the venv redirector, so stopping/replacing `AEP-DesktopHost` targets the real Guardian process; preserve `--local-queue` only for dispatch mode and reject it under observe-only.
+- Verify the deployed observe-only `AEP-DesktopHost` task end-to-end at the process plane: `schtasks /End` reaped its verified Guardian/Host pair and `/Run` created a fresh supervised `WINDOWS_JOB` pair. This is lifecycle evidence only, not a message-delivery or ACK claim.
+- Verify the deployed Guardian's bounded child recovery: after termination of its verified observe-only Host, the same Guardian started a new Host and recorded one restart while remaining `SUPERVISED`.
+- Fix the Windows venv redirector PID handoff and a microsecond heartbeat-read race found by isolated live probes. The probe exercised one verified child termination and bounded recovery; it did not touch an agent window or prove message delivery/ACK.
+- Add 7 Guardian/status regression tests and `docs/RESIDENT_SERVICE_UPGRADE_v0.6.57.zh-CN.md` with rollout gates and remaining Windows Service/IPC work.
+
 ## 0.6.56 — Resident host drains the local queue
 
 - `coordination/supervisor watch` gains `local_queue` / `--local-queue`: when a dispatch tick handed no order to an agent, the same resident loop runs at most one `coord-unattended` task before sleeping. Observe-only mode never executes it, and the heartbeat `local` field is process evidence, never an order delivery or agent ACK.

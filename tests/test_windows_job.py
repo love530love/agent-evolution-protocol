@@ -196,6 +196,23 @@ class WindowsJobTests(unittest.TestCase):
         worker.wait(timeout=8)
         self.assertIsNone(windows_job.Job.open(self.name))
 
+    def test_assign_exact_popen_child_is_reaped_when_the_guardian_job_closes(self):
+        """Exercise the direct-child API used by Desktop Guardian.
+
+        This intentionally owns one freshly created interpreter only; it does
+        not enumerate host processes or use a process-name kill.
+        """
+        base = getattr(sys, "_base_executable", sys.executable)
+        child = subprocess.Popen([base, "-c", "import time; time.sleep(60)"],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.addCleanup(self._reap_worker, child)
+        self.job.assign_process(child.pid)
+        self.assertGreaterEqual(self.job.active_processes(), 1)
+        self.job.close()
+        child.wait(timeout=8)
+        self.assertIsNotNone(child.returncode)
+        self.assertIsNone(windows_job.Job.open(self.name))
+
     def test_contained_test_cannot_request_breakaway(self):
         profile = windows_job.interpreter_profile(self.request["command"])
         if not profile["breakaway_denied"]:
@@ -270,6 +287,10 @@ class InterpreterProfileTests(unittest.TestCase):
         profile = windows_job.interpreter_profile([])
         self.assertEqual(profile["kind"], "interpreter")
         self.assertEqual(profile["reason"], "no command to profile")
+
+    def test_resident_job_name_has_the_same_narrow_contract(self):
+        name = "AEPResident-" + uuid4().hex
+        self.assertEqual(windows_job._name(name), name)
 
     def test_the_bundled_runtimes_are_classified_as_measured(self):
         root = Path(__file__).resolve().parents[1]

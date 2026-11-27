@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import xml.etree.ElementTree as ET
 
 import pytest
@@ -17,13 +18,14 @@ def test_fallback_registers_hidden_observe_only_task_with_recovery(tmp_path):
     scripts.mkdir(parents=True)
     registrar = scripts / "register-supervisor-task.ps1"
     shutil.copy(repo / "scripts" / "register-supervisor-task.ps1", registrar)
-    # Registration checks for this file but does not execute it.  A clean CI
-    # checkout intentionally has no machine-specific .tools runtime.
-    runtime = project / ".tools" / "agent-runtime" / "Scripts" / "python.exe"
-    runtime.parent.mkdir(parents=True)
-    runtime.touch()
+    shutil.copy(repo / "scripts" / "aep-desktop-guardian-runner.py",
+                scripts / "aep-desktop-guardian-runner.py")
+    # The isolated tree intentionally has no machine-specific .tools runtime.
+    # Give the registrar a real Python only to derive its base interpreter; the
+    # generated task does not execute during this XML-only test.
+    runtime = Path(sys.executable)
     env = dict(os.environ, AEP_TEST_REGISTRAR=str(registrar),
-               AEP_TEST_TASK_XML=str(xml_path))
+               AEP_TEST_TASK_XML=str(xml_path), AEP_TEST_RUNTIME=str(runtime))
     harness = r'''
 function Get-Command {
   param([string]$Name, [string]$ErrorAction)
@@ -36,7 +38,7 @@ function schtasks.exe {
   Copy-Item -LiteralPath $args[$index + 1] -Destination $env:AEP_TEST_TASK_XML
   $global:LASTEXITCODE = 0
 }
-& $env:AEP_TEST_REGISTRAR -TaskName 'AEP-Test-Only' -ObserveOnly
+& $env:AEP_TEST_REGISTRAR -TaskName 'AEP-Test-Only' -ObserveOnly -RuntimePython $env:AEP_TEST_RUNTIME
 '''
     result = subprocess.run([shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-Command", harness],
                             env=env, capture_output=True, text=True, encoding="utf-8", timeout=30)
@@ -47,10 +49,9 @@ function schtasks.exe {
     assert root.find("t:Settings/t:RestartOnFailure/t:Count", ns).text == "3"
     assert root.find("t:Settings/t:MultipleInstancesPolicy", ns).text == "IgnoreNew"
     command = root.find("t:Actions/t:Exec/t:Command", ns).text
-    assert command.lower().endswith("pwsh.exe")
-    system_pwsh = Path(os.environ.get("ProgramFiles", "")) / "PowerShell" / "7" / "pwsh.exe"
-    if system_pwsh.is_file():
-        assert os.path.normcase(command) == os.path.normcase(str(system_pwsh))
+    assert command.lower().endswith("python.exe")
+    assert os.path.normcase(command) != os.path.normcase(str(shutil.which("pwsh")))
     arguments = root.find("t:Actions/t:Exec/t:Arguments", ns).text
-    assert "-WindowStyle Hidden" in arguments
-    assert "-ObserveOnly" in arguments
+    assert "aep-desktop-guardian-runner.py" in arguments
+    assert "--observe-only" in arguments
+    assert root.find("t:Settings/t:Hidden", ns).text == "true"

@@ -60,6 +60,58 @@ def test_status_reports_observe_only_without_claiming_dispatch_readiness(tmp_pat
     result = resident_status.status(tmp_path, now=now)
     assert result["control_plane"] == "OBSERVE_ONLY"
     assert result["desktop_mode"] == "observe-only"
+    assert result["recovery_assurance"] == "LEGACY_UNSUPERVISED"
+
+
+def test_status_reports_a_live_guardian_only_when_it_owns_the_live_desktop_child(tmp_path):
+    now = datetime(2026, 11, 16, tzinfo=timezone.utc)
+    _write(tmp_path, "aep-core-host.heartbeat.json", {"status": "CYCLE_COMPLETED", "completed_at": now.isoformat()})
+    _write(tmp_path, "aep-supervisor.heartbeat.json", {
+        "status": "TICK_COMPLETED", "completed_at": now.isoformat(),
+        "mode": "observe-only", "dispatch_enabled": False,
+    })
+    _write(tmp_path, "aep-desktop-guardian.heartbeat.json", {
+        "status": "HEALTHY", "completed_at": now.isoformat(), "child_pid": 1234,
+        "child_containment": "WINDOWS_JOB",
+    })
+    result = resident_status.status(tmp_path, now=now)
+    assert result["planes"]["desktop_guardian"]["status"] == "HEALTHY"
+    assert result["recovery_assurance"] == "SUPERVISED"
+    assert result["control_plane"] == "OBSERVE_ONLY"
+
+
+def test_status_holds_for_a_windows_guardian_without_job_containment(tmp_path):
+    now = datetime(2026, 11, 16, tzinfo=timezone.utc)
+    _write(tmp_path, "aep-core-host.heartbeat.json", {"status": "CYCLE_COMPLETED", "completed_at": now.isoformat()})
+    _write(tmp_path, "aep-supervisor.heartbeat.json", {
+        "status": "TICK_COMPLETED", "completed_at": now.isoformat(),
+        "mode": "observe-only", "dispatch_enabled": False,
+    })
+    _write(tmp_path, "aep-desktop-guardian.heartbeat.json", {
+        "status": "HEALTHY", "completed_at": now.isoformat(), "child_pid": 1234,
+        "child_containment": "UNAVAILABLE",
+    })
+    result = resident_status.status(tmp_path, now=now)
+    if resident_status.os.name == "nt":
+        assert result["recovery_assurance"] == "GUARDIAN_UNCONTAINED"
+        assert result["control_plane"] == "HOLD"
+    else:
+        assert result["recovery_assurance"] == "SUPERVISED"
+
+
+def test_status_holds_when_a_live_guardian_claims_a_different_child(tmp_path):
+    now = datetime(2026, 11, 16, tzinfo=timezone.utc)
+    _write(tmp_path, "aep-core-host.heartbeat.json", {"status": "CYCLE_COMPLETED", "completed_at": now.isoformat()})
+    _write(tmp_path, "aep-supervisor.heartbeat.json", {
+        "status": "TICK_COMPLETED", "completed_at": now.isoformat(),
+        "mode": "dispatch", "dispatch_enabled": True,
+    })
+    _write(tmp_path, "aep-desktop-guardian.heartbeat.json", {
+        "status": "HEALTHY", "completed_at": now.isoformat(), "child_pid": 9999,
+    })
+    result = resident_status.status(tmp_path, now=now)
+    assert result["recovery_assurance"] == "GUARDIAN_CHILD_MISMATCH"
+    assert result["control_plane"] == "HOLD"
 
 
 @pytest.mark.parametrize("mode, dispatch_enabled", [
