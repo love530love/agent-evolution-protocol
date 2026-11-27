@@ -12,7 +12,17 @@ import pytest
 def test_fallback_registers_hidden_observe_only_task_with_recovery(tmp_path):
     repo = Path(__file__).resolve().parents[1]
     xml_path = tmp_path / "task.xml"
-    env = dict(os.environ, AEP_TEST_REGISTRAR=str(repo / "scripts" / "register-supervisor-task.ps1"),
+    project = tmp_path / "isolated project"
+    scripts = project / "scripts"
+    scripts.mkdir(parents=True)
+    registrar = scripts / "register-supervisor-task.ps1"
+    shutil.copy(repo / "scripts" / "register-supervisor-task.ps1", registrar)
+    # Registration checks for this file but does not execute it.  A clean CI
+    # checkout intentionally has no machine-specific .tools runtime.
+    runtime = project / ".tools" / "agent-runtime" / "Scripts" / "python.exe"
+    runtime.parent.mkdir(parents=True)
+    runtime.touch()
+    env = dict(os.environ, AEP_TEST_REGISTRAR=str(registrar),
                AEP_TEST_TASK_XML=str(xml_path))
     harness = r'''
 function Get-Command {
