@@ -65,3 +65,8 @@
 - Codex 单独审查了组 D 中 `core_host.py`、`supervisor.py` 与对应两个测试的既有未提交改动：仅增加心跳中的进程创建时间字段及字段测试。现按用户接手指示补充双宿主令牌测试，并将这四个文件作为单独一组验证入库；不是声称这些原有改动由 Codex 编写。
 - 同组其他 UIA、presence、handoff、foundation 等改动和 A/B/C/E 组继续保留，未因接手指示自动归属或批量提交。
 - 只读实测旧 Core 作为 SYSTEM 运行，当前进程无法查询其创建时间，权限不足属于未知。此次源码提交不代表运行中的旧 Core 已更新，也不代表无权限的读取者能确认新版进程身份。
+
+## 2026-11-27：继续接手 Desktop 注册器
+
+- 接受用户继续接手的指示，单独审查原有 `register-supervisor-task.ps1` 未提交更改，并补充隐藏窗口及仅限该注册器的模拟 XML 行为测试；保留现有 Core 注册器及其他 WIP，不将其一并提交。
+- 本机对临时测试任务的 `schtasks /Create` 返回 `Access is denied`，没有替换原 `AEP-DesktopHost`。现用单独隐藏进程临时启动 observe-only，不能声称计划任务恢复或开机自启动已验收；需权限允许后核验任务 XML 与运行结果。
