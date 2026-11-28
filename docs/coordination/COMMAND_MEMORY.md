@@ -57,3 +57,10 @@ $env:PYTHONPATH = Join-Path (Get-Location) 'src'
 
 - 本机 `Get-ScheduledTask -TaskName 'AEP-DesktopHost'` 退出码 1，错误为 `The term 'Get-ScheduledTask' is not recognized`；不要据此判定任务不存在，也没有切换到 Windows PowerShell 5.1。
 - 同一 pwsh 会话执行 `schtasks.exe /Query /TN AEP-DesktopHost /V /FO LIST` 退出码 0，可只读查看状态和上次结果；实际任务状态会变化，须重查。观察到 Ready 不等于宿主循环在运行，也不能据此证明派工。
+
+## 2026-11-28：原会话五段验收命令的操作边界
+
+- `coord-desktop-acceptance` 的默认模式是 `PREVIEW`：只规范化 profile、校验事件/消息并输出内存中的 manifest；它不启动客户端、不写输入、不点击发送，也不写 receipt。只有显式 `--apply` 才调用既有 profiled relay，且仍只允许一次有界投递。
+- 严格 profile 的测试配置必须满足 `ui_fallback.normalise_profile` 的完整契约：`agent`、进程/标题/exe、会话与模型锚点、transport、有效四区 `session_proof`，以及与 proof digest 一致的 `route_calibration`。部分字段看似足够的手工 JSON 不能用于严格路线。
+- 五段状态只能按 `SESSION_LOCATED → INPUT_SUBMITTED → MESSAGE_VISIBLE → AGENT_ACK → TASK_RESULT_READBACK` 解释。`MESSAGE_VISIBLE` 不是 ACK；`UNCERTAIN` 的下一步是同原会话 reconcile，禁止改通道盲重试。
+- 为避免 PowerShell 多行粘贴/续行失序，面向实际操作者的验收命令优先提供一条物理行；全局参数（如 `--coord-root`）始终位于子命令之前。

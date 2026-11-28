@@ -1,7 +1,7 @@
 {
   "by_risk": {
     "irreversible": 15,
-    "mutating": 69,
+    "mutating": 70,
     "read-only": 21
   },
   "commands": [
@@ -2452,6 +2452,163 @@
       "documented": true,
       "name": "coord-desktop",
       "purpose": "Register desktop providers and run read-only per-client capability probes before any UI input.",
+      "risk": "mutating"
+    },
+    {
+      "arguments": [
+        {
+          "dest": "agent",
+          "flags": [
+            "--agent"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "event_id",
+          "flags": [
+            "--event-id"
+          ],
+          "kind": "option",
+          "required": true
+        },
+        {
+          "dest": "text",
+          "flags": [
+            "--text"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "text_file",
+          "flags": [
+            "--text-file"
+          ],
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "profile_file",
+          "flags": [
+            "--profile-file"
+          ],
+          "help": "strict original-session profile; default is coordination/ui_profiles",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "relay_receipt",
+          "flags": [
+            "--relay-receipt"
+          ],
+          "help": "profiled relay receipt; default is coordination/commander/receipts",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "manifest_file",
+          "flags": [
+            "--manifest-file"
+          ],
+          "help": "acceptance envelope path; written only with --apply",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "result_marker",
+          "flags": [
+            "--result-marker"
+          ],
+          "help": "marker that must appear in the target's incoming result readback",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "workspace_id",
+          "flags": [
+            "--workspace-id"
+          ],
+          "help": "stable logical workspace ID for the shared session lease",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "session_provider",
+          "flags": [
+            "--session-provider"
+          ],
+          "help": "verified canonical provider when it differs from UIA",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "dest": "session_binding_evidence",
+          "flags": [
+            "--session-binding-evidence"
+          ],
+          "help": "proof for a canonical provider alias",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "allow_launch",
+          "flags": [
+            "--allow-launch"
+          ],
+          "help": "only with --apply: permit the profiled relay to launch a missing client",
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "urgent_interject",
+          "flags": [
+            "--urgent-interject"
+          ],
+          "help": "only with --apply: use an exact profiled interject path without clicking Stop",
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "readback_only",
+          "flags": [
+            "--readback-only"
+          ],
+          "help": "read transcript-bus evidence and update only the manifest; never invokes desktop input",
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        },
+        {
+          "default": 500,
+          "dest": "readback_limit",
+          "flags": [
+            "--readback-limit"
+          ],
+          "help": "newest transcript-bus events to inspect with --readback-only (1..500)",
+          "kind": "option",
+          "required": false
+        },
+        {
+          "default": false,
+          "dest": "apply",
+          "flags": [
+            "--apply"
+          ],
+          "help": "explicitly invoke the profiled relay once; otherwise preview performs no UI action",
+          "kind": "flag",
+          "nargs": 0,
+          "required": false
+        }
+      ],
+      "documented": true,
+      "name": "coord-desktop-acceptance",
+      "purpose": "Run one explicit, evidence-graded original-session acceptance attempt.",
       "risk": "mutating"
     },
     {
@@ -6792,9 +6949,9 @@
       "risk": "mutating"
     }
   ],
-  "count": 105,
-  "digest": "sha256:9e83f5de2cdfa6d99b24d7d1ad700b7b00c578e455537d8d539743ee47a0ed45",
-  "documented": 42,
+  "count": 106,
+  "digest": "sha256:7b217a5312f9b0acf48610fe29c3e37742149f63be2fa1aa090e60103f4b0d62",
+  "documented": 43,
   "generated_from": "agent_evolution_protocol.cli:build_parser",
   "global_arguments": [
     {

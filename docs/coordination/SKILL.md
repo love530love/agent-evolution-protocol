@@ -4,10 +4,10 @@
 > 手改会让 `tests/test_skill_manifest.py` 失败——这是刻意的：
 > 上一版研究文档把 `schema=aep-next-action-v1` 写错了整整两天，因为散文不会报错。
 
-- 命令总数：**105**
-- 风险分布：read-only 21、mutating 69、irreversible 15
-- 用途已记录：**42** / 105（未记录 63，只允许减少）
-- 清单摘要：`sha256:9e83f5de2cdfa6d99b24d7d1ad700b7b00c578e455537d8d539743ee47a0ed45`
+- 命令总数：**106**
+- 风险分布：read-only 21、mutating 70、irreversible 15
+- 用途已记录：**43** / 106（未记录 63，只允许减少）
+- 清单摘要：`sha256:7b217a5312f9b0acf48610fe29c3e37742149f63be2fa1aa090e60103f4b0d62`
 
 风险分级是**声明**而不是推导：未登记的命令一律按 `mutating` 处理。
 把会写的命令标成 `read-only` 是这里唯一有代价的错误，所以默认值朝安全方向倒。
@@ -76,6 +76,7 @@
 | `coord-dependency-inventory` | read-only | `--lock --environment --output` | *未记录* |
 | `coord-deploy-check` | mutating | `—` | Read-only deployment readiness check; never installs or writes. |
 | `coord-desktop` | mutating | `ACTION` | Register desktop providers and run read-only per-client capability probes before any UI input. |
+| `coord-desktop-acceptance` | mutating | `--agent --event-id` | Run one explicit, evidence-graded original-session acceptance attempt. |
 | `coord-desktop-ipc` | mutating | `ACTION --workspace-id --agent` | Persist/recover Supervisor ↔ Desktop Runner events and receipts. |
 | `coord-desktop-runner` | mutating | `ACTION --agent` | Plan/launch/wait for a GUI Agent in the interactive user session. |
 | `coord-digest` | read-only | `--agent` | *未记录* |

@@ -45,7 +45,7 @@ CLI-Anything 的核心主张是：**CLI 就是 agent 的接口，而接口文档
 
 ### AEP 已经有什么
 
-- 105 个子命令（`build_parser()`），其中 42 个在定义处有可生成的说明。
+- 106 个子命令（`build_parser()`），其中 43 个在定义处有可生成的说明。
 - `route_guidance.build_next_action()` 已经会返回**一条**可执行 argv，且明确"never execute"。
 - 有防漂移测试的先例：`tests/test_route_guidance_doc.py`。
 

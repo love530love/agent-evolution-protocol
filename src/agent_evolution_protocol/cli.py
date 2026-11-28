@@ -87,6 +87,7 @@ from agent_evolution_protocol.coordination import process_probe
 from agent_evolution_protocol.coordination import agent_identity
 from agent_evolution_protocol.coordination import capability_bridge
 from agent_evolution_protocol.coordination import uia3
+from agent_evolution_protocol.coordination import desktop_acceptance
 from agent_evolution_protocol.routing import classify_intent, load_route_config
 from agent_evolution_protocol.route_state import analyze_route_state, continuation_from_events, select_resource_type
 
@@ -2858,6 +2859,99 @@ def coord_uia(args: argparse.Namespace) -> None:
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+def coord_desktop_acceptance(args: argparse.Namespace) -> int:
+    """Run one explicit, evidence-graded original-session acceptance attempt.
+
+    This command owns no second transport. A normal invocation validates the
+    strict profile and emits only a preview; explicit ``--apply`` invokes the
+    established profiled UI relay once and writes its five-stage envelope.
+    """
+    root = coord_root(args)
+    who = valid_agent(args.agent)
+    profile_path = Path(args.profile_file or root / "ui_profiles" / f"{who}.json")
+    try:
+        profile = ui_fallback.load_profile(profile_path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise ProtocolError(f"invalid original-session profile: {exc}") from exc
+    if profile.get("agent") != who:
+        raise ProtocolError("UI_PROFILE_AGENT_MISMATCH")
+
+    try:
+        text = (args.text_file.read_text(encoding="utf-8")
+                if args.text_file is not None else args.text)
+    except OSError as exc:
+        raise ProtocolError(f"cannot read acceptance text: {exc}") from exc
+    if not isinstance(text, str) or not text.strip():
+        raise ProtocolError("--text or --text-file must contain a nonempty message")
+
+    event_id = str(args.event_id)
+    relay_receipt = Path(args.relay_receipt or
+                         root / "commander" / "receipts" / f"{event_id}-{who}-profile.json")
+    manifest_path = Path(args.manifest_file or
+                         root / "acceptance_receipts" / f"{event_id}-{who}.json")
+    result_marker = str(args.result_marker or "")
+
+    readback_count = 0
+    if args.readback_only:
+        if args.apply:
+            raise ProtocolError("--readback-only and --apply cannot be combined")
+        if not result_marker:
+            raise ProtocolError("--readback-only requires --result-marker")
+        try:
+            events = transcript_bus.read_events(root, agent=who, limit=args.readback_limit)
+            readback_count = len(events)
+            manifest = desktop_acceptance.reconcile_readback(
+                profile=profile, message=text, event_id=event_id,
+                receipt_path=relay_receipt, manifest_path=manifest_path,
+                result_marker=result_marker, readback_events=events,
+            )
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            raise ProtocolError(f"original-session readback failed: {exc}") from exc
+    elif args.apply:
+        try:
+            manifest = desktop_acceptance.execute(
+                profile=profile, message=text, event_id=event_id,
+                receipt_path=relay_receipt, manifest_path=manifest_path,
+                lock_path=root / "desktop-input.lock", driver=uia3.driver_for(profile),
+                allow_launch=bool(args.allow_launch), urgent=bool(args.urgent_interject),
+                session_root=root,
+                workspace_id=str(args.workspace_id or profile.get("workspace_id") or root.resolve()),
+                session_provider=str(args.session_provider or ""),
+                session_binding_evidence=str(args.session_binding_evidence or ""),
+                result_marker=result_marker, apply=True,
+            )
+        except (OSError, ValueError, ui_fallback.RelayError) as exc:
+            raise ProtocolError(f"original-session acceptance failed: {exc}") from exc
+    else:
+        try:
+            manifest = desktop_acceptance.preview(
+                profile=profile, message=text, event_id=event_id,
+                result_marker=result_marker,
+            )
+        except ValueError as exc:
+            raise ProtocolError(f"invalid acceptance request: {exc}") from exc
+
+    payload = {
+        "schema": "aep-desktop-original-session-acceptance-command-v1",
+        "apply_requested": bool(args.apply),
+        "profile_file": str(profile_path),
+        "relay_receipt": str(relay_receipt),
+        "manifest_file": str(manifest_path),
+        "readback_event_count": readback_count,
+        "acceptance": manifest,
+        "note": (
+            "PREVIEW performs no desktop input and writes no receipt. APPLY invokes the "
+            "profiled relay once. READBACK_ONLY reads transcript-bus evidence and updates "
+            "only the manifest. COMPLETE requires all five evidence stages; HOLD or UNCERTAIN "
+            "is not delivery success and never authorises an automatic retry."
+        ),
+    }
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    if not args.apply and not args.readback_only:
+        return 0
+    return 0 if manifest["verdict"]["state"] == "COMPLETE" else 4
+
+
 def _parse_size(value: str) -> tuple[int, int]:
     try:
         width, height = (int(part) for part in str(value).lower().split("x", 1))
@@ -4155,6 +4249,38 @@ def build_parser() -> argparse.ArgumentParser:
     uia.add_argument("--apply", action="store_true", help="calibrate only: atomically opt a successful calibration into the UI profile")
     uia.set_defaults(func=coord_uia)
 
+    acceptance = commands.add_parser(
+        "coord-desktop-acceptance",
+        help="preview or explicitly run one five-stage original-session acceptance envelope",
+    )
+    acceptance.add_argument("--agent", required=True)
+    acceptance.add_argument("--event-id", required=True)
+    acceptance_body = acceptance.add_mutually_exclusive_group(required=True)
+    acceptance_body.add_argument("--text")
+    acceptance_body.add_argument("--text-file", type=Path)
+    acceptance.add_argument("--profile-file", type=Path,
+                            help="strict original-session profile; default is coordination/ui_profiles")
+    acceptance.add_argument("--relay-receipt", type=Path,
+                            help="profiled relay receipt; default is coordination/commander/receipts")
+    acceptance.add_argument("--manifest-file", type=Path,
+                            help="acceptance envelope path; written only with --apply")
+    acceptance.add_argument("--result-marker",
+                            help="marker that must appear in the target's incoming result readback")
+    acceptance.add_argument("--workspace-id", help="stable logical workspace ID for the shared session lease")
+    acceptance.add_argument("--session-provider", help="verified canonical provider when it differs from UIA")
+    acceptance.add_argument("--session-binding-evidence", help="proof for a canonical provider alias")
+    acceptance.add_argument("--allow-launch", action="store_true",
+                            help="only with --apply: permit the profiled relay to launch a missing client")
+    acceptance.add_argument("--urgent-interject", action="store_true",
+                            help="only with --apply: use an exact profiled interject path without clicking Stop")
+    acceptance.add_argument("--readback-only", action="store_true",
+                            help="read transcript-bus evidence and update only the manifest; never invokes desktop input")
+    acceptance.add_argument("--readback-limit", type=int, default=500,
+                            help="newest transcript-bus events to inspect with --readback-only (1..500)")
+    acceptance.add_argument("--apply", action="store_true",
+                            help="explicitly invoke the profiled relay once; otherwise preview performs no UI action")
+    acceptance.set_defaults(func=coord_desktop_acceptance)
+
     vision = commands.add_parser("coord-vision", help="ask a grounder where a control is, and compare it with a known answer")
     vision.add_argument("action", choices=("ground", "providers"))
     vision.add_argument("--target", default="composer", help="what to locate, e.g. composer or send button")
@@ -4409,6 +4535,8 @@ def main() -> int:
     try:
         args = build_parser().parse_args()
         result = args.func(args)
+        if isinstance(result, int) and not isinstance(result, bool):
+            return result
         if isinstance(result, dict) and result.get("schema") == "agent-evolution-claim-result-v1" and not result.get("claimed"):
             return 3
         return 0
