@@ -144,10 +144,14 @@ def test_guardian_stops_only_its_owned_child_when_a_smoke_run_ends(tmp_path):
     assert row["status"] == "STOPPED"
     assert row["delivery_claim"] == "NONE"
     assert row["ui_touched"] is False
-    assert row["child_containment"] == "WINDOWS_JOB"
-    assert len(jobs) == 1
-    assert jobs[0].assigned == [child.pid]
-    assert jobs[0].closed == 1
+    if resident_guardian.os.name == "nt":
+        assert row["child_containment"] == "WINDOWS_JOB"
+        assert len(jobs) == 1
+        assert jobs[0].assigned == [child.pid]
+        assert jobs[0].closed == 1
+    else:
+        assert row["child_containment"] == "NOT_APPLICABLE"
+        assert jobs == []
 
 
 @pytest.mark.skipif(resident_guardian.os.name != "nt", reason="Windows containment policy")
